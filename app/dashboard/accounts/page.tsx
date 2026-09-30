@@ -107,7 +107,7 @@ export default function AccountantVerificationDashboard() {
     setFilteredDeposits(result);
   }, [rawDeposits, statusFilter, geoFilter]);
 
-  // --- SECURE DECRYPTION ENGINE (Fires when a row is clicked) ---
+  // --- SECURE DECRYPTION ENGINE (Fixed for 400 Bad Request) ---
   useEffect(() => {
     const decryptImage = async () => {
       setSecureImageUrl(null);
@@ -123,16 +123,17 @@ export default function AccountantVerificationDashboard() {
           return;
         }
 
-        const { data, error } = await supabase.storage
+        const { data } = supabase.storage
           .from("deposit-slips")
-          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); 
+          .getPublicUrl(selectedDeposit.deposit_slip_url);
         
-        if (error) throw error; 
-        if (!data) throw new Error("No data returned from vault.");
+        if (!data || !data.publicUrl) {
+          throw new Error("Supabase failed to generate the public URL.");
+        }
         
-        setSecureImageUrl(data.signedUrl);
+        setSecureImageUrl(data.publicUrl);
       } catch (err: any) {
-        console.error("Failed to decrypt image:", err);
+        console.error("Failed to load image:", err);
         setImageError(err.message || "Access Denied by Vault"); 
       } finally {
         setImageLoading(false);
@@ -448,18 +449,16 @@ export default function AccountantVerificationDashboard() {
                     <h3 className="text-red-500 font-black uppercase tracking-widest mt-4">Storage Access Failed</h3>
                     <p className="text-red-300 text-xs font-bold mt-2 bg-red-950 p-3 rounded">{imageError}</p>
                     
-                    {/* ADD THIS DEBUG BUTTON */}
+                    {/* DEBUG BUTTON */}
                     {secureImageUrl && (
                       <a href={secureImageUrl} target="_blank" rel="noreferrer" className="mt-4 bg-white text-red-900 px-4 py-2 rounded text-xs font-black uppercase tracking-widest shadow-lg hover:bg-red-100 transition">
                         Open Raw URL to Expose Error ↗
                       </a>
                     )}
-
                   </div>
-
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
-                    {/* UPGRADE: Intelligently render PDFs in an iframe, and images in an img tag */}
+                    {/* INTELLIGENT RENDERER: iFrame for PDFs, Img for Images */}
                     {selectedDeposit.deposit_slip_url.toLowerCase().endsWith('.pdf') ? (
                       <iframe 
                         src={`${secureImageUrl}#toolbar=0`} 
@@ -474,7 +473,7 @@ export default function AccountantVerificationDashboard() {
                         style={{ maxHeight: '100%' }}
                         onError={() => {
                           setSecureImageUrl(null);
-                          setImageError("BROWSER BLOCKED: The image failed to load. Check Supabase CORS settings or ensure the file is not corrupted.");
+                          setImageError("BROWSER BLOCKED: The image failed to load. The file is corrupted, or the bucket is not set to Public.");
                         }}
                       />
                     )}
@@ -492,7 +491,6 @@ export default function AccountantVerificationDashboard() {
             </>
           )}
         </div>
-        
       </div>
     </div>
   );
