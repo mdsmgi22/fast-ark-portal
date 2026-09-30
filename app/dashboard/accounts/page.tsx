@@ -108,6 +108,7 @@ export default function AccountantVerificationDashboard() {
   }, [rawDeposits, statusFilter, geoFilter]);
 
   // --- SECURE DECRYPTION ENGINE (Fixed for 400 Bad Request) ---
+ // --- SECURE DECRYPTION ENGINE (Realigned with Private Bucket Architecture) ---
   useEffect(() => {
     const decryptImage = async () => {
       setSecureImageUrl(null);
@@ -123,15 +124,18 @@ export default function AccountantVerificationDashboard() {
           return;
         }
 
-        const { data } = supabase.storage
+        // FIX: The bucket is Private (proven by the Partner's 60-sec link). 
+        // We MUST use createSignedUrl to generate the cryptographic token.
+        const { data, error } = await supabase.storage
           .from("deposit-slips")
-          .getPublicUrl(selectedDeposit.deposit_slip_url);
+          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); // 1-hour secure token for audit
         
-        if (!data || !data.publicUrl) {
-          throw new Error("Supabase failed to generate the public URL.");
+        if (error) throw error; 
+        if (!data || !data.signedUrl) {
+          throw new Error("Supabase failed to generate the signed URL.");
         }
         
-        setSecureImageUrl(data.publicUrl);
+        setSecureImageUrl(data.signedUrl);
       } catch (err: any) {
         console.error("Failed to load image:", err);
         setImageError(err.message || "Access Denied by Vault"); 
