@@ -2,15 +2,15 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 
-// Use the Service Role for administrative overrides (Auth creation & provisioning)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!, 
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export async function POST(request: Request) {
   try {
+    // ARCHITECTURAL FIX: Initialize clients inside the handler to prevent static build crashes
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!, 
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
     // =========================================================================
     // 1. CRITICAL SECURITY GATE: Verify the user triggering this API
     // =========================================================================
@@ -50,7 +50,6 @@ export async function POST(request: Request) {
     const tempPassword = `FA@${Math.random().toString(36).slice(-6)}${new Date().getFullYear()}`;
 
     // The Supabase Postgres Trigger (on_auth_user_created) handles the table injection automatically.
-    // If the trigger fails, this createUser request will throw an error and rollback atomically.
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: applicantEmail,
       password: tempPassword,
@@ -74,7 +73,6 @@ export async function POST(request: Request) {
     // 4. Communication Dispatch
     // =========================================================================
     
-    // Dispatch Credentials to New Partner
     await resend.emails.send({
       from: 'Fast Ark Onboarding <updates@fastark.in>',
       to: applicantEmail,
@@ -91,7 +89,6 @@ export async function POST(request: Request) {
       `
     });
 
-    // Dispatch Internal Alert to Admin
     await resend.emails.send({
       from: 'Fast Ark System <updates@fastark.in>',
       to: 'ENQUIRY@FASTARK.IN',
@@ -102,6 +99,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true });
     
   } catch (error: any) {
+    console.error('API Error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
