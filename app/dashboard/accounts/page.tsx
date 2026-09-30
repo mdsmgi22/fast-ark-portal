@@ -450,12 +450,26 @@ export default function AccountantVerificationDashboard() {
                   </div>
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
-                    <img 
-                      src={secureImageUrl} 
-                      alt="Decrypted Deposit Proof" 
-                      className="max-w-full h-auto object-contain rounded shadow-2xl transition-transform duration-300" 
-                      style={{ maxHeight: '100%' }}
-                    />
+                    {/* UPGRADE: Intelligently render PDFs in an iframe, and images in an img tag */}
+                    {selectedDeposit.deposit_slip_url.toLowerCase().endsWith('.pdf') ? (
+                      <iframe 
+                        src={`${secureImageUrl}#toolbar=0`} 
+                        className="w-full h-full rounded shadow-2xl border border-slate-700 bg-white"
+                        title="Decrypted PDF Proof"
+                      />
+                    ) : (
+                      <img 
+                        src={secureImageUrl} 
+                        alt="Decrypted Deposit Proof" 
+                        className="max-w-full h-auto object-contain rounded shadow-2xl transition-transform duration-300 bg-white" 
+                        style={{ maxHeight: '100%' }}
+                        onError={() => {
+                          setSecureImageUrl(null);
+                          setImageError("BROWSER BLOCKED: The image failed to load. Check Supabase CORS settings or ensure the file is not corrupted.");
+                        }}
+                      />
+                    )}
+                    
                     <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
                        <a href={secureImageUrl} target="_blank" rel="noreferrer" className="bg-slate-900/80 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded shadow-lg backdrop-blur-sm transition border border-slate-700">
                          Open Full Screen ↗
