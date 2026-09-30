@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { QRCodeSVG } from "qrcode.react"; 
+import Tesseract from 'tesseract.js';
 
 // --- Date Normalizers ---
 const getLocalDateString = (date: Date) => {
@@ -89,7 +90,7 @@ export default function PartnerDepositPage() {
     }
   };
 
-  // --- OCR & IMAGE UPLOAD HANDLER (Hardened) ---
+  // --- NATIVE BROWSER OCR HANDLER ---
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -101,35 +102,35 @@ export default function PartnerDepositPage() {
     setIsExempted(false);
 
     try {
-      const formData = new FormData();
-      formData.append('image', file);
-
-      // Securely offload OCR processing to the Next.js API
-      const res = await fetch('/api/ocr-slip', {
-        method: 'POST',
-        body: formData,
+      // 1. Run Tesseract entirely in the user's browser, bypassing Vercel limits
+      const worker = await Tesseract.createWorker('eng', 1, {
+        logger: (m) => console.log(m) 
       });
 
-      // 1. Explicitly catch Gateway Timeouts or Server Crashes before parsing JSON
-      if (!res.ok) {
-        throw new Error(`Server responded with status: ${res.status}`);
+      // 2. Scan the local file directly
+      const { data: { text } } = await worker.recognize(file);
+      await worker.terminate(); // Clean up browser memory
+
+      console.log("Browser OCR Text:", text);
+
+      // 3. Extract the amount using the same secure logic
+      const numberMatches = text.match(/\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b|\b\d+\b/g);
+      let detectedAmount = 0;
+
+      if (numberMatches) {
+        const numericValues = numberMatches.map(str => parseFloat(str.replace(/,/g, '')));
+        const plausibleAmounts = numericValues.filter(num => num > 0 && num <= 1000000);
+        if (plausibleAmounts.length > 0) {
+          detectedAmount = Math.max(...plausibleAmounts);
+        }
       }
 
-      // 2. Safely parse JSON only if the response was OK (200)
-      const data = await res.json();
+      setOcrAmount(detectedAmount);
       
-      if (data.amount > 0) {
-        setOcrAmount(data.amount);
-      } else {
-        setOcrAmount(0);
-      }
-
     } catch (err) {
-      console.error("OCR API Scan Failed:", err);
-      // Fallback: If Vercel times out, default to 0 so the user can manually enter the amount
+      console.error("Browser OCR Failed:", err);
       setOcrAmount(0); 
     } finally {
-      // 3. The finally block GUARANTEES the spinner stops, even on a crash
       setIsScanning(false);
     }
   };
@@ -395,7 +396,7 @@ export default function PartnerDepositPage() {
               {isScanning && !isExempted && (
                 <div className="flex items-center justify-center gap-2 p-3 bg-slate-100 rounded-lg text-slate-600 font-bold text-sm animate-pulse border border-slate-200">
                   <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                  Running Document OCR...
+                  Running Document OCR locally...
                 </div>
               )}
 
