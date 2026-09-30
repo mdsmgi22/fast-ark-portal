@@ -115,7 +115,25 @@ export default function AccountantVerificationDashboard() {
     setFilteredDeposits(result);
   }, [rawDeposits, statusFilter, geoFilter]);
 
-  // The powerful action engine with Staff Logging & Partner Alerts
+  // --- SECURE VAULT DOCUMENT VIEWER ---
+  const handleViewSecureSlip = async (path: string) => {
+    if (!path) return;
+    if (path.startsWith("http")) {
+      window.open(path, "_blank");
+      return;
+    }
+
+    const { data, error } = await supabase.storage.from("deposit-slips").createSignedUrl(path, 60);
+    
+    if (error || !data) {
+      alert("Security Error: Unauthorized access or document missing.");
+      return;
+    }
+    
+    window.open(data.signedUrl, "_blank");
+  };
+
+  // --- CORE ACTION ENGINE ---
   const handleUpdateStatus = async (dep: any, newStatus: 'Verified' | 'Discrepancy') => {
     if (newStatus === 'Verified' && !confirm(`Confirm verification of ₹${dep.deposit_amount}? This will permanently clear this amount from the partner's pending ledger.`)) return;
     if (newStatus === 'Discrepancy' && rejectionReason.trim().length < 5) return alert("You must provide a detailed reason for flagging a discrepancy.");
@@ -288,28 +306,25 @@ export default function AccountantVerificationDashboard() {
           {filteredDeposits.map((dep) => (
             <div key={dep.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col lg:flex-row gap-6 hover:border-amber-300 transition-colors">
               
-              {/* Slip Preview Block */}
-              <div className="w-full lg:w-64 shrink-0 flex flex-col justify-center items-center bg-slate-50 rounded-lg p-2 border border-slate-200">
+              {/* SECURE SLIP PREVIEW BLOCK */}
+              <div className="w-full lg:w-64 shrink-0 flex flex-col justify-center items-center rounded-lg p-2">
                 {dep.is_exempted ? (
-                  <div className="text-center p-4">
+                  <div className="text-center p-4 bg-slate-50 border border-slate-200 rounded-lg w-full h-full flex flex-col justify-center items-center">
                     <span className="text-4xl">⚠️</span>
                     <p className="text-[10px] font-black text-amber-600 mt-2 uppercase tracking-widest">Slip Exempted</p>
                   </div>
                 ) : (
-                  <a href={dep.deposit_slip_url || '#'} target="_blank" rel="noreferrer" className="block w-full group relative">
-                    <img 
-                      src={dep.deposit_slip_url || 'https://placehold.co/400x300?text=Slip+Unavailable'} 
-                      alt="Deposit Slip" 
-                      className="w-full h-auto object-contain max-h-48 rounded shadow-sm group-hover:opacity-50 transition duration-300 bg-white" 
-                      onError={(e) => { 
-                        e.currentTarget.onerror = null; 
-                        e.currentTarget.src = 'https://placehold.co/400x300?text=Image+Unavailable'; 
-                      }}
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span className="bg-slate-900 text-white text-xs font-bold px-3 py-1 rounded-full">🔍 Enlarge Slip</span>
+                  <button 
+                    onClick={() => handleViewSecureSlip(dep.deposit_slip_url)} 
+                    title="Generate Token & View"
+                    className="block w-full h-full group relative bg-slate-50 rounded-lg p-6 border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50 transition"
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="text-4xl mb-2 opacity-80 group-hover:opacity-100 transition">🔒</span>
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-blue-700 transition">Encrypted Vault</p>
+                      <p className="text-[11px] font-black text-blue-600 mt-3 bg-blue-100 px-4 py-1.5 rounded-full uppercase tracking-wider">Decrypt & View ↗</p>
                     </div>
-                  </a>
+                  </button>
                 )}
               </div>
 
@@ -317,8 +332,8 @@ export default function AccountantVerificationDashboard() {
               <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-6 items-center">
                 <div className="col-span-2 md:col-span-1">
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Partner Profile</p>
-                  <p className="font-black text-slate-900 text-lg leading-tight">{dep.active_partners?.partner_name}</p>
-                  <p className="text-xs text-slate-500 font-medium">{dep.active_partners?.locations?.center_name}</p>
+                  <p className="font-black text-slate-900 text-lg leading-tight">{dep.active_partners?.partner_name || 'N/A'}</p>
+                  <p className="text-xs text-slate-500 font-medium">{dep.active_partners?.locations?.center_name || 'N/A'}</p>
                   <p className="text-[10px] text-slate-400 uppercase mt-1">{dep.active_partners?.locations?.dist}, {dep.active_partners?.locations?.state}</p>
                 </div>
                 
