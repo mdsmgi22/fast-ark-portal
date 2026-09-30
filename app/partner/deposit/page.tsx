@@ -12,42 +12,26 @@ const getLocalDateString = (date: Date) => {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split("T")[0];
 };
 
-// Converts parsed text dates into YYYY-MM-DD for <input type="date">
 const parseExtractedDate = (text: string): string | null => {
   const monthMap: Record<string, string> = {
     jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
     jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
   };
 
-  // Pattern 1: DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
   const dmyMatch = text.match(/\b([0-3]?\d)[\/\-\.]([0-1]?\d)[\/\-\.](202\d)\b/);
-  if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, "0");
-    const month = dmyMatch[2].padStart(2, "0");
-    const year = dmyMatch[3];
-    return `${year}-${month}-${day}`;
-  }
+  if (dmyMatch) return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, "0")}-${dmyMatch[1].padStart(2, "0")}`;
 
-  // Pattern 2: DD Month YYYY (e.g. 28 Sep 2026 or 28 September 2026)
   const ddMonYyyy = text.match(/\b([0-3]?\d)\s+([A-Za-z]{3,9})\s+(202\d)\b/);
   if (ddMonYyyy) {
-    const day = ddMonYyyy[1].padStart(2, "0");
-    const monStr = ddMonYyyy[2].toLowerCase().substring(0, 3);
-    const month = monthMap[monStr];
-    const year = ddMonYyyy[3];
-    if (month) return `${year}-${month}-${day}`;
+    const month = monthMap[ddMonYyyy[2].toLowerCase().substring(0, 3)];
+    if (month) return `${ddMonYyyy[3]}-${month}-${ddMonYyyy[1].padStart(2, "0")}`;
   }
 
-  // Pattern 3: Month DD, YYYY (e.g. Sep 28, 2026)
   const monDdYyyy = text.match(/\b([A-Za-z]{3,9})\s+([0-3]?\d),?\s+(202\d)\b/);
   if (monDdYyyy) {
-    const monStr = monDdYyyy[1].toLowerCase().substring(0, 3);
-    const day = monDdYyyy[2].padStart(2, "0");
-    const month = monthMap[monStr];
-    const year = monDdYyyy[3];
-    if (month) return `${year}-${month}-${day}`;
+    const month = monthMap[monDdYyyy[1].toLowerCase().substring(0, 3)];
+    if (month) return `${monDdYyyy[3]}-${month}-${monDdYyyy[2].padStart(2, "0")}`;
   }
-
   return null;
 };
 
@@ -57,6 +41,9 @@ export default function PartnerDepositPage() {
   const [companyBanks, setCompanyBanks] = useState<any[]>([]); 
   const [loading, setLoading] = useState(true);
   
+  // UI States
+  const [rightPanel, setRightPanel] = useState<"ledger" | "viewer">("ledger");
+
   // Data States
   const [deposits, setDeposits] = useState<any[]>([]);
   const [matchedRows, setMatchedRows] = useState<Set<string>>(new Set()); 
@@ -88,7 +75,7 @@ export default function PartnerDepositPage() {
   const [exemptionCategory, setExemptionCategory] = useState("");
   const [otherExemptionText, setOtherExemptionText] = useState("");
 
-  // Edit / Correction States for Ledger Grid
+  // Edit / Correction States
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
 
@@ -111,23 +98,19 @@ export default function PartnerDepositPage() {
       if (partnerError || !partnerData) throw new Error("Partner profile not found.");
       setPartner(partnerData);
 
-      // Fetch Deposits for Ledger Grid
       const { data: depData } = await supabase
         .from("partner_deposits")
         .select("*")
         .eq("partner_id", partnerData.id)
         .order("created_at", { ascending: false });
-
       setDeposits(depData || []);
 
-      // Fetch Company UPI ID for QR Generation
       const { data: banks } = await supabase
         .from("company_bank_accounts")
         .select("upi_id")
         .eq("is_active", true)
         .not("upi_id", "is", null)
         .limit(1);
-        
       setCompanyBanks(banks || []);
 
     } catch (err: any) {
@@ -137,13 +120,17 @@ export default function PartnerDepositPage() {
     }
   };
 
-  // --- ADVANCED CLIENT-SIDE MULTI-TEMPLATE OCR ENGINE ---
+  // --- MULTI-TEMPLATE OCR ENGINE ---
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setSlipImage(file);
     setImagePreview(URL.createObjectURL(file));
+    
+    // Auto-switch right panel to the High-Res Viewer
+    setRightPanel("viewer"); 
+    
     setIsScanning(true);
     setScanProgress(0);
     setIsExempted(false);
@@ -165,9 +152,6 @@ export default function PartnerDepositPage() {
       const { data: { text } } = await worker.recognize(file);
       await worker.terminate();
 
-      console.log("=== RAW OCR TEXT ===");
-      console.log(text);
-
       const raw = text.toLowerCase();
 
       // 1. Detect Slip / Source Type
@@ -183,50 +167,28 @@ export default function PartnerDepositPage() {
       } else if (slipTypePreset === "paytm" || raw.includes("paytm")) {
         identifiedType = "Paytm";
         assignedMethod = "UPI";
-      } else if (
-        slipTypePreset === "cash_slip" ||
-        raw.includes("cash deposit") ||
-        raw.includes("denominations") ||
-        raw.includes("challan") ||
-        raw.includes("teller") ||
-        raw.includes("scroll")
-      ) {
+      } else if (slipTypePreset === "cash_slip" || raw.includes("cash deposit") || raw.includes("challan") || raw.includes("teller")) {
         identifiedType = "Bank Cash Slip";
         assignedMethod = "Cash Deposit";
-      } else if (
-        slipTypePreset === "neft_imps" ||
-        raw.includes("neft") ||
-        raw.includes("rtgs") ||
-        raw.includes("imps") ||
-        raw.includes("netbanking")
-      ) {
+      } else if (slipTypePreset === "neft_imps" || raw.includes("neft") || raw.includes("rtgs") || raw.includes("imps")) {
         identifiedType = raw.includes("imps") ? "IMPS" : "NEFT/RTGS";
         assignedMethod = identifiedType;
       } else if (raw.includes("upi") || raw.includes("unified payments")) {
         identifiedType = "UPI Transaction";
         assignedMethod = "UPI";
       }
-
       setDetectedPlatform(identifiedType);
 
-      // 2. Extract Reference / UTR Number
+      // 2. Extract Reference / UTR
       let extractedRef = "";
-      const labeledRefMatch = text.match(
-        /(?:upi\s*ref(?:\s*no|\s*id)?|utr(?:\s*no)?|txn(?:\s*id)?|transaction\s*id|journal(?:\s*no)?|scroll(?:\s*no)?|challan(?:\s*no)?)[:\s#.-]*([A-Za-z0-9]{6,22})/i
-      );
-
-      if (labeledRefMatch && labeledRefMatch[1]) {
-        extractedRef = labeledRefMatch[1].trim();
-      } else {
+      const labeledRefMatch = text.match(/(?:upi\s*ref(?:\s*no|\s*id)?|utr(?:\s*no)?|txn(?:\s*id)?|transaction\s*id|journal(?:\s*no)?|scroll(?:\s*no)?|challan(?:\s*no)?)[:\s#.-]*([A-Za-z0-9]{6,22})/i);
+      
+      if (labeledRefMatch && labeledRefMatch[1]) extractedRef = labeledRefMatch[1].trim();
+      else {
         const upi12DigitMatch = text.match(/\b\d{12}\b/);
-        if (upi12DigitMatch) {
-          extractedRef = upi12DigitMatch[0];
-        }
+        if (upi12DigitMatch) extractedRef = upi12DigitMatch[0];
       }
-
-      if (extractedRef) {
-        setOcrRawRef(extractedRef);
-      }
+      if (extractedRef) setOcrRawRef(extractedRef);
 
       // 3. Extract Amount
       let extractedAmount = 0;
@@ -234,9 +196,7 @@ export default function PartnerDepositPage() {
       
       if (currencyMatch && currencyMatch[1]) {
         const val = parseFloat(currencyMatch[1].replace(/,/g, ""));
-        if (!isNaN(val) && val > 0 && val <= 1000000) {
-          extractedAmount = val;
-        }
+        if (!isNaN(val) && val > 0 && val <= 1000000) extractedAmount = val;
       }
 
       if (extractedAmount === 0) {
@@ -244,28 +204,15 @@ export default function PartnerDepositPage() {
         if (numbers) {
           const numericValues = numbers
             .map((str) => parseFloat(str.replace(/,/g, "")))
-            .filter((num) => {
-              if (num >= 2024 && num <= 2030) return false;
-              if (num > 1000000) return false;
-              if (num.toString().length >= 10) return false;
-              return num > 0;
-            });
-
-          if (numericValues.length > 0) {
-            extractedAmount = Math.max(...numericValues);
-          }
+            .filter((num) => num > 0 && num <= 1000000 && num.toString().length < 10 && !(num >= 2024 && num <= 2030));
+          if (numericValues.length > 0) extractedAmount = Math.max(...numericValues);
         }
       }
-
-      if (extractedAmount > 0) {
-        setOcrRawAmount(extractedAmount);
-      }
+      if (extractedAmount > 0) setOcrRawAmount(extractedAmount);
 
       // 4. Extract Date
       const parsedDate = parseExtractedDate(text);
-      if (parsedDate) {
-        setOcrRawDate(parsedDate);
-      }
+      if (parsedDate) setOcrRawDate(parsedDate);
 
       // 5. Populate Form Fields
       setForm((prev) => ({
@@ -276,7 +223,7 @@ export default function PartnerDepositPage() {
         deposit_date: parsedDate || prev.deposit_date,
       }));
 
-    } catch (err: any) {
+    } catch (err) {
       console.error("Browser OCR Scanning Error:", err);
       alert("Slip scanning failed. Please verify the document manually.");
     } finally {
@@ -309,22 +256,15 @@ export default function PartnerDepositPage() {
         const fileExt = slipImage.name.split(".").pop();
         const fileName = `slip-${partner.id}-${Date.now()}.${fileExt}`;
         
-        const { error: uploadError } = await supabase.storage
-          .from("deposit-slips")
-          .upload(fileName, slipImage);
-
+        // This targets your exact lowercase "deposit-slips" bucket 
+        const { error: uploadError } = await supabase.storage.from("deposit-slips").upload(fileName, slipImage);
         if (uploadError) throw new Error("Image upload failed: " + uploadError.message);
 
-        const { data: publicUrlData } = supabase.storage
-          .from("deposit-slips")
-          .getPublicUrl(fileName);
-          
+        const { data: publicUrlData } = supabase.storage.from("deposit-slips").getPublicUrl(fileName);
         finalSlipUrl = publicUrlData.publicUrl;
       }
 
-      const finalExemptionReason = isExempted 
-        ? (exemptionCategory === "Other" ? `OTHER: ${otherExemptionText}` : exemptionCategory) 
-        : null;
+      const finalExemptionReason = isExempted ? (exemptionCategory === "Other" ? `OTHER: ${otherExemptionText}` : exemptionCategory) : null;
 
       const { error } = await supabase.from("partner_deposits").insert([{
         partner_id: partner.id,
@@ -343,12 +283,7 @@ export default function PartnerDepositPage() {
 
       alert("✅ Deposit submitted securely to the Accounts department.");
       
-      setForm({ 
-        deposit_amount: "", 
-        deposit_method: "UPI", 
-        reference_no: "", 
-        deposit_date: getLocalDateString(new Date()) 
-      });
+      setForm({ deposit_amount: "", deposit_method: "UPI", reference_no: "", deposit_date: getLocalDateString(new Date()) });
       setSlipImage(null);
       setImagePreview(null);
       setOcrRawAmount(null);
@@ -360,6 +295,8 @@ export default function PartnerDepositPage() {
       setExemptionCategory("");
       setOtherExemptionText("");
       
+      // Auto-switch back to ledger upon success
+      setRightPanel("ledger");
       initializePortal();
     } catch (err: any) {
       alert("Error submitting deposit: " + err.message);
@@ -371,11 +308,7 @@ export default function PartnerDepositPage() {
   // --- EDIT / CORRECTION ENGINE ---
   const startEditing = (dep: any) => {
     setEditingId(dep.id);
-    setEditForm({
-      deposit_amount: dep.deposit_amount,
-      reference_no: dep.reference_no,
-      deposit_method: dep.deposit_method
-    });
+    setEditForm({ deposit_amount: dep.deposit_amount, reference_no: dep.reference_no, deposit_method: dep.deposit_method });
   };
 
   const handleEditSubmit = async (id: string) => {
@@ -389,7 +322,6 @@ export default function PartnerDepositPage() {
       }).eq("id", id);
 
       if (error) throw error;
-      
       alert("✅ Deposit record corrected.");
       setEditingId(null);
       initializePortal();
@@ -444,8 +376,8 @@ export default function PartnerDepositPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           
-          {/* LEFT: SUBMISSION FORM */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sticky top-8">
+          {/* LEFT: SUBMISSION FORM (Sticky) */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sticky top-8" style={{ maxHeight: 'calc(100vh - 4rem)', overflowY: 'auto' }}>
             <h2 className="font-black text-lg text-slate-800 border-b border-slate-100 pb-3 mb-5">
               Record New Remittance
             </h2>
@@ -488,7 +420,8 @@ export default function PartnerDepositPage() {
                       setDetectedPlatform(null);
                       setIsUserVerified(false);
                       setExemptionCategory(""); 
-                      setOtherExemptionText(""); 
+                      setOtherExemptionText("");
+                      setRightPanel("ledger"); // Revert panel if they select exemption
                     }}
                   />
                   <span className="font-bold text-sm text-slate-700">No deposit slip available (Request Exemption)</span>
@@ -510,8 +443,10 @@ export default function PartnerDepositPage() {
                       </div>
                     ) : (
                       <div className="flex flex-col items-center">
-                        <img src={imagePreview} alt="Slip Preview" className="h-24 w-auto rounded border shadow-sm mb-2 relative z-20" />
-                        <p className="text-[11px] font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full">Tap to change image</p>
+                        <div className="text-3xl mb-1">✅</div>
+                        <p className="font-bold text-green-700 text-sm">Document Attached</p>
+                        <p className="text-[10px] text-slate-500 mt-1">👀 View high-res document on the right panel</p>
+                        <p className="text-[11px] font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full mt-3">Tap to change image</p>
                       </div>
                     )}
                   </div>
@@ -555,10 +490,7 @@ export default function PartnerDepositPage() {
                     Scanning Document Locally ({scanProgress}%)
                   </div>
                   <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-                    <div 
-                      className="bg-blue-600 h-full transition-all duration-200" 
-                      style={{ width: `${scanProgress}%` }}
-                    ></div>
+                    <div className="bg-blue-600 h-full transition-all duration-200" style={{ width: `${scanProgress}%` }}></div>
                   </div>
                 </div>
               )}
@@ -591,14 +523,14 @@ export default function PartnerDepositPage() {
                   </div>
 
                   <div className="bg-slate-800/80 p-2 rounded text-xs">
-                    <p className="text-[9px] text-slate-400 uppercase">Scanned Reference / UTR</p>
+                    <p className="text-[9px] text-slate-400 uppercase">Scanned Ref / UTR</p>
                     <p className="font-bold text-slate-200 tracking-wider truncate">
                       {ocrRawRef ? ocrRawRef : "Not detected"}
                     </p>
                   </div>
 
                   <p className="text-[11px] text-slate-400 italic">
-                    ℹ️ Values are auto-filled below. You can edit any field if the OCR misread characters.
+                    ℹ️ Verify fields below against the document viewer on the right. Edit if needed.
                   </p>
 
                   {/* MANDATORY VALIDATION CHECKBOX */}
@@ -709,164 +641,195 @@ export default function PartnerDepositPage() {
             </form>
           </div>
 
-          {/* RIGHT: HISTORY & VALIDATION GRID */}
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-fit">
-            <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
+          {/* RIGHT: DYNAMIC SPLIT PANE (Viewer OR Ledger) */}
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col sticky top-8" style={{ maxHeight: 'calc(100vh - 4rem)' }}>
+            
+            {/* DYNAMIC HEADER TABS */}
+            <div className="p-4 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center text-white gap-3 rounded-t-xl shrink-0">
               <div>
-                <h3 className="font-black tracking-widest uppercase text-sm">Deposit Scan Proof & Ledger</h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-1">Cross-check physical slips against digital entries.</p>
+                <h3 className="font-black tracking-widest uppercase text-sm">Dashboard Panes</h3>
+                <p className="text-[10px] text-slate-400 font-bold mt-1">Cross-check physical slips or view history.</p>
+              </div>
+              <div className="flex bg-slate-800 p-1 rounded-lg">
+                 <button 
+                  onClick={() => setRightPanel("viewer")} 
+                  className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${rightPanel === 'viewer' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                 >
+                   📄 Document Viewer
+                 </button>
+                 <button 
+                  onClick={() => setRightPanel("ledger")} 
+                  className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${rightPanel === 'ledger' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                 >
+                   📖 Ledger History
+                 </button>
               </div>
             </div>
             
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
-                  <tr>
-                    <th className="p-4 font-black text-center" title="Tick to self-validate against your physical records">Match ✅</th>
-                    <th className="p-4 font-black">Date</th>
-                    <th className="p-4 font-black text-right">Amount (₹)</th>
-                    <th className="p-4 font-black">Method & Ref No</th>
-                    <th className="p-4 font-black text-center">Scan Proof</th>
-                    <th className="p-4 font-black text-center">Status</th>
-                    <th className="p-4 font-black text-center">Correction</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {deposits.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center text-slate-400 font-bold">No remittance records found.</td>
-                    </tr>
+            {/* PANEL CONTENT AREA (Scrollable internally) */}
+            <div className="flex-1 overflow-y-auto bg-slate-50">
+              {rightPanel === "viewer" ? (
+                // --- DOCUMENT VIEWER PANEL ---
+                <div className="p-6 flex justify-center items-start min-h-full">
+                  {imagePreview ? (
+                    <img 
+                      src={imagePreview} 
+                      alt="High Resolution Slip" 
+                      className="w-full max-w-3xl h-auto object-contain shadow-lg rounded border border-slate-200 bg-white" 
+                    />
                   ) : (
-                    deposits.map((dep) => {
-                      const isEditing = editingId === dep.id;
-                      const isMatched = matchedRows.has(dep.id);
-
-                      return (
-                        <tr key={dep.id} className={`transition ${isEditing ? "bg-amber-50/30" : isMatched ? "bg-green-50/50" : "hover:bg-slate-50"}`}>
-                          
-                          {/* 1. MATCH CHECKBOX */}
-                          <td className="p-4 text-center border-r border-slate-100">
-                            <input 
-                              type="checkbox" 
-                              checked={isMatched} 
-                              onChange={() => toggleMatch(dep.id)} 
-                              className="w-5 h-5 accent-green-600 cursor-pointer shadow-sm rounded"
-                              title="Check this box if you have validated this entry in your bank book."
-                            />
-                          </td>
-                          
-                          {/* 2. DATE */}
-                          <td className="p-4">
-                            <p className={`font-bold ${isMatched ? "text-green-800" : "text-slate-900"}`}>
-                              {dep.deposit_date ? new Date(dep.deposit_date).toLocaleDateString("en-IN") : new Date(dep.created_at).toLocaleDateString("en-IN")}
-                            </p>
-                          </td>
-                          
-                          {/* 3. AMOUNT */}
-                          <td className="p-4 text-right">
-                            {isEditing ? (
-                              <input 
-                                type="number" 
-                                step="0.01" 
-                                value={editForm.deposit_amount} 
-                                onChange={(e) => setEditForm({ ...editForm, deposit_amount: e.target.value })} 
-                                onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                                className="w-24 border border-amber-300 p-1.5 rounded outline-none font-black text-right text-sm bg-white" 
-                              />
-                            ) : (
-                              <p className={`text-lg font-black ${dep.status === "Discrepancy" ? "text-slate-400 line-through" : "text-slate-800"}`}>
-                                ₹{Number(dep.deposit_amount).toLocaleString("en-IN")}
-                              </p>
-                            )}
-                          </td>
-
-                          {/* 4. METHOD & REFERENCE */}
-                          <td className="p-4">
-                            {isEditing ? (
-                              <div className="flex flex-col gap-1">
-                                <select 
-                                  value={editForm.deposit_method} 
-                                  onChange={(e) => setEditForm({ ...editForm, deposit_method: e.target.value })} 
-                                  className="border border-amber-300 p-1 rounded outline-none font-bold text-[10px] uppercase bg-white"
-                                >
-                                  <option value="UPI">UPI</option>
-                                  <option value="NEFT/RTGS">NEFT/RTGS</option>
-                                  <option value="IMPS">IMPS</option>
-                                  <option value="Cash Deposit">Cash Deposit</option>
-                                  <option value="Cheque">Cheque</option>
-                                </select>
-                                <input 
-                                  type="text" 
-                                  value={editForm.reference_no} 
-                                  onChange={(e) => setEditForm({ ...editForm, reference_no: e.target.value })} 
-                                  className="border border-amber-300 p-1.5 rounded outline-none font-bold text-xs bg-white" 
-                                />
-                              </div>
-                            ) : (
-                              <>
-                                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{dep.deposit_method}</p>
-                                <p className="text-xs font-bold text-slate-700 tracking-wider mt-0.5">{dep.reference_no}</p>
-                              </>
-                            )}
-                          </td>
-
-                          {/* 5. SCAN PROOF */}
-                          <td className="p-4 text-center">
-                            {dep.is_exempted ? (
-                              <div className="flex flex-col items-center cursor-help" title={dep.exemption_reason}>
-                                <span className="text-xl">⚠️</span>
-                                <p className="text-[9px] text-amber-600 font-black uppercase mt-1">Exempted</p>
-                              </div>
-                            ) : dep.deposit_slip_url ? (
-                              <a href={dep.deposit_slip_url} target="_blank" rel="noreferrer" className="inline-flex flex-col items-center hover:opacity-70 transition">
-                                <span className="text-xl">📎</span>
-                                <p className="text-[9px] text-blue-600 font-black uppercase mt-1">View Slip</p>
-                              </a>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 font-bold uppercase">N/A</span>
-                            )}
-                          </td>
-
-                          {/* 6. STATUS */}
-                          <td className="p-4 text-center">
-                            <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
-                              dep.status === "Verified" ? "bg-green-100 text-green-700 border-green-200" : 
-                              dep.status === "Discrepancy" ? "bg-red-100 text-red-700 border-red-200" : 
-                              "bg-amber-100 text-amber-700 border-amber-200"
-                            }`}>
-                              {dep.status}
-                            </span>
-                            {dep.status === "Discrepancy" && dep.rejection_reason && (
-                              <p className="text-[9px] text-red-600 font-bold mt-1 truncate max-w-[100px]" title={dep.rejection_reason}>
-                                {dep.rejection_reason}
-                              </p>
-                            )}
-                          </td>
-
-                          {/* 7. ACTION (EDIT CORRECTION) */}
-                          <td className="p-4 text-right">
-                            {dep.status === "Pending" || dep.status === "Pending Verification" ? (
-                              isEditing ? (
-                                <div className="flex gap-1 justify-end">
-                                  <button onClick={() => handleEditSubmit(dep.id)} disabled={isSubmitting} className="bg-green-500 hover:bg-green-600 text-white font-black px-2 py-1 rounded text-[10px] uppercase shadow-sm">Save</button>
-                                  <button onClick={() => setEditingId(null)} className="bg-slate-300 hover:bg-slate-400 text-slate-800 font-black px-2 py-1 rounded text-[10px] uppercase shadow-sm">Cancel</button>
-                                </div>
-                              ) : (
-                                <button onClick={() => startEditing(dep)} className="bg-white hover:bg-amber-50 text-amber-600 border border-amber-200 hover:border-amber-400 font-black px-3 py-1.5 rounded text-[10px] uppercase tracking-widest shadow-sm transition">
-                                  ✏️ Edit
-                                </button>
-                              )
-                            ) : (
-                              <span className="text-[10px] text-slate-400 font-bold uppercase">Locked</span>
-                            )}
-                          </td>
-
-                        </tr>
-                      );
-                    })
+                    <div className="flex flex-col items-center justify-center text-slate-400 h-64">
+                      <span className="text-5xl mb-4 opacity-50">📄</span>
+                      <p className="font-black tracking-widest uppercase text-sm">No Document Uploaded</p>
+                      <p className="text-xs font-bold mt-2 text-slate-500">Upload a slip on the left to inspect it here.</p>
+                    </div>
                   )}
-                </tbody>
-              </table>
+                </div>
+              ) : (
+                // --- LEDGER HISTORY PANEL ---
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm whitespace-nowrap">
+                    <thead className="bg-slate-100 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="p-4 font-black text-center">Match ✅</th>
+                        <th className="p-4 font-black">Date</th>
+                        <th className="p-4 font-black text-right">Amount (₹)</th>
+                        <th className="p-4 font-black">Method & Ref No</th>
+                        <th className="p-4 font-black text-center">Scan Proof</th>
+                        <th className="p-4 font-black text-center">Status</th>
+                        <th className="p-4 font-black text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {deposits.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-400 font-bold bg-white">No remittance records found.</td>
+                        </tr>
+                      ) : (
+                        deposits.map((dep) => {
+                          const isEditing = editingId === dep.id;
+                          const isMatched = matchedRows.has(dep.id);
+
+                          return (
+                            <tr key={dep.id} className={`transition bg-white ${isEditing ? "bg-amber-50/30" : isMatched ? "bg-green-50/50" : "hover:bg-slate-50"}`}>
+                              
+                              <td className="p-4 text-center border-r border-slate-100">
+                                <input 
+                                  type="checkbox" 
+                                  checked={isMatched} 
+                                  onChange={() => toggleMatch(dep.id)} 
+                                  className="w-5 h-5 accent-green-600 cursor-pointer shadow-sm rounded"
+                                />
+                              </td>
+                              
+                              <td className="p-4">
+                                <p className={`font-bold ${isMatched ? "text-green-800" : "text-slate-900"}`}>
+                                  {dep.deposit_date ? new Date(dep.deposit_date).toLocaleDateString("en-IN") : new Date(dep.created_at).toLocaleDateString("en-IN")}
+                                </p>
+                              </td>
+                              
+                              <td className="p-4 text-right">
+                                {isEditing ? (
+                                  <input 
+                                    type="number" 
+                                    step="0.01" 
+                                    value={editForm.deposit_amount} 
+                                    onChange={(e) => setEditForm({ ...editForm, deposit_amount: e.target.value })} 
+                                    onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                                    className="w-24 border border-amber-300 p-1.5 rounded outline-none font-black text-right text-sm bg-white" 
+                                  />
+                                ) : (
+                                  <p className={`text-lg font-black ${dep.status === "Discrepancy" ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                    ₹{Number(dep.deposit_amount).toLocaleString("en-IN")}
+                                  </p>
+                                )}
+                              </td>
+
+                              <td className="p-4">
+                                {isEditing ? (
+                                  <div className="flex flex-col gap-1">
+                                    <select 
+                                      value={editForm.deposit_method} 
+                                      onChange={(e) => setEditForm({ ...editForm, deposit_method: e.target.value })} 
+                                      className="border border-amber-300 p-1 rounded outline-none font-bold text-[10px] uppercase bg-white"
+                                    >
+                                      <option value="UPI">UPI</option>
+                                      <option value="NEFT/RTGS">NEFT/RTGS</option>
+                                      <option value="IMPS">IMPS</option>
+                                      <option value="Cash Deposit">Cash Deposit</option>
+                                      <option value="Cheque">Cheque</option>
+                                    </select>
+                                    <input 
+                                      type="text" 
+                                      value={editForm.reference_no} 
+                                      onChange={(e) => setEditForm({ ...editForm, reference_no: e.target.value })} 
+                                      className="border border-amber-300 p-1.5 rounded outline-none font-bold text-xs bg-white" 
+                                    />
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{dep.deposit_method}</p>
+                                    <p className="text-xs font-bold text-slate-700 tracking-wider mt-0.5">{dep.reference_no}</p>
+                                  </>
+                                )}
+                              </td>
+
+                              <td className="p-4 text-center">
+                                {dep.is_exempted ? (
+                                  <div className="flex flex-col items-center cursor-help" title={dep.exemption_reason}>
+                                    <span className="text-xl">⚠️</span>
+                                    <p className="text-[9px] text-amber-600 font-black uppercase mt-1">Exempted</p>
+                                  </div>
+                                ) : dep.deposit_slip_url ? (
+                                  <a href={dep.deposit_slip_url} target="_blank" rel="noreferrer" className="inline-flex flex-col items-center hover:opacity-70 transition">
+                                    <span className="text-xl">📎</span>
+                                    <p className="text-[9px] text-blue-600 font-black uppercase mt-1">View Slip</p>
+                                  </a>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase">N/A</span>
+                                )}
+                              </td>
+
+                              <td className="p-4 text-center">
+                                <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
+                                  dep.status === "Verified" ? "bg-green-100 text-green-700 border-green-200" : 
+                                  dep.status === "Discrepancy" ? "bg-red-100 text-red-700 border-red-200" : 
+                                  "bg-amber-100 text-amber-700 border-amber-200"
+                                }`}>
+                                  {dep.status}
+                                </span>
+                                {dep.status === "Discrepancy" && dep.rejection_reason && (
+                                  <p className="text-[9px] text-red-600 font-bold mt-1 truncate max-w-[100px]" title={dep.rejection_reason}>
+                                    {dep.rejection_reason}
+                                  </p>
+                                )}
+                              </td>
+
+                              <td className="p-4 text-right">
+                                {dep.status === "Pending" || dep.status === "Pending Verification" ? (
+                                  isEditing ? (
+                                    <div className="flex gap-1 justify-end">
+                                      <button onClick={() => handleEditSubmit(dep.id)} disabled={isSubmitting} className="bg-green-500 hover:bg-green-600 text-white font-black px-2 py-1 rounded text-[10px] uppercase shadow-sm">Save</button>
+                                      <button onClick={() => setEditingId(null)} className="bg-slate-300 hover:bg-slate-400 text-slate-800 font-black px-2 py-1 rounded text-[10px] uppercase shadow-sm">Cancel</button>
+                                    </div>
+                                  ) : (
+                                    <button onClick={() => startEditing(dep)} className="bg-white hover:bg-amber-50 text-amber-600 border border-amber-200 hover:border-amber-400 font-black px-3 py-1.5 rounded text-[10px] uppercase tracking-widest shadow-sm transition">
+                                      ✏️ Edit
+                                    </button>
+                                  )
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase">Locked</span>
+                                )}
+                              </td>
+
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
 
