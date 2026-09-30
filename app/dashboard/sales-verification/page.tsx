@@ -232,8 +232,11 @@ export default function StaffSalesVerification() {
     
     setIsSubmitting(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Staff authentication failed.");
+      // FIX: Replaced fragile getUser() network request with robust getSession() cache read
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
+      
+      if (!user) throw new Error("Staff authentication failed. Session lost.");
 
       const finalRemarks = correctionCategory === "Other" 
         ? `OTHER: ${otherCorrectionText}` 
@@ -283,7 +286,7 @@ export default function StaffSalesVerification() {
       // 3. Dispatch UI Alert to Partner
       await supabase.from("partner_messages").insert([{
         partner_id: editingSale.partner_id,
-        subject: `⚠️ Financial Ledger Correction: ${editingSale.report_date}`,
+        subject: `⚠️️ Financial Ledger Correction: ${editingSale.report_date}`,
         body: `Your sales report for ${editingSale.report_date} was audited and corrected by the Back-Office. Reason: ${finalRemarks}. Please check your updated ledger balance.`
       }]);
 
