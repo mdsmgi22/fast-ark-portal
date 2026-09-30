@@ -231,6 +231,25 @@ export default function PartnerDepositPage() {
     }
   };
 
+  // --- SECURE DOCUMENT VIEWER ---
+  const handleViewSecureSlip = async (path: string) => {
+    // Fallback support for older public URLs already saved in your database
+    if (path.startsWith("http")) {
+      window.open(path, "_blank");
+      return;
+    }
+
+    // Request a self-destructing access token valid for exactly 60 seconds
+    const { data, error } = await supabase.storage.from("deposit-slips").createSignedUrl(path, 60);
+    
+    if (error || !data) {
+      alert("Security Error: Unauthorized access or document missing.");
+      return;
+    }
+    
+    window.open(data.signedUrl, "_blank");
+  };
+
   // --- SUBMIT NEW DEPOSIT ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,12 +275,12 @@ export default function PartnerDepositPage() {
         const fileExt = slipImage.name.split(".").pop();
         const fileName = `slip-${partner.id}-${Date.now()}.${fileExt}`;
         
-        // This targets your exact lowercase "deposit-slips" bucket 
         const { error: uploadError } = await supabase.storage.from("deposit-slips").upload(fileName, slipImage);
         if (uploadError) throw new Error("Image upload failed: " + uploadError.message);
 
-        const { data: publicUrlData } = supabase.storage.from("deposit-slips").getPublicUrl(fileName);
-        finalSlipUrl = publicUrlData.publicUrl;
+        // SECURE VAULT UPDATE: Save ONLY the internal filename. 
+        // We will generate temporary tokens to view it later.
+        finalSlipUrl = fileName;
       }
 
       const finalExemptionReason = isExempted ? (exemptionCategory === "Other" ? `OTHER: ${otherExemptionText}` : exemptionCategory) : null;
@@ -781,10 +800,10 @@ export default function PartnerDepositPage() {
                                     <p className="text-[9px] text-amber-600 font-black uppercase mt-1">Exempted</p>
                                   </div>
                                 ) : dep.deposit_slip_url ? (
-                                  <a href={dep.deposit_slip_url} target="_blank" rel="noreferrer" className="inline-flex flex-col items-center hover:opacity-70 transition">
+                                  <button onClick={() => handleViewSecureSlip(dep.deposit_slip_url)} type="button" className="inline-flex flex-col items-center hover:opacity-70 transition">
                                     <span className="text-xl">📎</span>
                                     <p className="text-[9px] text-blue-600 font-black uppercase mt-1">View Slip</p>
-                                  </a>
+                                  </button>
                                 ) : (
                                   <span className="text-[10px] text-slate-400 font-bold uppercase">N/A</span>
                                 )}
