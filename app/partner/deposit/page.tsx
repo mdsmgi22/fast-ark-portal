@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
-import { QRCodeSVG } from "qrcode.react"; // Restored from Old Script
+import { QRCodeSVG } from "qrcode.react"; 
 
 // --- Date Normalizers ---
 const getLocalDateString = (date: Date) => {
@@ -14,7 +14,7 @@ const getLocalDateString = (date: Date) => {
 export default function PartnerDepositPage() {
   const router = useRouter();
   const [partner, setPartner] = useState<any>(null);
-  const [companyBanks, setCompanyBanks] = useState<any[]>([]); // Restored
+  const [companyBanks, setCompanyBanks] = useState<any[]>([]); 
   const [loading, setLoading] = useState(true);
   
   // Data States
@@ -30,7 +30,7 @@ export default function PartnerDepositPage() {
     deposit_date: getLocalDateString(new Date()),
   });
 
-  // Slip, Exemption & OCR States (Merged Old + New)
+  // Slip, Exemption & OCR States
   const [slipImage, setSlipImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -72,7 +72,7 @@ export default function PartnerDepositPage() {
 
       setDeposits(depData || []);
 
-      // Fetch Company UPI ID for QR Generation (From Old Script)
+      // Fetch Company UPI ID for QR Generation
       const { data: banks } = await supabase
         .from("company_bank_accounts")
         .select("upi_id")
@@ -89,7 +89,7 @@ export default function PartnerDepositPage() {
     }
   };
 
-  // --- OCR & IMAGE UPLOAD HANDLER (From Old Script) ---
+  // --- OCR & IMAGE UPLOAD HANDLER (Hardened) ---
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -110,17 +110,26 @@ export default function PartnerDepositPage() {
         body: formData,
       });
 
+      // 1. Explicitly catch Gateway Timeouts or Server Crashes before parsing JSON
+      if (!res.ok) {
+        throw new Error(`Server responded with status: ${res.status}`);
+      }
+
+      // 2. Safely parse JSON only if the response was OK (200)
       const data = await res.json();
       
-      if (res.ok && data.amount > 0) {
+      if (data.amount > 0) {
         setOcrAmount(data.amount);
       } else {
         setOcrAmount(0);
       }
+
     } catch (err) {
       console.error("OCR API Scan Failed:", err);
-      setOcrAmount(0);
+      // Fallback: If Vercel times out, default to 0 so the user can manually enter the amount
+      setOcrAmount(0); 
     } finally {
+      // 3. The finally block GUARANTEES the spinner stops, even on a crash
       setIsScanning(false);
     }
   };
@@ -142,7 +151,7 @@ export default function PartnerDepositPage() {
     try {
       let finalSlipUrl = null;
 
-      // Storage Upload Logic (From Old Script)
+      // Storage Upload Logic
       if (!isExempted && slipImage) {
         const fileExt = slipImage.name.split('.').pop();
         const fileName = `slip-${partner.id}-${Date.now()}.${fileExt}`;
@@ -164,10 +173,10 @@ export default function PartnerDepositPage() {
         ? (exemptionCategory === "Other" ? `OTHER: ${otherExemptionText}` : exemptionCategory) 
         : null;
 
-      // Merged Insert Payload
+      // Insert Payload
       const { error } = await supabase.from("partner_deposits").insert([{
         partner_id: partner.id,
-        center_id: partner.center_id, // Preserved from Old Script
+        center_id: partner.center_id, 
         deposit_amount: amt,
         deposit_method: form.deposit_method,
         reference_no: form.reference_no,
@@ -175,7 +184,7 @@ export default function PartnerDepositPage() {
         deposit_slip_url: finalSlipUrl,
         is_exempted: isExempted,
         exemption_reason: finalExemptionReason,
-        status: "Pending" // Note: old script used 'Pending Verification'. Ensure back-office scripts align. Using 'Pending' to match recent accountant portal updates.
+        status: "Pending" 
       }]);
 
       if (error) throw error;
@@ -293,7 +302,7 @@ export default function PartnerDepositPage() {
                   step="0.01" 
                   value={form.deposit_amount} 
                   onChange={e => setForm({...form, deposit_amount: e.target.value})} 
-                  onWheel={(e) => (e.target as HTMLInputElement).blur()} // Prevent Scroll-Wheel Errors
+                  onWheel={(e) => (e.target as HTMLInputElement).blur()} 
                   className={numInputClass} 
                   placeholder="0.00"
                 />
@@ -321,7 +330,7 @@ export default function PartnerDepositPage() {
                 <input required type="text" value={form.reference_no} onChange={e => setForm({...form, reference_no: e.target.value})} className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none focus:border-blue-500 font-bold tracking-wider" placeholder="e.g. UTR123456789" />
               </div>
 
-              {/* QR CODE BLOCK (From Old Script) */}
+              {/* QR CODE BLOCK */}
               {form.deposit_method === "UPI" && userEnteredValue > 0 && (
                 <div className="bg-slate-900 rounded-xl p-6 text-center border-2 border-slate-800 shadow-inner flex flex-col items-center animate-in fade-in zoom-in duration-300 mt-2">
                   <p className="text-blue-400 font-black uppercase tracking-widest text-xs mb-3">Scan to Pay via UPI</p>
@@ -382,7 +391,7 @@ export default function PartnerDepositPage() {
                 )}
               </div>
 
-              {/* OCR WARNINGS (From Old Script) */}
+              {/* OCR WARNINGS */}
               {isScanning && !isExempted && (
                 <div className="flex items-center justify-center gap-2 p-3 bg-slate-100 rounded-lg text-slate-600 font-bold text-sm animate-pulse border border-slate-200">
                   <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -412,7 +421,7 @@ export default function PartnerDepositPage() {
             </form>
           </div>
 
-          {/* RIGHT: HISTORY & VALIDATION GRID (Upgraded) */}
+          {/* RIGHT: HISTORY & VALIDATION GRID */}
           <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-fit">
             <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
               <div>
