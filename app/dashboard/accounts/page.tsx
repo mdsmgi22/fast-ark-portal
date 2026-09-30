@@ -443,11 +443,20 @@ export default function AccountantVerificationDashboard() {
                     <p className="text-blue-400 font-bold text-xs uppercase tracking-widest animate-pulse">Decrypting Vault Image...</p>
                   </div>
                 ) : imageError ? (
-                  <div className="text-center p-6 bg-red-950/50 border border-red-900 rounded-2xl max-w-md shadow-2xl">
+                  <div className="text-center p-6 bg-red-950/50 border border-red-900 rounded-2xl max-w-md shadow-2xl flex flex-col items-center">
                     <span className="text-4xl">🚫</span>
                     <h3 className="text-red-500 font-black uppercase tracking-widest mt-4">Storage Access Failed</h3>
                     <p className="text-red-300 text-xs font-bold mt-2 bg-red-950 p-3 rounded">{imageError}</p>
+                    
+                    {/* ADD THIS DEBUG BUTTON */}
+                    {secureImageUrl && (
+                      <a href={secureImageUrl} target="_blank" rel="noreferrer" className="mt-4 bg-white text-red-900 px-4 py-2 rounded text-xs font-black uppercase tracking-widest shadow-lg hover:bg-red-100 transition">
+                        Open Raw URL to Expose Error ↗
+                      </a>
+                    )}
+
                   </div>
+
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
                     {/* UPGRADE: Intelligently render PDFs in an iframe, and images in an img tag */}
