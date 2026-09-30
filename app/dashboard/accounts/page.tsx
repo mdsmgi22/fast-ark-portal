@@ -31,6 +31,7 @@ export default function AccountantVerificationDashboard() {
   const [selectedDeposit, setSelectedDeposit] = useState<any | null>(null);
   const [secureImageUrl, setSecureImageUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   // --- STATE 4: Action Engine ---
   const [processingId, setProcessingId] = useState("");
@@ -110,6 +111,8 @@ export default function AccountantVerificationDashboard() {
   useEffect(() => {
     const decryptImage = async () => {
       setSecureImageUrl(null);
+      setImageError(null); 
+      
       if (!selectedDeposit) return;
       if (selectedDeposit.is_exempted || !selectedDeposit.deposit_slip_url) return;
 
@@ -122,12 +125,15 @@ export default function AccountantVerificationDashboard() {
 
         const { data, error } = await supabase.storage
           .from("deposit-slips")
-          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); // 1 hour token
+          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); 
         
-        if (error || !data) throw error;
+        if (error) throw error; 
+        if (!data) throw new Error("No data returned from vault.");
+        
         setSecureImageUrl(data.signedUrl);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Failed to decrypt image:", err);
+        setImageError(err.message || "Access Denied by Vault"); 
       } finally {
         setImageLoading(false);
       }
@@ -177,7 +183,6 @@ export default function AccountantVerificationDashboard() {
 
       setRawDeposits(current => current.map(d => d.id === selectedDeposit.id ? { ...d, status: newStatus, rejection_reason: newStatus === 'Discrepancy' ? rejectionReason : null } : d));
       
-      // Clear the inspection pane to force them to pick the next one
       setSelectedDeposit(null);
       setShowRejectInput(false);
       setRejectionReason("");
@@ -287,7 +292,7 @@ export default function AccountantVerificationDashboard() {
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         
-        {/* LEFT PANE: QUEUE / LEDGER (Col span 5) */}
+        {/* LEFT PANE: QUEUE / LEDGER */}
         <div className="xl:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden sticky top-6" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
           <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
             <div>
@@ -355,7 +360,7 @@ export default function AccountantVerificationDashboard() {
           </div>
         </div>
 
-        {/* RIGHT PANE: PARALLEL INSPECTION VIEWER (Col span 7) */}
+        {/* RIGHT PANE: PARALLEL INSPECTION VIEWER */}
         <div className="xl:col-span-7 sticky top-6 flex flex-col gap-4" style={{ height: 'calc(100vh - 2rem)' }}>
           
           {!selectedDeposit ? (
@@ -436,6 +441,12 @@ export default function AccountantVerificationDashboard() {
                   <div className="flex flex-col items-center">
                     <div className="w-10 h-10 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4"></div>
                     <p className="text-blue-400 font-bold text-xs uppercase tracking-widest animate-pulse">Decrypting Vault Image...</p>
+                  </div>
+                ) : imageError ? (
+                  <div className="text-center p-6 bg-red-950/50 border border-red-900 rounded-2xl max-w-md shadow-2xl">
+                    <span className="text-4xl">🚫</span>
+                    <h3 className="text-red-500 font-black uppercase tracking-widest mt-4">Storage Access Failed</h3>
+                    <p className="text-red-300 text-xs font-bold mt-2 bg-red-950 p-3 rounded">{imageError}</p>
                   </div>
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
