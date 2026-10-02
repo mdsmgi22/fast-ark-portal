@@ -10,7 +10,7 @@ export default function ManagerMISDashboard() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // Secure Role State for Strict Hard-Code Redaction
+  // [STRICT FIX]: Secure Role State for Hard-Code Redaction
   const [userRole, setUserRole] = useState("staff");
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
@@ -36,7 +36,7 @@ export default function ManagerMISDashboard() {
     master_ctop_id: "",
     entry_type: "Opening Balance",
     cbp_qty: "", 
-    ctop_qty: "" // STRICT FIX: Both are now purely QTY
+    ctop_qty: "" // STRICT FIX: Scrubbed Amount/₹ entirely. Purely Qty.
   });
 
   // Tab 2: Purchase Form State
@@ -157,7 +157,6 @@ export default function ManagerMISDashboard() {
   // Prevents Negative Entries & Scroll Glitches
   // ==========================================
   const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Blocks the minus sign, plus sign, and exponential 'e' natively
     if (e.key === '-' || e.key === '+' || e.key === 'e' || e.key === 'E') {
       e.preventDefault();
     }
@@ -169,7 +168,7 @@ export default function ManagerMISDashboard() {
 
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO PARSE-FLOAT FOR DECIMALS)
+  // 1. BALANCE SUBMIT ENGINE (DECIMAL PARSE FLOAT)
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -187,8 +186,8 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_qty: parseFloat(balanceForm.cbp_qty) || 0, // Fractional Qty Support
-        ctop_qty: parseFloat(balanceForm.ctop_qty) || 0, // Fractional Qty Support
+        cbp_qty: parseFloat(balanceForm.cbp_qty) || 0, // Decimal Qty Support
+        ctop_qty: parseFloat(balanceForm.ctop_qty) || 0, // Decimal Qty Support
         logged_by: user.id
       };
 
@@ -497,7 +496,7 @@ export default function ManagerMISDashboard() {
         </div>
       </div>
 
-      {/* TAB NAVIGATION [STRICT RBAC HIDDEN LOGIC] */}
+      {/* TAB NAVIGATION [STRICT RBAC REDACTION] */}
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
         <button onClick={() => setActiveTab('balances')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Master Balances</button>
         

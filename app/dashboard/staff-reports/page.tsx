@@ -16,15 +16,13 @@ export default function StaffProductivityDashboard() {
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // [FIX 1]: Initialize as an empty string to prevent SSR Hydration Crashes
+  // [FIX 1]: Initialize as empty string to prevent SSR Hydration Crashes
   const [dateFilter, setDateFilter] = useState("");
 
-  // Safely mount the current date strictly on the client side
   useEffect(() => {
     setDateFilter(getLocalDateString(new Date()));
   }, []);
 
-  // Fetch only when dateFilter is safely populated
   useEffect(() => {
     if (dateFilter) fetchAnalytics();
   }, [dateFilter]);
@@ -46,7 +44,6 @@ export default function StaffProductivityDashboard() {
         return router.push("/dashboard");
       }
 
-      // Fetch all active back-office staff
       const { data: staff } = await supabase.from('back_office_staff').select('email, name, role');
       if (staff) setStaffList(staff);
 

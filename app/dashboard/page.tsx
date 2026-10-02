@@ -3,11 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
-import { 
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid 
-} from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
-// --- INJECT DECOUPLED COMPONENT ---
 import StaffManagementEngine from "../components/StaffManagementEngine";
 
 const getLocalDateString = (date: Date) => {
@@ -18,33 +15,19 @@ export default function AdminCommandCenter() {
   const router = useRouter();
   const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Strict routing state to prevent "Ghost Clicks"
   const [isRouting, setIsRouting] = useState(false);
   
-  // --- STATE 1: Operational Analytics ---
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
   const [recentApps, setRecentApps] = useState<any[]>([]);
   const [enquiries, setEnquiries] = useState<any[]>([]);
-
-  // --- STATE 2: Financial & Tracking ---
   const [allPartners, setAllPartners] = useState<any[]>([]);
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [rawDeposits, setRawDeposits] = useState<any[]>([]);
-  
   const [timeFilter, setTimeFilter] = useState("monthly"); 
   const [geoFilter, setGeoFilter] = useState({ state: "All", dist: "All", location: "All", partner: "All" });
-  
-  const [dropdowns, setDropdowns] = useState<{
-    states: string[];
-    dists: string[];
-    locations: string[];
-    partners: string[];
-  }>({ states: [], dists: [], locations: [], partners: [] });
-  
+  const [dropdowns, setDropdowns] = useState<{ states: string[]; dists: string[]; locations: string[]; partners: string[]; }>({ states: [], dists: [], locations: [], partners: [] });
   const [financials, setFinancials] = useState({ cbp: 0, ctop: 0, sim: 0, cheque: 0, totalSalesCash: 0, totalDeposits: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
-  
   const [missingSales, setMissingSales] = useState<any[]>([]);
   const [missingDeposits, setMissingDeposits] = useState<any[]>([]);
   const [isRefreshingFinance, setIsRefreshingFinance] = useState(false);
@@ -69,14 +52,15 @@ export default function AdminCommandCenter() {
       const rawRole = staffData?.role || '';
       const safeRole = rawRole.trim().toLowerCase(); 
 
-      if (['admin', 'manager', 'staff'].includes(safeRole)) {
+      // Managers & Admins fetch all data
+      if (['admin', 'manager'].includes(safeRole)) {
         await fetchOperationalData();
       }
       
       if (['admin', 'accountant'].includes(safeRole)) {
         await fetchFinancialData("monthly");
       } else {
-        setLoading(false); 
+        setLoading(false); // Instantly releases loading lock for Staff
       }
       
     } catch (err: any) {
@@ -114,8 +98,7 @@ export default function AdminCommandCenter() {
       let startDate = new Date();
       let endDate = new Date();
 
-      if (timeMode === "today") {
-      } else if (timeMode === "yesterday") {
+      if (timeMode === "yesterday") {
         startDate.setDate(startDate.getDate() - 1);
         endDate.setDate(endDate.getDate() - 1);
       } else if (timeMode === "weekly") {
@@ -127,32 +110,17 @@ export default function AdminCommandCenter() {
       const startStr = getLocalDateString(startDate);
       const endStr = getLocalDateString(endDate);
 
-      const { data: sales } = await supabase
-        .from('daily_sales_reports')
-        .select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`)
-        .gte('report_date', startStr)
-        .lte('report_date', endStr);
+      const { data: sales } = await supabase.from('daily_sales_reports').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).gte('report_date', startStr).lte('report_date', endStr);
+      const { data: deposits } = await supabase.from('partner_deposits').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).neq('status', 'Discrepancy').gte('created_at', `${startStr}T00:00:00+05:30`).lte('created_at', `${endStr}T23:59:59+05:30`);
 
-      const { data: deposits } = await supabase
-        .from('partner_deposits')
-        .select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`)
-        .neq('status', 'Discrepancy')
-        .gte('created_at', `${startStr}T00:00:00+05:30`) 
-        .lte('created_at', `${endStr}T23:59:59+05:30`);
-
-      const validSales = sales || [];
-      const validDeposits = deposits || [];
-
-      setRawSales(validSales);
-      setRawDeposits(validDeposits);
-      
+      setRawSales(sales || []);
+      setRawDeposits(deposits || []);
       extractDropdownOptions(allPartners); 
       
       const resetFilters = { state: "All", dist: "All", location: "All", partner: "All" };
       setGeoFilter(resetFilters);
-      calculateEngine(validSales, validDeposits, allPartners, resetFilters);
+      calculateEngine(sales || [], deposits || [], allPartners, resetFilters);
       setTimeFilter(timeMode);
-
     } catch (error: any) {
       console.error("Finance fetch error:", error.message);
     } finally {
@@ -176,12 +144,7 @@ export default function AdminCommandCenter() {
       }
     });
 
-    setDropdowns({
-      states: Array.from(states).sort(),
-      dists: Array.from(dists).sort(),
-      locations: Array.from(locs).sort(),
-      partners: Array.from(names).sort()
-    });
+    setDropdowns({ states: Array.from(states).sort(), dists: Array.from(dists).sort(), locations: Array.from(locs).sort(), partners: Array.from(names).sort() });
   };
 
   const calculateEngine = (sales: any[], deposits: any[], directory: any[], filters: any) => {
@@ -251,34 +214,31 @@ export default function AdminCommandCenter() {
     router.push("/login");
   };
 
-  // [FIX 1]: Safe Router Push with Failsafe Timeout
   const routeTo = (path: string) => {
     setIsRouting(true);
     router.push(path);
-    // Safety net: Automatically dismiss overlay if route takes > 8s due to network error
     setTimeout(() => setIsRouting(false), 8000);
   };
 
-  // [FIX 2]: Only return the hard unmount on pure `loading`
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
       <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
     </div>
   );
 
-  // --- Normalized RBAC PERMISSION BOOLEANS ---
+  // --- STRICT RBAC PERMISSION BOOLEANS ---
   const rawRole = adminUser?.role || '';
   const safeRole = rawRole.trim().toLowerCase();
   
   const isGodMode = safeRole === 'admin';
   const isFinanceTeam = ['admin', 'accountant'].includes(safeRole);
-  const isOpsTeam = ['admin', 'manager', 'staff'].includes(safeRole);
   const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
+  const isStaff = safeRole === 'staff';
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
       
-      {/* [FIX 3]: Z-Index UI Overlay. Keeps the DOM intact so Next.js can transition safely! */}
+      {/* Z-Index UI Overlay */}
       {isRouting && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
@@ -303,7 +263,7 @@ export default function AdminCommandCenter() {
           <div className="flex gap-3">
             <button 
               onClick={() => { 
-                if(isOpsTeam) fetchOperationalData(); 
+                if(isManagerOrAdmin) fetchOperationalData(); 
                 if(isFinanceTeam) fetchFinancialData(timeFilter); 
               }} 
               className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md font-bold hover:bg-gray-50 shadow-sm transition text-sm"
@@ -319,7 +279,6 @@ export default function AdminCommandCenter() {
         {/* --- SECTION 1: LIVE FINANCIAL ENGINE (Finance Team Only) --- */}
         {isFinanceTeam && (
           <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden animate-in fade-in">
-            
             <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-col lg:flex-row justify-between items-center gap-4">
               <h2 className="text-white font-black text-lg tracking-wide flex items-center gap-2"><span>📈</span> Live Revenue & Reconciliation</h2>
               <div className="flex bg-slate-800 rounded-lg p-1 overflow-x-auto">
@@ -336,7 +295,6 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* Geo Filters */}
             <div className="p-4 bg-slate-800 border-b border-slate-700 grid grid-cols-2 md:grid-cols-4 gap-4">
               {(Object.keys(geoFilter) as Array<keyof typeof geoFilter>).map((field) => (
                 <div key={field}>
@@ -349,7 +307,6 @@ export default function AdminCommandCenter() {
               ))}
             </div>
 
-            {/* KPI Output */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-px bg-slate-700">
               <div className="bg-slate-900 p-5 flex flex-col justify-center">
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total CBP</p>
@@ -367,7 +324,6 @@ export default function AdminCommandCenter() {
                 <p className="text-[10px] text-amber-500/70 font-bold uppercase tracking-widest mb-1">Cheque Amt</p>
                 <p className="text-xl font-black text-amber-500">₹{financials.cheque.toLocaleString('en-IN')}</p>
               </div>
-              
               <div className="bg-slate-900 p-5 border-l-0 md:border-l-4 border-t-4 md:border-t-0 border-blue-500 flex flex-col justify-center">
                 <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">Total Sales Cash</p>
                 <p className="text-2xl md:text-3xl font-black text-white">₹{financials.totalSalesCash.toLocaleString('en-IN')}</p>
@@ -378,7 +334,6 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* Graphical Chart output */}
             {chartData.length > 0 && (
               <div className="p-6 bg-slate-900 w-full h-80 border-t border-slate-700">
                 <ResponsiveContainer width="100%" height="100%">
@@ -440,8 +395,8 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 3: OPERATIONAL METRICS (Ops Team Only) --- */}
-        {isOpsTeam && (
+        {/* --- SECTION 3: OPERATIONAL METRICS (Managers & Admins Only) --- */}
+        {isManagerOrAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in">
             <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Action Required</p>
@@ -458,17 +413,17 @@ export default function AdminCommandCenter() {
               <h2 className="text-3xl font-black text-slate-800">{stats.rejected}</h2>
               <p className="text-red-600 font-bold mt-2 text-xs">Rejected Apps</p>
             </div>
-            <div onClick={() => isManagerOrAdmin ? routeTo("/dashboard/locations") : null} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 transition group block ${isManagerOrAdmin ? 'hover:shadow-md cursor-pointer' : 'cursor-default'}`}>
+            <div onClick={() => routeTo("/dashboard/locations")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 hover:shadow-md transition group block cursor-pointer">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Infrastructure</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.locations}</h2>
-              <p className="text-blue-600 font-bold mt-2 text-xs flex items-center justify-between">Active Centers {isManagerOrAdmin && <span>→</span>}</p>
+              <p className="text-blue-600 font-bold mt-2 text-xs flex items-center justify-between">Active Centers <span>→</span></p>
             </div>
           </div>
         )}
 
-        {/* --- SECTION 4: ENTERPRISE MODULES GRID (DYNAMIC PER ROLE) --- */}
+        {/* --- SECTION 4: ENTERPRISE MODULES GRID --- */}
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
-          {safeRole === 'accountant' ? "Financial Modules" : safeRole === 'staff' ? "Assigned Tasks" : "Enterprise Modules"}
+          {isAccountant ? "Financial Modules" : isStaff ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
@@ -516,34 +471,35 @@ export default function AdminCommandCenter() {
             </>
           )}
 
-          {/* OPS TEAM ONLY (Admin, Manager, Staff) */}
-          {isOpsTeam && (
+          {/* GENERAL OPS: ONLY STAFF, MANAGERS & ADMINS */}
+          {!isAccountant && (
             <>
-              <div onClick={() => routeTo("/dashboard/ocsc")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">📡</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Telecom & OCSC Data</h3>
-                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage Master CTOP accounts, Sanchar Soft credentials, and Agent mappings.</p>
+              {/* [STRICT FIX]: Staff ONLY see this specific form in the dashboard */}
+              <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
+                <div className="text-3xl mb-3">📊</div>
+                <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">MIS & Balances</h3>
+                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Log daily Opening/Closing balances and manage operational ledgers.</p>
               </div>
 
-              <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">📝</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Franchise Onboarding</h3>
-                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Review applications and approve new Fast Ark partners.</p>
-              </div>
-
-              <div onClick={() => routeTo("/dashboard/logistics")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">📦</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-green-600">Logistics & Supply</h3>
-                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Approve CTOP/CBP top-ups and mark physical SIMs dispatched.</p>
-              </div>
-
-              {/* Managers & Admins Only */}
+              {/* Managers & Admins Only: Rest of the Modules */}
               {isManagerOrAdmin && (
                 <>
-                  <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
-                    <div className="text-3xl mb-3">📊</div>
-                    <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Manager MIS Dashboard</h3>
-                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Hierarchical MIS pipeline for procurement, center sales, collections, and live Hub & Spoke reporting.</p>
+                  <div onClick={() => routeTo("/dashboard/ocsc")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
+                    <div className="text-3xl mb-3">📡</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Telecom & OCSC Data</h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage Master CTOP accounts, Sanchar Soft credentials, and Agent mappings.</p>
+                  </div>
+
+                  <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
+                    <div className="text-3xl mb-3">📝</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Franchise Onboarding</h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Review applications and approve new Fast Ark partners.</p>
+                  </div>
+
+                  <div onClick={() => routeTo("/dashboard/logistics")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block cursor-pointer">
+                    <div className="text-3xl mb-3">📦</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-green-600">Logistics & Supply</h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Approve CTOP/CBP top-ups and mark physical SIMs dispatched.</p>
                   </div>
 
                   <div onClick={() => routeTo("/dashboard/messages")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
@@ -559,7 +515,6 @@ export default function AdminCommandCenter() {
           {/* SUPER ADMIN EXCLUSIVES */}
           {isGodMode && (
             <>
-              {/* Productivty Matrix mapped correctly to /dashboard/staff-reports */}
               <div onClick={() => routeTo("/dashboard/staff-reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">⏱️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Productivity Matrix</h3>
@@ -569,8 +524,8 @@ export default function AdminCommandCenter() {
           )}
         </div>
 
-        {/* --- SECTION 5: RECENT ACTIVITY (Ops Team Only) --- */}
-        {isOpsTeam && (
+        {/* --- SECTION 5: RECENT ACTIVITY (Managers & Admins Only) --- */}
+        {isManagerOrAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4 animate-in fade-in">
             
             {/* Website Enquiries */}
