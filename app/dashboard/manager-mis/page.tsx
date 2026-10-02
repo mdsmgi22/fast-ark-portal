@@ -9,7 +9,9 @@ export default function ManagerMISDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'purchase' | 'sales' | 'collection' | 'report'>('purchase');
+  
+  // [UPGRADED]: Added 'balances' to the tab state architecture
+  const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
   // Architecture Data
   const [allLocations, setAllLocations] = useState<any[]>([]); 
@@ -18,12 +20,25 @@ export default function ManagerMISDashboard() {
 
   // Tab Context States
   const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
-  
-  // NEW: Cascading Filter States for Data Entry (Sales & Collection)
   const [entryMasterLocId, setEntryMasterLocId] = useState("");
   const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
 
-  // Tab 1: Purchase Form State
+  // ==========================================
+  // TAB 1: MASTER BALANCES STATE (NEW)
+  // ==========================================
+  const [rawBalances, setRawBalances] = useState<any[]>([]);
+  const [editingBalanceId, setEditingBalanceId] = useState<string | null>(null);
+  
+  const [balanceForm, setBalanceForm] = useState({
+    report_date: new Date().toISOString().split('T')[0],
+    location_id: "",
+    master_ctop_id: "",
+    entry_type: "Opening Balance",
+    cbp_amount: "",
+    ctop_amount: ""
+  });
+
+  // Tab 2: Purchase Form State
   const [purchaseForm, setPurchaseForm] = useState({
     purchase_date: new Date().toISOString().split('T')[0],
     master_ctop_id: "", 
@@ -34,7 +49,7 @@ export default function ManagerMISDashboard() {
     manual_qty_override: false, 
   });
 
-  // Tab 2: Sales Form State (OCSC)
+  // Tab 3: Sales Form State (OCSC)
   const [ocscSales, setOcscSales] = useState({
     cbp_landline_cash: "", cbp_gsm_cash: "", ctop_recharge_cash: "",
     sim_replace_qty: "", sim_replace_cash: "",
@@ -42,16 +57,16 @@ export default function ManagerMISDashboard() {
     sim_other_qty: "", sim_other_cash: "",
   });
 
-  // Tab 2: Sales Form State (CM)
+  // Tab 3: Sales Form State (CM)
   const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
 
-  // Tab 3: Collection Form State
+  // Tab 4: Collection Form State
   const [collectionForm, setCollectionForm] = useState({
     total_cash_collected: "", remarks: ""
   });
 
   // ==========================================
-  // TAB 4: REPORTING ENGINE STATES
+  // TAB 5: REPORTING ENGINE STATES
   // ==========================================
   const [rawPurchases, setRawPurchases] = useState<any[]>([]);
   const [rawSales, setRawSales] = useState<any[]>([]);
@@ -72,13 +87,14 @@ export default function ManagerMISDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [locRes, masterRes, agentRes, purRes, salesRes, colRes] = await Promise.all([
-        supabase.from("locations").select("*").order("center_name"), // Fetch ALL for Hub/Spoke topology
+      const [locRes, masterRes, agentRes, purRes, salesRes, colRes, balRes] = await Promise.all([
+        supabase.from("locations").select("*").order("center_name"), 
         supabase.from("master_ctop_accounts").select("*, locations(center_name)"),
         supabase.from("agent_ctop_mappings").select("*, active_partners(locations(id))"),
         supabase.from("mis_purchases").select("*, master_ctop_accounts(master_ctop_no, location_id)").order("purchase_date", {ascending: false}),
         supabase.from("mis_monthly_sales").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false}),
-        supabase.from("mis_monthly_collections").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false})
+        supabase.from("mis_monthly_collections").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false}),
+        supabase.from("mis_balances").select("*, locations(center_name), master_ctop_accounts(master_ctop_no)").order("report_date", {ascending: false})
       ]);
 
       setAllLocations(locRes.data || []);
@@ -87,6 +103,7 @@ export default function ManagerMISDashboard() {
       setRawPurchases(purRes.data || []);
       setRawSales(salesRes.data || []);
       setRawCollections(colRes.data || []);
+      setRawBalances(balRes.data || []);
     } catch (err: any) {
       console.error(err.message);
     } finally {
@@ -94,7 +111,7 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // Agent Mapping Hook for Tab 2
+  // Agent Mapping Hook for Tab 3
   useEffect(() => {
     if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
       const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
@@ -105,7 +122,7 @@ export default function ManagerMISDashboard() {
     }
   }, [selectedChildLocKey, agentMappings]);
 
-  // Intelligent Auto-Calculation Engine
+  // Intelligent Auto-Calculation Engine (Procurement)
   useEffect(() => {
     if (purchaseForm.manual_qty_override) return; 
 
@@ -128,6 +145,84 @@ export default function ManagerMISDashboard() {
   };
 
   // --- SUBMISSION ENGINES ---
+
+  // 1. BALANCE SUBMIT ENGINE (NEW)
+  const handleBalanceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
+      return alert("You must select both a Master Location and a Master CTOP.");
+    }
+    
+    setIsSubmitting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
+      if (!user) throw new Error("Auth drop.");
+
+      const payload = {
+        report_date: balanceForm.report_date,
+        location_id: parseInt(balanceForm.location_id),
+        master_ctop_id: balanceForm.master_ctop_id,
+        entry_type: balanceForm.entry_type,
+        cbp_amount: parseFloat(balanceForm.cbp_amount) || 0,
+        ctop_amount: parseFloat(balanceForm.ctop_amount) || 0,
+        logged_by: user.id
+      };
+
+      if (editingBalanceId) {
+        const { error } = await supabase.from('mis_balances').update(payload).eq('id', editingBalanceId);
+        if (error) throw error;
+        await supabase.from('staff_activity_logs').insert([{
+          staff_id: user.id,
+          staff_email: user.email,
+          action_type: 'AUDIT',
+          module: 'MANAGER_MIS',
+          target_id: editingBalanceId,
+          details: `Corrected ${payload.entry_type} for ${payload.report_date}.`
+        }]);
+        alert("✅ Balance Record Successfully Updated.");
+      } else {
+        const { data: insertedRecord, error } = await supabase.from('mis_balances').insert([payload]).select().single();
+        if (error) throw error;
+        await supabase.from('staff_activity_logs').insert([{
+          staff_id: user.id,
+          staff_email: user.email,
+          action_type: 'MIS_ENTRY',
+          module: 'MANAGER_MIS',
+          target_id: insertedRecord.id,
+          details: `Logged ${payload.entry_type} for ${payload.report_date}.`
+        }]);
+        alert("✅ Balance Record Successfully Saved.");
+      }
+
+      // Reset and refresh
+      setBalanceForm({
+        ...balanceForm,
+        cbp_amount: "",
+        ctop_amount: ""
+      });
+      setEditingBalanceId(null);
+      fetchArchitectureAndReports();
+      
+    } catch (err: any) {
+      alert("Error saving balance: " + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditBalance = (bal: any) => {
+    setEditingBalanceId(bal.id);
+    setBalanceForm({
+      report_date: bal.report_date,
+      location_id: bal.location_id.toString(),
+      master_ctop_id: bal.master_ctop_id,
+      entry_type: bal.entry_type,
+      cbp_amount: bal.cbp_amount,
+      ctop_amount: bal.ctop_amount
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,7 +267,7 @@ export default function ManagerMISDashboard() {
 
       alert("✅ Central Purchase Ledger Updated.");
       setPurchaseForm({ ...purchaseForm, qty: "", amount: "", manual_qty_override: false }); 
-      fetchArchitectureAndReports(); // Refresh reports
+      fetchArchitectureAndReports(); 
     } catch (err: any) {
       alert("Error saving purchase: " + err.message);
     } finally {
@@ -239,7 +334,7 @@ export default function ManagerMISDashboard() {
       }]);
 
       alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
-      fetchArchitectureAndReports(); // Refresh reports
+      fetchArchitectureAndReports(); 
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
       else alert("Error saving sales: " + err.message);
@@ -281,7 +376,7 @@ export default function ManagerMISDashboard() {
 
       alert(`✅ Collection for ${reportingMonth} successfully logged.`);
       setCollectionForm({ total_cash_collected: "", remarks: "" });
-      fetchArchitectureAndReports(); // Refresh reports
+      fetchArchitectureAndReports(); 
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Collection for this center and month is already locked.");
       else alert("Error saving collection: " + err.message);
@@ -291,7 +386,7 @@ export default function ManagerMISDashboard() {
   };
 
   // ==========================================
-  // REPORTING ENGINE LOGIC (TAB 4)
+  // REPORTING ENGINE LOGIC
   // ==========================================
   const getFilteredReports = () => {
     let fPurchases = [...rawPurchases];
@@ -356,12 +451,11 @@ export default function ManagerMISDashboard() {
   const livePct = parseFloat(purchaseForm.commission_percent) || 0;
   const liveComm = (liveAmt * livePct) / 100;
 
-  // Split locations for Data Entry Dropdowns (Sales/Collection)
+  // Navigation Logic Splits
   const hqLocations = allLocations.filter(l => l.is_master_node);
   const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
-  
-  // Split locations for Report Filter Dropdowns
   const childFranchisesForReports = allLocations.filter(l => !l.is_master_node && (repMasterFilter === "ALL" || l.parent_master_id === parseInt(repMasterFilter)));
+  const mappedMasterCtops = masterCtops.filter(m => m.location_id?.toString() === balanceForm.location_id);
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
@@ -381,13 +475,142 @@ export default function ManagerMISDashboard() {
 
       {/* TAB NAVIGATION */}
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
-        <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Central Procurement</button>
-        <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Center Sales</button>
-        <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Collection</button>
-        <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Live Reporting Engine</button>
+        <button onClick={() => setActiveTab('balances')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Master Balances</button>
+        <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Central Procurement</button>
+        <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Sales</button>
+        <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Center Collection</button>
+        <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>5. Live Reports</button>
       </div>
 
-      {/* TAB 1: MASTER PURCHASE ENGINE (PROCUREMENT) */}
+      {/* ========================================== */}
+      {/* TAB 1: MASTER BALANCES ENGINE (NEW) */}
+      {/* ========================================== */}
+      {activeTab === 'balances' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingBalanceId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
+              <div className="flex gap-4 items-center">
+                <span className="text-3xl">⚖️</span>
+                <div>
+                  <h2 className={`font-black uppercase tracking-widest ${editingBalanceId ? 'text-amber-900' : 'text-white'}`}>
+                    {editingBalanceId ? 'Editing Balance Record' : 'Log Daily Balances'}
+                  </h2>
+                  <p className={`text-xs font-bold mt-1 ${editingBalanceId ? 'text-amber-700' : 'text-slate-400'}`}>
+                    Declare your Opening and Closing balances for CBP and CTOP accurately.
+                  </p>
+                </div>
+              </div>
+              {editingBalanceId && (
+                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_amount: "", ctop_amount: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                  Cancel Edit
+                </button>
+              )}
+            </div>
+
+            <form onSubmit={handleBalanceSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Record Date *</label>
+                  <input required type="date" value={balanceForm.report_date} onChange={e => setBalanceForm({...balanceForm, report_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">Master Location (Hub) *</label>
+                  <select required value={balanceForm.location_id} onChange={e => setBalanceForm({...balanceForm, location_id: e.target.value, master_ctop_id: ""})} className="w-full border-2 border-indigo-200 p-2.5 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
+                    <option value="" disabled>-- Select HQ --</option>
+                    {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">Master CTOP No. *</label>
+                  <select required disabled={!balanceForm.location_id} value={balanceForm.master_ctop_id} onChange={e => setBalanceForm({...balanceForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-2.5 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50 disabled:opacity-50">
+                    <option value="" disabled>-- Select Assigned CTOP --</option>
+                    {mappedMasterCtops.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Entry Type *</label>
+                  <select value={balanceForm.entry_type} onChange={e => setBalanceForm({...balanceForm, entry_type: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
+                    <option value="Opening Balance">Opening Balance</option>
+                    <option value="Closing Balance">Closing Balance</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Amount (₹) *</label>
+                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_amount} onChange={e => setBalanceForm({...balanceForm, cbp_amount: e.target.value})} className={numInputClass} placeholder="0.00" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Amount (₹) *</label>
+                  <input required type="number" step="0.01" min="0" value={balanceForm.ctop_amount} onChange={e => setBalanceForm({...balanceForm, ctop_amount: e.target.value})} className={numInputClass} placeholder="0.00" />
+                </div>
+              </div>
+              
+              <button type="submit" disabled={isSubmitting} className={`w-full text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6 ${editingBalanceId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-900 hover:bg-slate-800'}`}>
+                {isSubmitting ? "Committing..." : editingBalanceId ? "Update Balance Ledger" : "Lock Balance Entry"}
+              </button>
+            </form>
+          </div>
+
+          {/* Balance Ledger History */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
+              <h3 className="font-black tracking-widest uppercase text-xs">Recent Master Balances</h3>
+              <span className="bg-slate-800 text-slate-400 font-bold px-3 py-1 rounded text-[10px] uppercase tracking-widest border border-slate-700">
+                {rawBalances.length} Records
+              </span>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
+                  <tr>
+                    <th className="p-4 font-black">Date & Type</th>
+                    <th className="p-4 font-black">Master Location & CTOP</th>
+                    <th className="p-4 font-black text-right">CBP (₹)</th>
+                    <th className="p-4 font-black text-right">CTOP (₹)</th>
+                    <th className="p-4 font-black text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rawBalances.length === 0 ? (
+                    <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
+                  ) : (
+                    rawBalances.slice(0, 50).map(bal => (
+                      <tr key={bal.id} className={`transition ${editingBalanceId === bal.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
+                        <td className="p-4">
+                          <p className="font-black text-slate-900">{bal.report_date}</p>
+                          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border inline-block mt-1 ${bal.entry_type === 'Opening Balance' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
+                            {bal.entry_type}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
+                          <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
+                        </td>
+                        <td className="p-4 text-right font-black text-slate-800">₹{Number(bal.cbp_amount).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">₹{Number(bal.ctop_amount).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right">
+                          <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: MASTER PURCHASE ENGINE (PROCUREMENT) */}
       {activeTab === 'purchase' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
           <div className="bg-slate-900 p-4 rounded-lg mb-6 flex gap-4 items-center">
@@ -478,18 +701,17 @@ export default function ManagerMISDashboard() {
         </div>
       )}
 
-      {/* TAB 2 & 3 SHARED CENTER SELECTION RIBBON (UPDATED TO HUB & SPOKE) */}
+      {/* TAB 3 & 4 SHARED CENTER SELECTION RIBBON */}
       {(activeTab === 'sales' || activeTab === 'collection') && (
         <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 animate-in fade-in">
           
-          {/* Cascading Filter 1: Master HQ */}
           <div className="col-span-1">
             <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
             <select 
               value={entryMasterLocId} 
               onChange={(e) => {
                 setEntryMasterLocId(e.target.value); 
-                setSelectedChildLocKey(""); // Reset child center on master change
+                setSelectedChildLocKey(""); 
               }}
               className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition"
             >
@@ -498,7 +720,6 @@ export default function ManagerMISDashboard() {
             </select>
           </div>
 
-          {/* Cascading Filter 2: Child Center */}
           <div className="col-span-1">
             <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
             <select 
@@ -516,7 +737,6 @@ export default function ManagerMISDashboard() {
             </select>
           </div>
 
-          {/* Month Context */}
           <div className="col-span-1">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
             <input 
@@ -527,7 +747,6 @@ export default function ManagerMISDashboard() {
             />
           </div>
 
-          {/* Operation Mode */}
           <div className="col-span-1 flex flex-col justify-end">
             <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
@@ -539,7 +758,7 @@ export default function ManagerMISDashboard() {
         </div>
       )}
 
-      {/* TAB 2: MONTHLY SALES ENGINE (CENTER LEVEL) */}
+      {/* TAB 3: MONTHLY SALES ENGINE (CENTER LEVEL) */}
       {activeTab === 'sales' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
           <div className="flex justify-between items-end border-b pb-2 mb-6">
@@ -620,7 +839,7 @@ export default function ManagerMISDashboard() {
         </div>
       )}
 
-      {/* TAB 3: COLLECTION ENGINE (CENTER LEVEL) */}
+      {/* TAB 4: COLLECTION ENGINE (CENTER LEVEL) */}
       {activeTab === 'collection' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
           <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Center Collection</h2>
@@ -662,15 +881,12 @@ export default function ManagerMISDashboard() {
       )}
 
       {/* ========================================== */}
-      {/* TAB 4: COMPREHENSIVE REPORTING ENGINE */}
+      {/* TAB 5: COMPREHENSIVE REPORTING ENGINE */}
       {/* ========================================== */}
       {activeTab === 'report' && (
         <div className="animate-in fade-in slide-in-from-bottom-4 space-y-6">
           
-          {/* REPORT FILTER RIBBON */}
           <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Time Filter */}
             <div>
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Time Context</label>
               <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-500">
@@ -680,8 +896,6 @@ export default function ManagerMISDashboard() {
                 <option value="all">All Time</option>
               </select>
             </div>
-
-            {/* Hierarchical Hub (Master) Filter */}
             <div>
               <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Master HQ (Hub)</label>
               <select value={repMasterFilter} onChange={(e) => {setRepMasterFilter(e.target.value); setRepChildFilter("ALL");}} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400">
@@ -689,8 +903,6 @@ export default function ManagerMISDashboard() {
                 {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
               </select>
             </div>
-
-            {/* Hierarchical Spoke (Child) Filter */}
             <div>
               <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Child Center (Spoke)</label>
               <select value={repChildFilter} onChange={(e) => setRepChildFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400">
@@ -698,10 +910,8 @@ export default function ManagerMISDashboard() {
                 {childFranchisesForReports.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
               </select>
             </div>
-
           </div>
 
-          {/* REPORT METRICS BANNER */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total HQ Purchases</p>
@@ -721,10 +931,7 @@ export default function ManagerMISDashboard() {
             </div>
           </div>
 
-          {/* REPORT TABLES */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            
-            {/* Master HQ Purchases Table */}
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
               <div className="bg-indigo-50 border-b border-indigo-100 p-4">
                 <h3 className="font-black text-indigo-900 uppercase tracking-widest text-xs">Master HQ Procurement Ledger</h3>
@@ -739,7 +946,7 @@ export default function ManagerMISDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {fPurchases.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No bulk purchases found for this filter.</td></tr> : 
+                    {fPurchases.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No bulk purchases found.</td></tr> : 
                       fPurchases.map(p => (
                         <tr key={p.id} className="hover:bg-slate-50">
                           <td className="p-3">
@@ -750,9 +957,7 @@ export default function ManagerMISDashboard() {
                             <p className="font-black text-indigo-700">{p.product_category}</p>
                             <p className="text-xs text-slate-600 font-bold">Qty: {p.qty}</p>
                           </td>
-                          <td className="p-3 text-right font-black text-slate-800">
-                            ₹{Number(p.amount).toLocaleString('en-IN')}
-                          </td>
+                          <td className="p-3 text-right font-black text-slate-800">₹{Number(p.amount).toLocaleString('en-IN')}</td>
                         </tr>
                       ))
                     }
@@ -761,10 +966,9 @@ export default function ManagerMISDashboard() {
               </div>
             </div>
 
-            {/* Child Collections Table */}
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
               <div className="bg-emerald-50 border-b border-emerald-100 p-4">
-                <h3 className="font-black text-emerald-900 uppercase tracking-widest text-xs">Center Collections & Reconciliation</h3>
+                <h3 className="font-black text-emerald-900 uppercase tracking-widest text-xs">Center Collections</h3>
               </div>
               <div className="overflow-y-auto flex-1">
                 <table className="w-full text-left text-sm whitespace-nowrap">
@@ -776,19 +980,15 @@ export default function ManagerMISDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {fCollections.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No collections found for this filter.</td></tr> : 
+                    {fCollections.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No collections found.</td></tr> : 
                       fCollections.map(c => (
                         <tr key={c.id} className="hover:bg-slate-50">
                           <td className="p-3">
                             <p className="font-bold text-slate-900">{c.locations?.center_name}</p>
                             <p className="text-[10px] text-slate-500 uppercase">{c.reporting_month}</p>
                           </td>
-                          <td className="p-3 text-right font-black text-emerald-700">
-                            ₹{Number(c.total_cash_collected).toLocaleString('en-IN')}
-                          </td>
-                          <td className="p-3 text-xs text-slate-500 max-w-[150px] truncate">
-                            {c.remarks || "No remarks"}
-                          </td>
+                          <td className="p-3 text-right font-black text-emerald-700">₹{Number(c.total_cash_collected).toLocaleString('en-IN')}</td>
+                          <td className="p-3 text-xs text-slate-500 max-w-[150px] truncate">{c.remarks || "No remarks"}</td>
                         </tr>
                       ))
                     }
@@ -796,7 +996,6 @@ export default function ManagerMISDashboard() {
                 </table>
               </div>
             </div>
-
           </div>
         </div>
       )}
