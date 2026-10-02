@@ -50,7 +50,8 @@ export function proxy(request: NextRequest) {
 
       // 4. Strict RBAC Routing Protocols
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
-      const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc'];
+      // Add manager-mis to opsRoutes so Staff are allowed to load the page!
+      const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
       const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners', '/dashboard/manager-mis'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
 

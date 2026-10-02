@@ -10,6 +10,9 @@ export default function ManagerMISDashboard() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  // [NEW]: Secure Role State for Tab Rendering
+  const [userRole, setUserRole] = useState("staff");
+  
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
   // Architecture Data
@@ -34,7 +37,7 @@ export default function ManagerMISDashboard() {
     master_ctop_id: "",
     entry_type: "Opening Balance",
     cbp_qty: "", 
-    ctop_qty: "" // STRICT FIX: Shifted to Qty
+    ctop_qty: "" 
   });
 
   // Tab 2: Purchase Form State
@@ -84,6 +87,16 @@ export default function ManagerMISDashboard() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
+
+      // [STRICT FIX]: Fetch Native Database Role
+      const { data: currentUser } = await supabase
+        .from('back_office_staff')
+        .select('role')
+        .eq('email', session.user.email)
+        .single();
+        
+      const safeRole = currentUser?.role?.trim().toLowerCase() || 'staff';
+      setUserRole(safeRole);
 
       const [locRes, masterRes, agentRes, purRes, salesRes, colRes, balRes] = await Promise.all([
         supabase.from("locations").select("*").order("center_name"), 
@@ -141,7 +154,7 @@ export default function ManagerMISDashboard() {
   };
 
   // ==========================================
-  // [NEW ENGINE]: GLOBAL NUMERIC SAFETY HANDLERS
+  // GLOBAL NUMERIC SAFETY HANDLERS
   // Prevents Negative Entries & Scroll Glitches
   // ==========================================
   const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -152,13 +165,12 @@ export default function ManagerMISDashboard() {
   };
   
   const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
-    // Instantly removes focus if the user scrolls, preventing the number from changing
     (e.target as HTMLInputElement).blur();
   };
 
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO PARSE-FLOAT FOR DECIMALS)
+  // 1. BALANCE SUBMIT ENGINE
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -486,13 +498,19 @@ export default function ManagerMISDashboard() {
         </div>
       </div>
 
-      {/* TAB NAVIGATION */}
+      {/* TAB NAVIGATION [STRICT RBAC HIDDEN LOGIC] */}
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
         <button onClick={() => setActiveTab('balances')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Master Balances</button>
-        <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Central Procurement</button>
-        <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Sales</button>
-        <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Center Collection</button>
-        <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>5. Live Reports</button>
+        
+        {/* Hide all upper-level modules from Staff role natively */}
+        {userRole !== 'staff' && (
+          <>
+            <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Central Procurement</button>
+            <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Sales</button>
+            <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Center Collection</button>
+            <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>5. Live Reports</button>
+          </>
+        )}
       </div>
 
       {/* ========================================== */}
