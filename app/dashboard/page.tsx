@@ -19,7 +19,7 @@ export default function AdminCommandCenter() {
   const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // [FIX 1]: Add strict routing state to prevent "Ghost Clicks"
+  // Strict routing state to prevent "Ghost Clicks"
   const [isRouting, setIsRouting] = useState(false);
   
   // --- STATE 1: Operational Analytics ---
@@ -67,7 +67,7 @@ export default function AdminCommandCenter() {
       if (staffData) setAdminUser(staffData);
 
       const rawRole = staffData?.role || '';
-      const safeRole = rawRole.trim().toLowerCase(); // [FIX 2]: Case-insensitive RBAC security
+      const safeRole = rawRole.trim().toLowerCase(); 
 
       if (['admin', 'manager', 'staff'].includes(safeRole)) {
         await fetchOperationalData();
@@ -251,17 +251,18 @@ export default function AdminCommandCenter() {
     router.push("/login");
   };
 
-  // [FIX 3]: Instant Transition Router to bypass background hangs
+  // [FIX 1]: Safe Router Push with Failsafe Timeout
   const routeTo = (path: string) => {
     setIsRouting(true);
     router.push(path);
+    // Safety net: Automatically dismiss overlay if route takes > 8s due to network error
+    setTimeout(() => setIsRouting(false), 8000);
   };
 
-  // [FIX 4]: Unified Loading Screen covers both initial loads and routing hangs
-  if (loading || isRouting) return (
+  // [FIX 2]: Only return the hard unmount on pure `loading`
+  if (loading) return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
       <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
-      {isRouting && <p className="text-sm font-bold text-slate-500 animate-pulse tracking-widest uppercase">Establishing secure connection to module...</p>}
     </div>
   );
 
@@ -275,7 +276,16 @@ export default function AdminCommandCenter() {
   const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
+    <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
+      
+      {/* [FIX 3]: Z-Index UI Overlay. Keeps the DOM intact so Next.js can transition safely! */}
+      {isRouting && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
+          <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">Establishing secure connection to module...</p>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* --- HEADER --- */}
@@ -461,7 +471,6 @@ export default function AdminCommandCenter() {
           {safeRole === 'accountant' ? "Financial Modules" : safeRole === 'staff' ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
         
-        {/* [FIX 5]: Converted ALL grid links to explicitly routing divs to enforce instant click reception */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
           
           {/* MANAGER & ADMIN ONLY */}
