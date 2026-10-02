@@ -14,7 +14,7 @@ export default function StaffProductivityDashboard() {
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // [FIX 1]: Initialize as empty string to prevent SSR Hydration Crash
+  // [FIX 3]: Initialize as an empty string to prevent SSR Hydration Crashes
   const [dateFilter, setDateFilter] = useState("");
 
   // Safely mount the current date strictly on the client side
