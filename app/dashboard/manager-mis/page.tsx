@@ -12,55 +12,54 @@ export default function ManagerMISDashboard() {
   const [activeTab, setActiveTab] = useState<'purchase' | 'sales' | 'collection' | 'report'>('purchase');
 
   // Architecture Data
-  const [locations, setLocations] = useState<any[]>([]);
-  const [masterCtops, setMasterCtops] = useState<any[]>([]);
+  const [childLocations, setChildLocations] = useState<any[]>([]); // OCSC & CM Centers
+  const [masterCtops, setMasterCtops] = useState<any[]>([]); // Central Procurement Anchors
   const [agentMappings, setAgentMappings] = useState<any[]>([]);
 
-  // Global Filter State (Split-Key Architecture: "ID-ROLE")
-  const [selectedLocKey, setSelectedLocKey] = useState("");
-  const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM format
+  // Tab Context States (Decoupled Hierarchy)
+  const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
   
-  // Tab 1: Purchase Form State
+  // Tab 1: Purchase Form State (MAPPED TO MASTER CTOP)
   const [purchaseForm, setPurchaseForm] = useState({
     purchase_date: new Date().toISOString().split('T')[0],
-    master_ctop_id: "",
+    master_ctop_id: "", 
     product_category: "CBP",
     qty: 0,
     amount: 0,
     commission_percent: 5.81,
   });
 
-  // Tab 2: Sales Form State (OCSC)
+  // Tab 2 & 3: Child Center Selection (Split-Key for OCSC/CM)
+  const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
+
+  // Tab 2: Sales Form State
   const [ocscSales, setOcscSales] = useState({
     cbp_landline_cash: 0, cbp_gsm_cash: 0, ctop_recharge_cash: 0,
     sim_replace_qty: 0, sim_replace_cash: 0,
     sim_fancy_qty: 0, sim_fancy_cash: 0,
     sim_other_qty: 0, sim_other_cash: 0,
   });
-
-  // Tab 2: Sales Form State (CM - Array of agents)
   const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: number}[]>([]);
 
   // Tab 3: Collection Form State
   const [collectionForm, setCollectionForm] = useState({
-    total_cash_collected: 0,
-    remarks: ""
+    total_cash_collected: 0, remarks: ""
   });
 
   useEffect(() => {
     fetchArchitecture();
   }, []);
 
-  // Fetch relevant CM agents when location changes
+  // Fetch relevant CM agents when a Child Center is selected
   useEffect(() => {
-    if (selectedLocKey && selectedLocKey.includes('-CM')) {
-      const locIdInt = parseInt(selectedLocKey.split('-')[0]); // Extract BIGINT ID
+    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
+      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
       const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
       setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: 0 })));
     } else {
       setCmSales([]);
     }
-  }, [selectedLocKey, agentMappings]);
+  }, [selectedChildLocKey, agentMappings]);
 
   const fetchArchitecture = async () => {
     setLoading(true);
@@ -68,13 +67,14 @@ export default function ManagerMISDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [locRes, masterRes, agentRes] = await Promise.all([
+      // Fetch Child Locations (Centers) and Master CTOPs (HQs)
+      const [childLocRes, masterRes, agentRes] = await Promise.all([
         supabase.from("locations").select("*").or("role_ocsc.eq.true,role_cm.eq.true").order("center_name"),
-        supabase.from("master_ctop_accounts").select("*"),
+        supabase.from("master_ctop_accounts").select("*, locations(center_name)"),
         supabase.from("agent_ctop_mappings").select("*, active_partners(locations(id))")
       ]);
 
-      setLocations(locRes.data || []);
+      setChildLocations(childLocRes.data || []);
       setMasterCtops(masterRes.data || []);
       setAgentMappings(agentRes.data || []);
     } catch (err: any) {
@@ -84,17 +84,16 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // Safely extract the Role (OCSC or CM) from the split-key dropdown value
   const getActiveLocationType = () => {
-    if (!selectedLocKey) return null;
-    return selectedLocKey.split('-')[1]; 
+    if (!selectedChildLocKey) return null;
+    return selectedChildLocKey.split('-')[1]; 
   };
 
   // --- TELEMETRY & SUBMISSION ENGINE ---
 
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocKey) return alert("Select a location first.");
+    if (!purchaseForm.master_ctop_id) return alert("You must select a Master CTOP to log procurement against.");
     setIsSubmitting(true);
 
     try {
@@ -105,10 +104,13 @@ export default function ManagerMISDashboard() {
       const isCTOP = purchaseForm.product_category === 'CTOP';
       const commValue = isCTOP ? (purchaseForm.amount * purchaseForm.commission_percent) / 100 : 0;
 
+      // Identify the Master Location ID tied to this Master CTOP
+      const selectedMaster = masterCtops.find(m => m.id === purchaseForm.master_ctop_id);
+
       const payload = {
         purchase_date: purchaseForm.purchase_date,
-        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
-        master_ctop_id: purchaseForm.master_ctop_id || null, // Keep as UUID String
+        location_id: selectedMaster?.location_id || null, // Logs against the Master Location
+        master_ctop_id: purchaseForm.master_ctop_id,
         product_category: purchaseForm.product_category,
         qty: purchaseForm.qty,
         amount: purchaseForm.amount,
@@ -120,18 +122,17 @@ export default function ManagerMISDashboard() {
       const { data: insertedRecord, error } = await supabase.from('mis_purchases').insert([payload]).select().single();
       if (error) throw error;
 
-      // TELEMETRY LOGGING
       await supabase.from('staff_activity_logs').insert([{
         staff_id: user.id,
         staff_email: user.email,
         action_type: 'MIS_ENTRY',
         module: 'MANAGER_MIS',
         target_id: insertedRecord.id,
-        details: `Logged MIS Purchase: ${purchaseForm.qty}x ${purchaseForm.product_category} valued at ₹${purchaseForm.amount}.`
+        details: `Procured: ${purchaseForm.qty}x ${purchaseForm.product_category} into Master CTOP ${selectedMaster?.master_ctop_no}.`
       }]);
 
-      alert("✅ Purchase Ledger Updated.");
-      setPurchaseForm({ ...purchaseForm, qty: 0, amount: 0 }); // Reset amounts
+      alert("✅ Central Purchase Ledger Updated.");
+      setPurchaseForm({ ...purchaseForm, qty: 0, amount: 0 }); 
     } catch (err: any) {
       alert("Error saving purchase: " + err.message);
     } finally {
@@ -141,7 +142,7 @@ export default function ManagerMISDashboard() {
 
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocKey || !reportingMonth) return alert("Select location and month.");
+    if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
     setIsSubmitting(true);
 
     try {
@@ -152,24 +153,17 @@ export default function ManagerMISDashboard() {
       const centerType = getActiveLocationType();
       const dbReportingMonth = `${reportingMonth}-01`;
 
-      // 1. Insert Parent Monthly Record
       const parentPayload = {
         reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
+        location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         center_type: centerType,
         logged_by: user.id,
         ...(centerType === 'OCSC' ? ocscSales : {}) 
       };
 
-      const { data: parentRecord, error: parentError } = await supabase
-        .from('mis_monthly_sales')
-        .insert([parentPayload])
-        .select()
-        .single();
-
+      const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([parentPayload]).select().single();
       if (parentError) throw parentError;
 
-      // 2. Insert CM Child Records (If applicable)
       if (centerType === 'CM' && cmSales.length > 0) {
         const childPayloads = cmSales.map(agent => ({
           monthly_sales_id: parentRecord.id,
@@ -183,23 +177,19 @@ export default function ManagerMISDashboard() {
         }
       }
 
-      // 3. TELEMETRY LOGGING
       await supabase.from('staff_activity_logs').insert([{
         staff_id: user.id,
         staff_email: user.email,
         action_type: 'MIS_CLOSURE',
         module: 'MANAGER_MIS',
         target_id: parentRecord.id,
-        details: `Submitted Consolidated MIS Sales for ${centerType} location. Month: ${reportingMonth}`
+        details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
       }]);
 
-      alert(`✅ Monthly Sales for ${reportingMonth} successfully locked.`);
+      alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
     } catch (err: any) {
-      if (err.message.includes('unique constraint')) {
-        alert("❌ Blocked: Sales for this specific Center Type and Month have already been submitted.");
-      } else {
-        alert("Error saving sales: " + err.message);
-      }
+      if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
+      else alert("Error saving sales: " + err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -207,7 +197,7 @@ export default function ManagerMISDashboard() {
 
   const handleCollectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocKey || !reportingMonth) return alert("Select location and month.");
+    if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
     setIsSubmitting(true);
 
     try {
@@ -216,10 +206,9 @@ export default function ManagerMISDashboard() {
       if (!user) throw new Error("Auth drop.");
 
       const dbReportingMonth = `${reportingMonth}-01`;
-
       const payload = {
         reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
+        location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         total_cash_collected: collectionForm.total_cash_collected,
         remarks: collectionForm.remarks,
         logged_by: user.id
@@ -228,24 +217,20 @@ export default function ManagerMISDashboard() {
       const { data: colRecord, error } = await supabase.from('mis_monthly_collections').insert([payload]).select().single();
       if (error) throw error;
 
-      // TELEMETRY LOGGING
       await supabase.from('staff_activity_logs').insert([{
         staff_id: user.id,
         staff_email: user.email,
         action_type: 'MIS_CLOSURE',
         module: 'MANAGER_MIS',
         target_id: colRecord.id,
-        details: `Declared Total Cash Collection of ₹${collectionForm.total_cash_collected} for ${reportingMonth}.`
+        details: `Declared Collection of ₹${collectionForm.total_cash_collected} for ${reportingMonth}.`
       }]);
 
       alert(`✅ Collection for ${reportingMonth} successfully logged.`);
       setCollectionForm({ total_cash_collected: 0, remarks: "" });
     } catch (err: any) {
-      if (err.message.includes('unique constraint')) {
-        alert("❌ Blocked: Collection for this location and month has already been declared.");
-      } else {
-        alert("Error saving collection: " + err.message);
-      }
+      if (err.message.includes('unique constraint')) alert("❌ Blocked: Collection for this center and month is already locked.");
+      else alert("Error saving collection: " + err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -273,65 +258,41 @@ export default function ManagerMISDashboard() {
           <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
             <span className="text-4xl">📊</span> Manager MIS Dashboard
           </h1>
-          <p className="text-slate-500 font-medium mt-1">Internal Purchase, Sales, Commission, and Collection Modules.</p>
-        </div>
-      </div>
-
-      {/* MASTER FILTER RIBBON */}
-      <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 flex flex-col md:flex-row gap-6 mb-8 animate-in fade-in">
-        <div className="flex-1">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Target Location *</label>
-          <select 
-            value={selectedLocKey} 
-            onChange={(e) => setSelectedLocKey(e.target.value)}
-            className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
-          >
-            <option value="" disabled>-- Select OCSC or CM Center --</option>
-            {locations.flatMap(l => {
-              const options = [];
-              if (l.role_ocsc) {
-                options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
-              }
-              if (l.role_cm) {
-                options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
-              }
-              return options;
-            })}
-          </select>
-        </div>
-        <div>
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
-          <input 
-            type="month" 
-            value={reportingMonth} 
-            onChange={(e) => setReportingMonth(e.target.value)}
-            className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
-          />
-        </div>
-        <div className="flex flex-col justify-end">
-          <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
-            <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
-              {locType || 'NONE'}
-            </p>
-          </div>
+          <p className="text-slate-500 font-medium mt-1">Hierarchical MIS Pipeline: Master Procurement & Center Operations.</p>
         </div>
       </div>
 
       {/* TAB NAVIGATION */}
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
-        <button onClick={() => setActiveTab('purchase')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Purchase</button>
-        <button onClick={() => setActiveTab('sales')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Sales (Monthly)</button>
-        <button onClick={() => setActiveTab('collection')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Collection</button>
+        <button onClick={() => setActiveTab('purchase')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Central Procurement</button>
+        <button onClick={() => setActiveTab('sales')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Center Sales (Monthly)</button>
+        <button onClick={() => setActiveTab('collection')} className={`px-6 py-3 font-black text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Collection</button>
       </div>
 
-      {/* TAB 1: PURCHASE ENGINE */}
+      {/* TAB 1: MASTER PURCHASE ENGINE (PROCUREMENT) */}
       {activeTab === 'purchase' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
-          <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6">Ad-Hoc Purchase Entry</h2>
+          <div className="bg-slate-900 p-4 rounded-lg mb-6 flex gap-4 items-center">
+            <span className="text-3xl">🏛️</span>
+            <div>
+              <h2 className="text-white font-black uppercase tracking-widest">Master Procurement</h2>
+              <p className="text-slate-400 text-xs font-bold mt-1">Log inventory purchases directly against a Master CTOP Account.</p>
+            </div>
+          </div>
+
           <form onSubmit={handlePurchaseSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
+              <div className="md:col-span-3">
+                <label className="block text-xs font-black text-indigo-600 uppercase tracking-widest mb-1.5">Target Master CTOP (HQ) *</label>
+                <select required value={purchaseForm.master_ctop_id} onChange={e => setPurchaseForm({...purchaseForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-3 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
+                  <option value="" disabled>-- Select Master CTOP --</option>
+                  {masterCtops.map(m => (
+                    <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Date</label>
                 <input required type="date" value={purchaseForm.purchase_date} onChange={e => setPurchaseForm({...purchaseForm, purchase_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
@@ -348,14 +309,6 @@ export default function ManagerMISDashboard() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Master CTOP Anchor (Optional)</label>
-                <select value={purchaseForm.master_ctop_id} onChange={e => setPurchaseForm({...purchaseForm, master_ctop_id: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
-                  <option value="">-- No Anchor --</option>
-                  {masterCtops.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no}</option>)}
-                </select>
-              </div>
-
-              <div>
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Quantity</label>
                 <input required type="number" min="0" value={purchaseForm.qty} onChange={e => setPurchaseForm({...purchaseForm, qty: Number(e.target.value)})} className={numInputClass} />
               </div>
@@ -366,35 +319,78 @@ export default function ManagerMISDashboard() {
               </div>
 
               {purchaseForm.product_category === 'CTOP' && (
-                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200">
-                  <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
-                  <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: Number(e.target.value)})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
-                  <p className="text-[10px] text-indigo-600 font-bold mt-2 uppercase">Instant Payout: ₹{((purchaseForm.amount * purchaseForm.commission_percent) / 100).toFixed(2)}</p>
+                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
+                    <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: Number(e.target.value)})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
+                  </div>
+                  <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
+                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Instant Payout</p>
+                    <p className="text-xl text-indigo-600 font-black">₹{((purchaseForm.amount * purchaseForm.commission_percent) / 100).toFixed(2)}</p>
+                  </div>
                 </div>
               )}
             </div>
             
-            <button type="submit" disabled={isSubmitting || !selectedLocKey} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition">
-              {isSubmitting ? "Logging Purchase..." : "Submit to Purchase Ledger"}
+            <button type="submit" disabled={isSubmitting || !purchaseForm.master_ctop_id} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+              {isSubmitting ? "Logging Procurement..." : "Submit to Master Ledger"}
             </button>
           </form>
         </div>
       )}
 
-      {/* TAB 2: MONTHLY SALES ENGINE */}
+      {/* TAB 2 & 3 SHARED CENTER SELECTION RIBBON */}
+      {(activeTab === 'sales' || activeTab === 'collection') && (
+        <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 flex flex-col md:flex-row gap-6 mb-6 animate-in fade-in">
+          <div className="flex-1">
+            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Target Child Center (OCSC/CM) *</label>
+            <select 
+              value={selectedChildLocKey} 
+              onChange={(e) => setSelectedChildLocKey(e.target.value)}
+              className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition"
+            >
+              <option value="" disabled>-- Select Franchise Center --</option>
+              {childLocations.flatMap(l => {
+                const options = [];
+                if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
+                if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
+                return options;
+              })}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
+            <input 
+              type="month" 
+              value={reportingMonth} 
+              onChange={(e) => setReportingMonth(e.target.value)}
+              className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
+            />
+          </div>
+          <div className="flex flex-col justify-end">
+            <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
+              <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
+                {locType || 'NONE'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: MONTHLY SALES ENGINE (CENTER LEVEL) */}
       {activeTab === 'sales' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
           <div className="flex justify-between items-end border-b pb-2 mb-6">
             <div>
-              <h2 className="text-lg font-black text-slate-800">Monthly Sales Ledger</h2>
+              <h2 className="text-lg font-black text-slate-800">Monthly Center Sales Ledger</h2>
               <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Closing Month: {reportingMonth}</p>
             </div>
-            {locType && <span className={`px-3 py-1 rounded text-xs font-black uppercase border ${locType === 'OCSC' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200'}`}>{locType} Mode Active</span>}
           </div>
 
           {!locType ? (
             <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
-              <p className="font-bold text-slate-500">Please select an OCSC or CM Target Location from the top ribbon.</p>
+              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
             </div>
           ) : (
             <form onSubmit={handleSalesSubmit} className="space-y-6">
@@ -430,7 +426,7 @@ export default function ManagerMISDashboard() {
                 <div>
                   <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
                   {cmSales.length === 0 ? (
-                    <p className="text-sm font-bold text-red-600 bg-red-50 p-4 border border-red-200 rounded">No agents mapped to this location's Master CTOPs.</p>
+                    <p className="text-sm font-bold text-red-600 bg-red-50 p-4 border border-red-200 rounded">No agents mapped to this Child Center.</p>
                   ) : (
                     <div className="space-y-3">
                       {cmSales.map((agent, idx) => (
@@ -439,9 +435,7 @@ export default function ManagerMISDashboard() {
                           <div className="flex items-center gap-3">
                             <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
                             <input 
-                              type="number" 
-                              min="0"
-                              value={agent.qty} 
+                              type="number" min="0" value={agent.qty} 
                               onChange={(e) => {
                                 const newSales = [...cmSales];
                                 newSales[idx].qty = Number(e.target.value);
@@ -458,48 +452,51 @@ export default function ManagerMISDashboard() {
               )}
 
               <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-                {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Monthly Sales"}
+                {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
               </button>
             </form>
           )}
         </div>
       )}
 
-      {/* TAB 3: COLLECTION ENGINE */}
+      {/* TAB 3: COLLECTION ENGINE (CENTER LEVEL) */}
       {activeTab === 'collection' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-          <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Collection</h2>
-          <form onSubmit={handleCollectionSubmit} className="space-y-6">
-            
-            <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-200 text-center">
-              <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
-              <input 
-                required 
-                type="number" 
-                step="0.01" 
-                min="0"
-                value={collectionForm.total_cash_collected || ''} 
-                onChange={e => setCollectionForm({...collectionForm, total_cash_collected: Number(e.target.value)})} 
-                className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                placeholder="0.00"
-              />
+          <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Center Collection</h2>
+          
+          {!locType ? (
+            <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
+              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
             </div>
+          ) : (
+            <form onSubmit={handleCollectionSubmit} className="space-y-6">
+              <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-200 text-center">
+                <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
+                <input 
+                  required type="number" step="0.01" min="0"
+                  value={collectionForm.total_cash_collected || ''} 
+                  onChange={e => setCollectionForm({...collectionForm, total_cash_collected: Number(e.target.value)})} 
+                  className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                  placeholder="0.00"
+                />
+              </div>
 
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Reconciliation Remarks (Optional)</label>
-              <textarea 
-                rows={3} 
-                value={collectionForm.remarks} 
-                onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} 
-                placeholder="Explain any shortfalls or surpluses..."
-                className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none font-medium focus:border-indigo-500" 
-              />
-            </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Reconciliation Remarks (Optional)</label>
+                <textarea 
+                  rows={3} 
+                  value={collectionForm.remarks} 
+                  onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} 
+                  placeholder="Explain any shortfalls or surpluses..."
+                  className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none font-medium focus:border-indigo-500" 
+                />
+              </div>
 
-            <button type="submit" disabled={isSubmitting || !selectedLocKey} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
-              {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
-            </button>
-          </form>
+              <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
+                {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
+              </button>
+            </form>
+          )}
         </div>
       )}
 
