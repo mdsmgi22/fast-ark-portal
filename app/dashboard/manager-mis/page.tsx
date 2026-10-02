@@ -16,8 +16,8 @@ export default function ManagerMISDashboard() {
   const [masterCtops, setMasterCtops] = useState<any[]>([]);
   const [agentMappings, setAgentMappings] = useState<any[]>([]);
 
-  // Global Filter State
-  const [selectedLocId, setSelectedLocId] = useState("");
+  // Global Filter State (Split-Key Architecture: "ID-ROLE")
+  const [selectedLocKey, setSelectedLocKey] = useState("");
   const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM format
   
   // Tab 1: Purchase Form State
@@ -53,14 +53,14 @@ export default function ManagerMISDashboard() {
 
   // Fetch relevant CM agents when location changes
   useEffect(() => {
-    if (selectedLocId) {
-      const locIdInt = parseInt(selectedLocId); // BIGINT Casting
+    if (selectedLocKey && selectedLocKey.includes('-CM')) {
+      const locIdInt = parseInt(selectedLocKey.split('-')[0]); // Extract BIGINT ID
       const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
       setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: 0 })));
     } else {
       setCmSales([]);
     }
-  }, [selectedLocId, agentMappings]);
+  }, [selectedLocKey, agentMappings]);
 
   const fetchArchitecture = async () => {
     setLoading(true);
@@ -84,19 +84,17 @@ export default function ManagerMISDashboard() {
     }
   };
 
+  // Safely extract the Role (OCSC or CM) from the split-key dropdown value
   const getActiveLocationType = () => {
-    if (!selectedLocId) return null;
-    const locIdInt = parseInt(selectedLocId);
-    const loc = locations.find(l => l.id === locIdInt);
-    if (!loc) return null;
-    return loc.role_ocsc ? 'OCSC' : 'CM';
+    if (!selectedLocKey) return null;
+    return selectedLocKey.split('-')[1]; 
   };
 
   // --- TELEMETRY & SUBMISSION ENGINE ---
 
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocId) return alert("Select a location first.");
+    if (!selectedLocKey) return alert("Select a location first.");
     setIsSubmitting(true);
 
     try {
@@ -109,8 +107,8 @@ export default function ManagerMISDashboard() {
 
       const payload = {
         purchase_date: purchaseForm.purchase_date,
-        location_id: parseInt(selectedLocId), // Safely cast to BIGINT
-        master_ctop_id: purchaseForm.master_ctop_id || null, // FIXED: Left as UUID string
+        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
+        master_ctop_id: purchaseForm.master_ctop_id || null, // Keep as UUID String
         product_category: purchaseForm.product_category,
         qty: purchaseForm.qty,
         amount: purchaseForm.amount,
@@ -143,7 +141,7 @@ export default function ManagerMISDashboard() {
 
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocId || !reportingMonth) return alert("Select location and month.");
+    if (!selectedLocKey || !reportingMonth) return alert("Select location and month.");
     setIsSubmitting(true);
 
     try {
@@ -157,7 +155,7 @@ export default function ManagerMISDashboard() {
       // 1. Insert Parent Monthly Record
       const parentPayload = {
         reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedLocId), // Safely cast to BIGINT
+        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
         center_type: centerType,
         logged_by: user.id,
         ...(centerType === 'OCSC' ? ocscSales : {}) 
@@ -198,7 +196,7 @@ export default function ManagerMISDashboard() {
       alert(`✅ Monthly Sales for ${reportingMonth} successfully locked.`);
     } catch (err: any) {
       if (err.message.includes('unique constraint')) {
-        alert("❌ Blocked: Sales for this location and month have already been submitted.");
+        alert("❌ Blocked: Sales for this specific Center Type and Month have already been submitted.");
       } else {
         alert("Error saving sales: " + err.message);
       }
@@ -209,7 +207,7 @@ export default function ManagerMISDashboard() {
 
   const handleCollectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocId || !reportingMonth) return alert("Select location and month.");
+    if (!selectedLocKey || !reportingMonth) return alert("Select location and month.");
     setIsSubmitting(true);
 
     try {
@@ -221,7 +219,7 @@ export default function ManagerMISDashboard() {
 
       const payload = {
         reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedLocId), // Safely cast to BIGINT
+        location_id: parseInt(selectedLocKey.split('-')[0]), // Cast to BIGINT
         total_cash_collected: collectionForm.total_cash_collected,
         remarks: collectionForm.remarks,
         logged_by: user.id
@@ -284,14 +282,21 @@ export default function ManagerMISDashboard() {
         <div className="flex-1">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Target Location *</label>
           <select 
-            value={selectedLocId} 
-            onChange={(e) => setSelectedLocId(e.target.value)}
+            value={selectedLocKey} 
+            onChange={(e) => setSelectedLocKey(e.target.value)}
             className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
           >
             <option value="" disabled>-- Select OCSC or CM Center --</option>
-            {locations.map(l => (
-              <option key={l.id} value={l.id}>{l.center_name} ({l.role_ocsc ? 'OCSC' : 'CM'})</option>
-            ))}
+            {locations.flatMap(l => {
+              const options = [];
+              if (l.role_ocsc) {
+                options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
+              }
+              if (l.role_cm) {
+                options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
+              }
+              return options;
+            })}
           </select>
         </div>
         <div>
@@ -369,7 +374,7 @@ export default function ManagerMISDashboard() {
               )}
             </div>
             
-            <button type="submit" disabled={isSubmitting || !selectedLocId} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition">
+            <button type="submit" disabled={isSubmitting || !selectedLocKey} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition">
               {isSubmitting ? "Logging Purchase..." : "Submit to Purchase Ledger"}
             </button>
           </form>
@@ -491,7 +496,7 @@ export default function ManagerMISDashboard() {
               />
             </div>
 
-            <button type="submit" disabled={isSubmitting || !selectedLocId} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
+            <button type="submit" disabled={isSubmitting || !selectedLocKey} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
               {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
             </button>
           </form>
