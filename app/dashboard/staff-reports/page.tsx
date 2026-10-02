@@ -5,7 +5,6 @@ import { supabase } from "../../lib/supabase";
 import Link from "next/link";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 
-// 1. Enforce strict local current date (IST safe) to prevent UTC midnight drift
 const getLocalDateString = (date: Date) => {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
@@ -14,20 +13,26 @@ export default function StaffProductivityDashboard() {
   const [logs, setLogs] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateFilter, setDateFilter] = useState(getLocalDateString(new Date()));
+  
+  // [FIX 1]: Initialize as empty string to prevent SSR Hydration Crash
+  const [dateFilter, setDateFilter] = useState("");
 
+  // Safely mount the current date strictly on the client side
   useEffect(() => {
-    fetchAnalytics();
+    setDateFilter(getLocalDateString(new Date()));
+  }, []);
+
+  // Fetch only when dateFilter is safely populated
+  useEffect(() => {
+    if (dateFilter) fetchAnalytics();
   }, [dateFilter]);
 
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      // 1. Fetch all active back-office staff
       const { data: staff } = await supabase.from('back_office_staff').select('email, name, role');
       if (staff) setStaffList(staff);
 
-      // 2. Fetch logs with strict IST timezone boundaries (+05:30)
       const { data: activityLogs } = await supabase
         .from('staff_activity_logs')
         .select('*')
@@ -42,22 +47,21 @@ export default function StaffProductivityDashboard() {
     }
   };
 
-  // --- UPGRADED CHART ENGINE [FIX 1: Safe Null Chaining & MIS Tracking] ---
   const chartData = staffList.map(staffMember => {
     const email = staffMember?.email || '';
     const name = staffMember?.name || 'Unknown';
     const staffLogs = logs.filter(log => log?.staff_email === email);
     
     return {
-      name: name.split(' ')[0], // First name for chart fit
+      name: name.split(' ')[0], 
       Onboarding: staffLogs.filter(l => l?.module === 'ONBOARDING' || l?.module === 'APPLICATIONS').length,
       Deposits: staffLogs.filter(l => l?.module === 'DEPOSITS').length,
-      Audits: staffLogs.filter(l => l?.module === 'SALES' || l?.module === 'MANAGER_MIS').length, // Added MIS Auditing
+      Audits: staffLogs.filter(l => l?.module === 'SALES' || l?.module === 'MANAGER_MIS').length, 
       Logistics: staffLogs.filter(l => l?.module === 'LOGISTICS').length,
       Messages: staffLogs.filter(l => l?.module === 'MESSAGES').length,
       total: staffLogs.length
     };
-  }).filter(data => data.total > 0); // Only show active staff
+  }).filter(data => data.total > 0); 
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
@@ -114,7 +118,6 @@ export default function StaffProductivityDashboard() {
             {loading && <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>}
           </div>
           
-          {/* [FIX 2: Strict Height applied to prevent Recharts infinite resizing loops] */}
           {!loading && chartData.length === 0 ? (
             <div className="flex h-[300px] items-center justify-center text-slate-400 font-bold">No activity recorded for this date.</div>
           ) : (
@@ -155,11 +158,9 @@ export default function StaffProductivityDashboard() {
                 <p className="text-xs">No actions logged yet today.</p>
               </div>
             ) : (
-              // Secure [...logs] clone prevents destructive state mutation during sort
               [...logs].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()).map(log => (
                 <div key={log.id} className="bg-white border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-300 transition">
                   <div className="flex justify-between items-start mb-2">
-                    {/* [FIX 3: Fallback 'System' applied to avoid undefined split crashes] */}
                     <span className="font-black text-slate-800 text-sm truncate pr-2">
                       {(log.staff_email || 'System').split('@')[0]}
                     </span>

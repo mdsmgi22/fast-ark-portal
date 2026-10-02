@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
 export default function StaffManagementEngine() {
+  const router = useRouter(); // Added router injection
   const [staffList, setStaffList] = useState<any[]>([]);
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
+  
+  // [FIX]: Added routing state for smooth transition
+  const [isRouting, setIsRouting] = useState(false);
   const LIMITS = { Manager: 3, Accountant: 3, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
@@ -16,7 +20,6 @@ export default function StaffManagementEngine() {
     role: "Staff"
   });
 
-  // Autonomous data fetching: Only triggers when the component is mounted by an Admin
   useEffect(() => {
     fetchStaffList();
   }, []);
@@ -62,6 +65,13 @@ export default function StaffManagementEngine() {
     }
   };
 
+  // Secure Router Push
+  const routeToMatrix = () => {
+    setIsRouting(true);
+    router.push("/dashboard/staff-reports");
+    setTimeout(() => setIsRouting(false), 8000); // 8-second safety release
+  };
+
   const getRoleCount = (roleName: string) => staffList.filter(s => s.role === roleName).length;
 
   return (
@@ -77,7 +87,6 @@ export default function StaffManagementEngine() {
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-fit">
           <h3 className="text-lg font-black text-slate-800 mb-4 pb-2 border-b">Onboard New Team Member</h3>
           
-          {/* Quick Stats regarding Limits */}
           <div className="grid grid-cols-3 gap-2 mb-6">
             <div className="bg-slate-100 p-2 rounded text-center">
               <p className="text-[10px] font-bold text-slate-500 uppercase">Managers</p>
@@ -126,11 +135,15 @@ export default function StaffManagementEngine() {
             </button>
           </form>
 
-          {/* LINK TO TELEMETRY MATRIX */}
+          {/* UPGRADED ROUTER BUTTON */}
           <div className="mt-6 pt-4 border-t border-slate-100">
-            <Link href="/dashboard/staff-reports" className="block w-full py-3 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 font-black rounded-lg transition text-center text-xs uppercase tracking-widest">
-              👁️ View Staff Productivity Matrix
-            </Link>
+            <button 
+              onClick={routeToMatrix}
+              disabled={isRouting}
+              className="block w-full py-3 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 font-black rounded-lg transition text-center text-xs uppercase tracking-widest disabled:opacity-50"
+            >
+              {isRouting ? "Loading Matrix..." : "👁️ View Staff Productivity Matrix"}
+            </button>
           </div>
         </div>
 

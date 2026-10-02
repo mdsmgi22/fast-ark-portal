@@ -3918,19 +3918,17 @@ export default function StaffProductivityDashboard() {
     }
   };
 
-  // --- UPGRADED CHART ENGINE [FIX 1: Safe Null Chaining & MIS Tracking] ---
+  // --- UPGRADED CHART ENGINE ---
+  // Now captures the new 'ONBOARDING' and 'MESSAGES' modules introduced in previous fixes
   const chartData = staffList.map(staffMember => {
-    const email = staffMember?.email || '';
-    const name = staffMember?.name || 'Unknown';
-    const staffLogs = logs.filter(log => log?.staff_email === email);
-    
+    const staffLogs = logs.filter(log => log.staff_email === staffMember.email);
     return {
-      name: name.split(' ')[0], // First name for chart fit
-      Onboarding: staffLogs.filter(l => l?.module === 'ONBOARDING' || l?.module === 'APPLICATIONS').length,
-      Deposits: staffLogs.filter(l => l?.module === 'DEPOSITS').length,
-      Audits: staffLogs.filter(l => l?.module === 'SALES' || l?.module === 'MANAGER_MIS').length, // Added MIS Auditing
-      Logistics: staffLogs.filter(l => l?.module === 'LOGISTICS').length,
-      Messages: staffLogs.filter(l => l?.module === 'MESSAGES').length,
+      name: staffMember.name.split(' ')[0], // First name for chart fit
+      Onboarding: staffLogs.filter(l => l.module === 'ONBOARDING' || l.module === 'APPLICATIONS').length,
+      Deposits: staffLogs.filter(l => l.module === 'DEPOSITS').length,
+      Audits: staffLogs.filter(l => l.module === 'SALES').length,
+      Logistics: staffLogs.filter(l => l.module === 'LOGISTICS').length,
+      Messages: staffLogs.filter(l => l.module === 'MESSAGES').length,
       total: staffLogs.length
     };
   }).filter(data => data.total > 0); // Only show active staff
@@ -3959,7 +3957,7 @@ export default function StaffProductivityDashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* CHIEF KPI METRICS */}
+        {/* CHIEF KPI METRICS (Upgraded) */}
         <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-slate-800">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Total Actions</p>
@@ -3974,8 +3972,8 @@ export default function StaffProductivityDashboard() {
             <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'DEPOSITS').length}</p>
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-purple-500">
-            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Ledger & MIS Audits</p>
-            <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'SALES' || l.module === 'MANAGER_MIS').length}</p>
+            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Sales Overrides</p>
+            <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'SALES').length}</p>
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-pink-500">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Alerts Sent</p>
@@ -3983,18 +3981,17 @@ export default function StaffProductivityDashboard() {
           </div>
         </div>
 
-        {/* PERFORMANCE CHART */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-          <div className="flex justify-between items-center mb-6">
+        {/* PERFORMANCE CHART (Upgraded) */}
+        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 h-96 relative flex flex-col">
+          <div className="flex justify-between items-center mb-6 shrink-0">
             <h2 className="text-lg font-black text-slate-800">Staff Output by Module</h2>
             {loading && <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>}
           </div>
           
-          {/* [FIX 2: Strict Height applied to prevent Recharts infinite resizing loops] */}
-          {!loading && chartData.length === 0 ? (
-            <div className="flex h-[300px] items-center justify-center text-slate-400 font-bold">No activity recorded for this date.</div>
-          ) : (
-            <div className="w-full h-[300px]">
+          <div className="flex-1 w-full min-h-0">
+            {!loading && chartData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-slate-400 font-bold pb-12">No activity recorded for this date.</div>
+            ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -4009,12 +4006,12 @@ export default function StaffProductivityDashboard() {
                   <Bar dataKey="Messages" stackId="a" fill="#ec4899" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* RAW AUDIT FEED */}
-        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[400px]">
+        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-96">
           <div className="bg-slate-900 p-4 flex justify-between items-center shrink-0">
             <h2 className="text-sm font-black uppercase tracking-widest text-white">Live Audit Feed</h2>
             <span className="bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700">{logs.length} Events</span>
@@ -4032,20 +4029,17 @@ export default function StaffProductivityDashboard() {
               </div>
             ) : (
               // Secure [...logs] clone prevents destructive state mutation during sort
-              [...logs].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()).map(log => (
+              [...logs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(log => (
                 <div key={log.id} className="bg-white border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-300 transition">
                   <div className="flex justify-between items-start mb-2">
-                    {/* [FIX 3: Fallback 'System' applied to avoid undefined split crashes] */}
-                    <span className="font-black text-slate-800 text-sm truncate pr-2">
-                      {(log.staff_email || 'System').split('@')[0]}
-                    </span>
+                    <span className="font-black text-slate-800 text-sm truncate pr-2">{log.staff_email.split('@')[0]}</span>
                     <span className="text-[9px] font-black text-slate-400 uppercase shrink-0">
-                      {new Date(log.created_at || 0).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      {new Date(log.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                     </span>
                   </div>
                   <div>
                     <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase mb-1.5 border ${
-                      log.action_type === 'APPROVAL' || log.action_type === 'VERIFICATION' || log.action_type === 'STOCK_APPROVED' || log.action_type === 'MIS_CLOSURE' ? 'bg-green-50 text-green-700 border-green-200' :
+                      log.action_type === 'APPROVAL' || log.action_type === 'VERIFICATION' || log.action_type === 'STOCK_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' :
                       log.action_type === 'REJECTION' || log.action_type === 'DISCREPANCY' || log.action_type === 'STOCK_REJECTED' ? 'bg-red-50 text-red-700 border-red-200' :
                       log.action_type === 'DISPATCH_ALERT' ? 'bg-pink-50 text-pink-700 border-pink-200' :
                       'bg-purple-50 text-purple-700 border-purple-200'
@@ -4972,7 +4966,6 @@ export default function AccountantVerificationDashboard() {
   const [selectedDeposit, setSelectedDeposit] = useState<any | null>(null);
   const [secureImageUrl, setSecureImageUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
-  const [imageError, setImageError] = useState<string | null>(null);
 
   // --- STATE 4: Action Engine ---
   const [processingId, setProcessingId] = useState("");
@@ -5048,13 +5041,10 @@ export default function AccountantVerificationDashboard() {
     setFilteredDeposits(result);
   }, [rawDeposits, statusFilter, geoFilter]);
 
-  // --- SECURE DECRYPTION ENGINE (Fixed for 400 Bad Request) ---
- // --- SECURE DECRYPTION ENGINE (Realigned with Private Bucket Architecture) ---
+  // --- SECURE DECRYPTION ENGINE (Fires when a row is clicked) ---
   useEffect(() => {
     const decryptImage = async () => {
       setSecureImageUrl(null);
-      setImageError(null); 
-      
       if (!selectedDeposit) return;
       if (selectedDeposit.is_exempted || !selectedDeposit.deposit_slip_url) return;
 
@@ -5065,21 +5055,14 @@ export default function AccountantVerificationDashboard() {
           return;
         }
 
-        // FIX: The bucket is Private (proven by the Partner's 60-sec link). 
-        // We MUST use createSignedUrl to generate the cryptographic token.
         const { data, error } = await supabase.storage
           .from("deposit-slips")
-          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); // 1-hour secure token for audit
+          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600); // 1 hour token
         
-        if (error) throw error; 
-        if (!data || !data.signedUrl) {
-          throw new Error("Supabase failed to generate the signed URL.");
-        }
-        
+        if (error || !data) throw error;
         setSecureImageUrl(data.signedUrl);
-      } catch (err: any) {
-        console.error("Failed to load image:", err);
-        setImageError(err.message || "Access Denied by Vault"); 
+      } catch (err) {
+        console.error("Failed to decrypt image:", err);
       } finally {
         setImageLoading(false);
       }
@@ -5129,6 +5112,7 @@ export default function AccountantVerificationDashboard() {
 
       setRawDeposits(current => current.map(d => d.id === selectedDeposit.id ? { ...d, status: newStatus, rejection_reason: newStatus === 'Discrepancy' ? rejectionReason : null } : d));
       
+      // Clear the inspection pane to force them to pick the next one
       setSelectedDeposit(null);
       setShowRejectInput(false);
       setRejectionReason("");
@@ -5238,7 +5222,7 @@ export default function AccountantVerificationDashboard() {
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         
-        {/* LEFT PANE: QUEUE / LEDGER */}
+        {/* LEFT PANE: QUEUE / LEDGER (Col span 5) */}
         <div className="xl:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden sticky top-6" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
           <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
             <div>
@@ -5306,7 +5290,7 @@ export default function AccountantVerificationDashboard() {
           </div>
         </div>
 
-        {/* RIGHT PANE: PARALLEL INSPECTION VIEWER */}
+        {/* RIGHT PANE: PARALLEL INSPECTION VIEWER (Col span 7) */}
         <div className="xl:col-span-7 sticky top-6 flex flex-col gap-4" style={{ height: 'calc(100vh - 2rem)' }}>
           
           {!selectedDeposit ? (
@@ -5388,41 +5372,14 @@ export default function AccountantVerificationDashboard() {
                     <div className="w-10 h-10 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4"></div>
                     <p className="text-blue-400 font-bold text-xs uppercase tracking-widest animate-pulse">Decrypting Vault Image...</p>
                   </div>
-                ) : imageError ? (
-                  <div className="text-center p-6 bg-red-950/50 border border-red-900 rounded-2xl max-w-md shadow-2xl flex flex-col items-center">
-                    <span className="text-4xl">🚫</span>
-                    <h3 className="text-red-500 font-black uppercase tracking-widest mt-4">Storage Access Failed</h3>
-                    <p className="text-red-300 text-xs font-bold mt-2 bg-red-950 p-3 rounded">{imageError}</p>
-                    
-                    {/* DEBUG BUTTON */}
-                    {secureImageUrl && (
-                      <a href={secureImageUrl} target="_blank" rel="noreferrer" className="mt-4 bg-white text-red-900 px-4 py-2 rounded text-xs font-black uppercase tracking-widest shadow-lg hover:bg-red-100 transition">
-                        Open Raw URL to Expose Error ↗
-                      </a>
-                    )}
-                  </div>
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
-                    {/* INTELLIGENT RENDERER: iFrame for PDFs, Img for Images */}
-                    {selectedDeposit.deposit_slip_url.toLowerCase().endsWith('.pdf') ? (
-                      <iframe 
-                        src={`${secureImageUrl}#toolbar=0`} 
-                        className="w-full h-full rounded shadow-2xl border border-slate-700 bg-white"
-                        title="Decrypted PDF Proof"
-                      />
-                    ) : (
-                      <img 
-                        src={secureImageUrl} 
-                        alt="Decrypted Deposit Proof" 
-                        className="max-w-full h-auto object-contain rounded shadow-2xl transition-transform duration-300 bg-white" 
-                        style={{ maxHeight: '100%' }}
-                        onError={() => {
-                          setSecureImageUrl(null);
-                          setImageError("BROWSER BLOCKED: The image failed to load. The file is corrupted, or the bucket is not set to Public.");
-                        }}
-                      />
-                    )}
-                    
+                    <img 
+                      src={secureImageUrl} 
+                      alt="Decrypted Deposit Proof" 
+                      className="max-w-full h-auto object-contain rounded shadow-2xl transition-transform duration-300" 
+                      style={{ maxHeight: '100%' }}
+                    />
                     <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
                        <a href={secureImageUrl} target="_blank" rel="noreferrer" className="bg-slate-900/80 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded shadow-lg backdrop-blur-sm transition border border-slate-700">
                          Open Full Screen ↗
@@ -5436,6 +5393,7 @@ export default function AccountantVerificationDashboard() {
             </>
           )}
         </div>
+        
       </div>
     </div>
   );
@@ -5646,8 +5604,6 @@ export default function InfrastructureCommandCenter() {
     role_ocsc: false,
     role_aadhaar: false,
     role_partner: true, 
-    is_master_node: false, // Architectural Hub Toggle
-    parent_master_id: "",  // Spoke Tethering ID
   };
   const [formData, setFormData] = useState(initialForm);
 
@@ -5697,10 +5653,9 @@ export default function InfrastructureCommandCenter() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // Fetch locations including the parent tether reference
       const { data, error } = await supabase
         .from("locations")
-        .select("*, parent_master:locations(center_name)")
+        .select("*")
         .order("center_name", { ascending: true });
 
       if (error) throw error;
@@ -5733,9 +5688,7 @@ export default function InfrastructureCommandCenter() {
       role_cm: loc.role_cm || false,
       role_ocsc: loc.role_ocsc || false,
       role_aadhaar: loc.role_aadhaar || false,
-      role_partner: loc.role_partner || false,
-      is_master_node: loc.is_master_node || false,
-      parent_master_id: loc.parent_master_id || "",
+      role_partner: loc.role_partner || false
     });
     setPinError("");
     setIsModalOpen(true);
@@ -5743,12 +5696,6 @@ export default function InfrastructureCommandCenter() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Topology Validation
-    if (!formData.is_master_node && !formData.parent_master_id) {
-      return alert("A Franchise Center (Spoke) must be tethered to a Master HQ.");
-    }
-
     setIsSubmitting(true);
 
     const payload = {
@@ -5758,13 +5705,10 @@ export default function InfrastructureCommandCenter() {
       taluk: formData.taluk,
       dist: formData.dist,
       state: formData.state,
-      // Architectural Logic applied to payload
-      is_master_node: formData.is_master_node,
-      parent_master_id: formData.is_master_node ? null : parseInt(formData.parent_master_id),
-      role_cm: formData.is_master_node ? false : formData.role_cm,
-      role_ocsc: formData.is_master_node ? false : formData.role_ocsc,
-      role_partner: formData.is_master_node ? false : formData.role_partner,
-      role_aadhaar: formData.role_aadhaar 
+      role_cm: formData.role_cm,
+      role_ocsc: formData.role_ocsc,
+      role_aadhaar: formData.role_aadhaar,
+      role_partner: formData.role_partner
     };
 
     try {
@@ -5783,13 +5727,19 @@ export default function InfrastructureCommandCenter() {
       setIsModalOpen(false);
       fetchLocations();
     } catch (err: any) {
-      console.error("Database Transaction Failed:", err); 
+      // =========================================================================
+      // SECURITY FIX: Obfuscate Raw Database Errors
+      // =========================================================================
+      console.error("Database Transaction Failed:", err); // Safe internal logging
 
       if (err?.code === '23505') {
+        // Postgres Code: unique_violation
         alert("Validation Error: The Center Name or Center Code already exists in the database. These must be uniquely identifiable.");
       } else if (err?.code === '23503') {
+        // Postgres Code: foreign_key_violation
         alert("Validation Error: Cannot process this request due to linked relational records.");
       } else {
+        // Generic Fallback for all other unhandled schema constraints or timeouts
         alert("An unexpected system error occurred while saving the location. Please try again or contact IT support.");
       }
     } finally {
@@ -5800,16 +5750,12 @@ export default function InfrastructureCommandCenter() {
   // Strict Filter Engine
   const filteredLocations = locations.filter(loc => {
     if (filterRole === "ALL") return true;
-    if (filterRole === "HQ") return loc.is_master_node;
     if (filterRole === "CM") return loc.role_cm;
     if (filterRole === "OCSC") return loc.role_ocsc;
     if (filterRole === "AADHAAR") return loc.role_aadhaar;
     if (filterRole === "PARTNER") return loc.role_partner;
     return true;
   });
-
-  // Extract master locations to populate the tethering dropdown
-  const masterHQs = locations.filter(loc => loc.is_master_node);
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -5841,9 +5787,6 @@ export default function InfrastructureCommandCenter() {
         <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           All Grid ({locations.length})
         </button>
-        <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          Master HQs ({locations.filter(l => l.is_master_node).length})
-        </button>
         <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           Franchises ({locations.filter(l => l.role_partner).length})
         </button>
@@ -5852,6 +5795,9 @@ export default function InfrastructureCommandCenter() {
         </button>
         <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           CM ({locations.filter(l => l.role_cm).length})
+        </button>
+        <button onClick={() => setFilterRole('AADHAAR')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'AADHAAR' ? 'bg-amber-600 text-white border-amber-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          Aadhaar ({locations.filter(l => l.role_aadhaar).length})
         </button>
       </div>
 
@@ -5865,7 +5811,7 @@ export default function InfrastructureCommandCenter() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
           {filteredLocations.map(loc => (
-            <div key={loc.id} className={`bg-white rounded-xl shadow-sm border-2 hover:border-blue-300 overflow-hidden flex flex-col transition-all ${loc.is_master_node ? 'border-indigo-400' : 'border-slate-200'}`}>
+            <div key={loc.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 hover:border-blue-300 overflow-hidden flex flex-col transition-all">
               
               <div className="p-5 flex-1 border-b border-slate-100">
                 <div className="flex justify-between items-start mb-4">
@@ -5877,39 +5823,24 @@ export default function InfrastructureCommandCenter() {
                   </span>
                 </div>
                 
-                {/* ARCHITECTURE BADGE */}
-                <div className="mb-4">
-                  {loc.is_master_node ? (
-                    <span className="inline-block bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
-                      🏛️ Master HQ (Hub)
-                    </span>
-                  ) : (
-                    <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
-                      🔗 Tethered to: {loc.parent_master?.center_name || 'N/A'}
-                    </span>
-                  )}
-                </div>
-                
-                {!loc.is_master_node && (
-                  <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>Partner</span>
-                      <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>OCSC</span>
-                      <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>CM</span>
-                      <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>Aadhaar</span>
-                      <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
+                <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                    <span>Partner</span>
+                    <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
                   </div>
-                )}
+                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                    <span>OCSC</span>
+                    <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
+                  </div>
+                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                    <span>CM</span>
+                    <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
+                  </div>
+                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                    <span>Aadhaar</span>
+                    <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
+                  </div>
+                </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center text-sm">
@@ -5945,58 +5876,9 @@ export default function InfrastructureCommandCenter() {
             
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
               
-              {/* SECTION 1: TOPOLOGY MAPPING (HUB VS SPOKE) */}
+              {/* SECTION 1: CORE IDENTITY */}
               <div>
-                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">1. Network Topology</h4>
-                
-                <div className="flex gap-4 mb-4">
-                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition ${formData.is_master_node ? 'bg-indigo-50 border-indigo-500' : 'bg-slate-50 border-slate-300 hover:border-indigo-300'}`}>
-                    <input 
-                      type="radio" 
-                      name="nodeType" 
-                      checked={formData.is_master_node}
-                      onChange={() => setFormData({...formData, is_master_node: true, role_ocsc: false, role_cm: false, role_partner: false, parent_master_id: ""})} 
-                      className="accent-indigo-600"
-                    />
-                    <div>
-                      <span className="font-black text-slate-800 text-sm block leading-tight">Master HQ (Hub)</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Procurement Node</span>
-                    </div>
-                  </label>
-                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition ${!formData.is_master_node ? 'bg-emerald-50 border-emerald-500' : 'bg-slate-50 border-slate-300 hover:border-emerald-300'}`}>
-                    <input 
-                      type="radio" 
-                      name="nodeType" 
-                      checked={!formData.is_master_node}
-                      onChange={() => setFormData({...formData, is_master_node: false})} 
-                      className="accent-emerald-600"
-                    />
-                    <div>
-                      <span className="font-black text-slate-800 text-sm block leading-tight">Franchise (Spoke)</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Retail / Ops Center</span>
-                    </div>
-                  </label>
-                </div>
-
-                {!formData.is_master_node && (
-                  <div className="bg-emerald-50 p-4 border border-emerald-200 rounded-lg animate-in fade-in">
-                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-widest block mb-2">Tether to Master HQ *</label>
-                    <select 
-                      required 
-                      value={formData.parent_master_id} 
-                      onChange={e => setFormData({...formData, parent_master_id: e.target.value})} 
-                      className="w-full bg-white border-2 border-emerald-300 text-slate-800 font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-600"
-                    >
-                      <option value="" disabled>-- Select Hub --</option>
-                      {masterHQs.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              {/* SECTION 2: CORE IDENTITY */}
-              <div>
-                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">2. Core Identity</h4>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">1. Core Identity</h4>
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="md:col-span-1">
@@ -6043,59 +5925,52 @@ export default function InfrastructureCommandCenter() {
                 </div>
               </div>
 
-              {/* SECTION 3: ROLES MAPPING */}
+              {/* SECTION 2: ROLES MAPPING */}
               <div>
                 <div className="flex justify-between items-end border-b pb-1 mb-4">
-                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">3. Operational Roles</h4>
+                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">2. Operational Roles (Enable/Disable)</h4>
                   <span className="text-[9px] font-bold text-slate-400 uppercase">Toggle operational status here.</span>
                 </div>
-                
-                {formData.is_master_node ? (
-                  <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-lg">
-                    <p className="text-xs font-bold text-indigo-800">
-                      🏛️ Master HQs handle bulk procurement and administration. Retail operations (OCSC, CM) are disabled at this level.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_cm ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
-                      <div>
-                        <span className="text-xs font-black uppercase text-slate-800 block">Consumer Mobility</span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">CM Services</span>
-                      </div>
-                      <input type="checkbox" checked={formData.role_cm} onChange={e => setFormData({...formData, role_cm: e.target.checked})} className="w-5 h-5 accent-emerald-600" />
-                    </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  
+                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_cm ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
+                    <div>
+                      <span className="text-xs font-black uppercase text-slate-800 block">Consumer Mobility</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">CM Services</span>
+                    </div>
+                    <input type="checkbox" checked={formData.role_cm} onChange={e => setFormData({...formData, role_cm: e.target.checked})} className="w-5 h-5 accent-emerald-600" />
+                  </label>
 
-                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_ocsc ? 'bg-blue-50 border-blue-300' : 'bg-white border-slate-200'}`}>
-                      <div>
-                        <span className="text-xs font-black uppercase text-slate-800 block">OCSC</span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Customer Support</span>
-                      </div>
-                      <input type="checkbox" checked={formData.role_ocsc} onChange={e => setFormData({...formData, role_ocsc: e.target.checked})} className="w-5 h-5 accent-blue-600" />
-                    </label>
+                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_ocsc ? 'bg-blue-50 border-blue-300' : 'bg-white border-slate-200'}`}>
+                    <div>
+                      <span className="text-xs font-black uppercase text-slate-800 block">OCSC</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Customer Support</span>
+                    </div>
+                    <input type="checkbox" checked={formData.role_ocsc} onChange={e => setFormData({...formData, role_ocsc: e.target.checked})} className="w-5 h-5 accent-blue-600" />
+                  </label>
 
-                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_aadhaar ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
-                      <div>
-                        <span className="text-xs font-black uppercase text-slate-800 block">Aadhaar Center</span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Seva Kendra</span>
-                      </div>
-                      <input type="checkbox" checked={formData.role_aadhaar} onChange={e => setFormData({...formData, role_aadhaar: e.target.checked})} className="w-5 h-5 accent-amber-600" />
-                    </label>
+                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_aadhaar ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
+                    <div>
+                      <span className="text-xs font-black uppercase text-slate-800 block">Aadhaar Center</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Seva Kendra</span>
+                    </div>
+                    <input type="checkbox" checked={formData.role_aadhaar} onChange={e => setFormData({...formData, role_aadhaar: e.target.checked})} className="w-5 h-5 accent-amber-600" />
+                  </label>
 
-                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_partner ? 'bg-purple-50 border-purple-300' : 'bg-white border-slate-200'}`}>
-                      <div>
-                        <span className="text-xs font-black uppercase text-slate-800 block">Franchise Partner</span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Base Operations</span>
-                      </div>
-                      <input type="checkbox" checked={formData.role_partner} onChange={e => setFormData({...formData, role_partner: e.target.checked})} className="w-5 h-5 accent-purple-600" />
-                    </label>
-                  </div>
-                )}
+                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_partner ? 'bg-purple-50 border-purple-300' : 'bg-white border-slate-200'}`}>
+                    <div>
+                      <span className="text-xs font-black uppercase text-slate-800 block">Franchise Partner</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Base Operations</span>
+                    </div>
+                    <input type="checkbox" checked={formData.role_partner} onChange={e => setFormData({...formData, role_partner: e.target.checked})} className="w-5 h-5 accent-purple-600" />
+                  </label>
+
+                </div>
               </div>
 
-              {/* SECTION 4: GEOGRAPHY */}
+              {/* SECTION 3: GEOGRAPHY */}
               <div>
-                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">4. Geographic Mapping</h4>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">3. Geographic Mapping</h4>
                 <div className="space-y-4">
                   <div>
                     <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest block mb-2 flex justify-between">
@@ -6774,816 +6649,6 @@ export default function ApplicationsList() {
 }
 
 ================================================================================
-FILE PATH: ./app/dashboard/manager-mis/page.tsx
-================================================================================
-"use client";
-
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabase";
-
-export default function ManagerMISDashboard() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'purchase' | 'sales' | 'collection' | 'report'>('purchase');
-
-  // Architecture Data
-  const [allLocations, setAllLocations] = useState<any[]>([]); 
-  const [masterCtops, setMasterCtops] = useState<any[]>([]); 
-  const [agentMappings, setAgentMappings] = useState<any[]>([]);
-
-  // Tab Context States
-  const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
-  
-  // NEW: Cascading Filter States for Data Entry (Sales & Collection)
-  const [entryMasterLocId, setEntryMasterLocId] = useState("");
-  const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
-
-  // Tab 1: Purchase Form State
-  const [purchaseForm, setPurchaseForm] = useState({
-    purchase_date: new Date().toISOString().split('T')[0],
-    master_ctop_id: "", 
-    product_category: "CBP",
-    qty: "",
-    amount: "",
-    commission_percent: "5.81",
-    manual_qty_override: false, 
-  });
-
-  // Tab 2: Sales Form State (OCSC)
-  const [ocscSales, setOcscSales] = useState({
-    cbp_landline_cash: "", cbp_gsm_cash: "", ctop_recharge_cash: "",
-    sim_replace_qty: "", sim_replace_cash: "",
-    sim_fancy_qty: "", sim_fancy_cash: "",
-    sim_other_qty: "", sim_other_cash: "",
-  });
-
-  // Tab 2: Sales Form State (CM)
-  const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
-
-  // Tab 3: Collection Form State
-  const [collectionForm, setCollectionForm] = useState({
-    total_cash_collected: "", remarks: ""
-  });
-
-  // ==========================================
-  // TAB 4: REPORTING ENGINE STATES
-  // ==========================================
-  const [rawPurchases, setRawPurchases] = useState<any[]>([]);
-  const [rawSales, setRawSales] = useState<any[]>([]);
-  const [rawCollections, setRawCollections] = useState<any[]>([]);
-  
-  const [repTimeFilter, setRepTimeFilter] = useState("this_month");
-  const [repMasterFilter, setRepMasterFilter] = useState("ALL");
-  const [repChildFilter, setRepChildFilter] = useState("ALL");
-
-  // Fetch Architecture & Report Data
-  useEffect(() => {
-    fetchArchitectureAndReports();
-  }, []);
-
-  const fetchArchitectureAndReports = async () => {
-    setLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return router.push("/login");
-
-      const [locRes, masterRes, agentRes, purRes, salesRes, colRes] = await Promise.all([
-        supabase.from("locations").select("*").order("center_name"), // Fetch ALL for Hub/Spoke topology
-        supabase.from("master_ctop_accounts").select("*, locations(center_name)"),
-        supabase.from("agent_ctop_mappings").select("*, active_partners(locations(id))"),
-        supabase.from("mis_purchases").select("*, master_ctop_accounts(master_ctop_no, location_id)").order("purchase_date", {ascending: false}),
-        supabase.from("mis_monthly_sales").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false}),
-        supabase.from("mis_monthly_collections").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false})
-      ]);
-
-      setAllLocations(locRes.data || []);
-      setMasterCtops(masterRes.data || []);
-      setAgentMappings(agentRes.data || []);
-      setRawPurchases(purRes.data || []);
-      setRawSales(salesRes.data || []);
-      setRawCollections(colRes.data || []);
-    } catch (err: any) {
-      console.error(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Agent Mapping Hook for Tab 2
-  useEffect(() => {
-    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
-      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
-      const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
-      setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: "" })));
-    } else {
-      setCmSales([]);
-    }
-  }, [selectedChildLocKey, agentMappings]);
-
-  // Intelligent Auto-Calculation Engine
-  useEffect(() => {
-    if (purchaseForm.manual_qty_override) return; 
-
-    const amt = parseFloat(purchaseForm.amount) || 0;
-
-    if (purchaseForm.product_category === "CBP") {
-      setPurchaseForm(prev => ({ ...prev, qty: amt.toString() }));
-    } else if (purchaseForm.product_category === "CTOP") {
-      const pct = parseFloat(purchaseForm.commission_percent) || 0;
-      const comm = (amt * pct) / 100;
-      const total = (amt + comm).toFixed(2); 
-      setPurchaseForm(prev => ({ ...prev, qty: total.toString() }));
-    }
-  }, [purchaseForm.amount, purchaseForm.commission_percent, purchaseForm.product_category, purchaseForm.manual_qty_override]);
-
-
-  const getActiveLocationType = () => {
-    if (!selectedChildLocKey) return null;
-    return selectedChildLocKey.split('-')[1]; 
-  };
-
-  // --- SUBMISSION ENGINES ---
-
-  const handlePurchaseSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!purchaseForm.master_ctop_id) return alert("You must select a Master CTOP to log procurement against.");
-    setIsSubmitting(true);
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) throw new Error("Auth drop.");
-
-      const isCTOP = purchaseForm.product_category === 'CTOP';
-      const amtDb = parseFloat(purchaseForm.amount) || 0;
-      const pctDb = parseFloat(purchaseForm.commission_percent) || 0;
-      const commValue = isCTOP ? (amtDb * pctDb) / 100 : 0;
-
-      const selectedMaster = masterCtops.find(m => m.id === purchaseForm.master_ctop_id);
-
-      const payload = {
-        purchase_date: purchaseForm.purchase_date,
-        location_id: selectedMaster?.location_id || null, 
-        master_ctop_id: purchaseForm.master_ctop_id,
-        product_category: purchaseForm.product_category,
-        qty: parseFloat(purchaseForm.qty) || 0,
-        amount: amtDb,
-        commission_percent: isCTOP ? pctDb : null,
-        commission_value: commValue,
-        logged_by: user.id
-      };
-
-      const { data: insertedRecord, error } = await supabase.from('mis_purchases').insert([payload]).select().single();
-      if (error) throw error;
-
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: user.id,
-        staff_email: user.email,
-        action_type: 'MIS_ENTRY',
-        module: 'MANAGER_MIS',
-        target_id: insertedRecord.id,
-        details: `Procured: ${payload.qty}x ${purchaseForm.product_category} into Master CTOP ${selectedMaster?.master_ctop_no}.`
-      }]);
-
-      alert("✅ Central Purchase Ledger Updated.");
-      setPurchaseForm({ ...purchaseForm, qty: "", amount: "", manual_qty_override: false }); 
-      fetchArchitectureAndReports(); // Refresh reports
-    } catch (err: any) {
-      alert("Error saving purchase: " + err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSalesSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
-    setIsSubmitting(true);
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) throw new Error("Auth drop.");
-
-      const centerType = getActiveLocationType();
-      const dbReportingMonth = `${reportingMonth}-01`;
-
-      const cleanOcscSales = {
-        cbp_landline_cash: parseFloat(ocscSales.cbp_landline_cash) || 0,
-        cbp_gsm_cash: parseFloat(ocscSales.cbp_gsm_cash) || 0,
-        ctop_recharge_cash: parseFloat(ocscSales.ctop_recharge_cash) || 0,
-        sim_replace_qty: parseInt(ocscSales.sim_replace_qty) || 0,
-        sim_replace_cash: parseFloat(ocscSales.sim_replace_cash) || 0,
-        sim_fancy_qty: parseInt(ocscSales.sim_fancy_qty) || 0,
-        sim_fancy_cash: parseFloat(ocscSales.sim_fancy_cash) || 0,
-        sim_other_qty: parseInt(ocscSales.sim_other_qty) || 0,
-        sim_other_cash: parseFloat(ocscSales.sim_other_cash) || 0,
-      };
-
-      const parentPayload = {
-        reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedChildLocKey.split('-')[0]), 
-        center_type: centerType,
-        logged_by: user.id,
-        ...(centerType === 'OCSC' ? cleanOcscSales : {}) 
-      };
-
-      const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([parentPayload]).select().single();
-      if (parentError) throw parentError;
-
-      if (centerType === 'CM' && cmSales.length > 0) {
-        const childPayloads = cmSales.map(agent => ({
-          monthly_sales_id: parentRecord.id,
-          agent_ctop_no: agent.agent_ctop_no,
-          qty: parseFloat(agent.qty) || 0
-        })).filter(payload => payload.qty > 0); 
-
-        if (childPayloads.length > 0) {
-          const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
-          if (childError) throw childError;
-        }
-      }
-
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: user.id,
-        staff_email: user.email,
-        action_type: 'MIS_CLOSURE',
-        module: 'MANAGER_MIS',
-        target_id: parentRecord.id,
-        details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
-      }]);
-
-      alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
-      fetchArchitectureAndReports(); // Refresh reports
-    } catch (err: any) {
-      if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
-      else alert("Error saving sales: " + err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleCollectionSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
-    setIsSubmitting(true);
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) throw new Error("Auth drop.");
-
-      const dbReportingMonth = `${reportingMonth}-01`;
-      const payload = {
-        reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedChildLocKey.split('-')[0]), 
-        total_cash_collected: parseFloat(collectionForm.total_cash_collected) || 0,
-        remarks: collectionForm.remarks,
-        logged_by: user.id
-      };
-
-      const { data: colRecord, error } = await supabase.from('mis_monthly_collections').insert([payload]).select().single();
-      if (error) throw error;
-
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: user.id,
-        staff_email: user.email,
-        action_type: 'MIS_CLOSURE',
-        module: 'MANAGER_MIS',
-        target_id: colRecord.id,
-        details: `Declared Collection of ₹${payload.total_cash_collected} for ${reportingMonth}.`
-      }]);
-
-      alert(`✅ Collection for ${reportingMonth} successfully logged.`);
-      setCollectionForm({ total_cash_collected: "", remarks: "" });
-      fetchArchitectureAndReports(); // Refresh reports
-    } catch (err: any) {
-      if (err.message.includes('unique constraint')) alert("❌ Blocked: Collection for this center and month is already locked.");
-      else alert("Error saving collection: " + err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ==========================================
-  // REPORTING ENGINE LOGIC (TAB 4)
-  // ==========================================
-  const getFilteredReports = () => {
-    let fPurchases = [...rawPurchases];
-    let fSales = [...rawSales];
-    let fCollections = [...rawCollections];
-
-    const today = new Date();
-    let startDate = new Date("2000-01-01");
-
-    if (repTimeFilter === "today") {
-      startDate = new Date(today.setHours(0,0,0,0));
-    } else if (repTimeFilter === "this_week") {
-      startDate = new Date(today.setDate(today.getDate() - today.getDay()));
-    } else if (repTimeFilter === "this_month") {
-      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    }
-
-    const startStr = startDate.toISOString().split('T')[0];
-
-    if (repTimeFilter !== "all") {
-      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr);
-      fSales = fSales.filter(s => s.reporting_month >= startStr);
-      fCollections = fCollections.filter(c => c.reporting_month >= startStr);
-    }
-
-    if (repMasterFilter !== "ALL") {
-      const masterId = parseInt(repMasterFilter);
-      fPurchases = fPurchases.filter(p => p.location_id === masterId);
-      fSales = fSales.filter(s => s.locations?.parent_master_id === masterId);
-      fCollections = fCollections.filter(c => c.locations?.parent_master_id === masterId);
-    }
-
-    if (repChildFilter !== "ALL") {
-      const childId = parseInt(repChildFilter);
-      fPurchases = []; 
-      fSales = fSales.filter(s => s.location_id === childId);
-      fCollections = fCollections.filter(c => c.location_id === childId);
-    }
-
-    const totalPurchasedValue = fPurchases.reduce((sum, p) => sum + Number(p.amount), 0);
-    const totalSalesCash = fSales.reduce((sum, s) => sum + 
-      Number(s.cbp_landline_cash || 0) + Number(s.cbp_gsm_cash || 0) + Number(s.ctop_recharge_cash || 0) +
-      Number(s.sim_replace_cash || 0) + Number(s.sim_fancy_cash || 0) + Number(s.sim_other_cash || 0), 0);
-    const totalCollected = fCollections.reduce((sum, c) => sum + Number(c.total_cash_collected), 0);
-
-    return { fPurchases, fSales, fCollections, totalPurchasedValue, totalSalesCash, totalCollected };
-  };
-
-  const { fPurchases, fSales, fCollections, totalPurchasedValue, totalSalesCash, totalCollected } = getFilteredReports();
-
-
-  const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
-
-  if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
-    </div>
-  );
-
-  const locType = getActiveLocationType();
-  const liveAmt = parseFloat(purchaseForm.amount) || 0;
-  const livePct = parseFloat(purchaseForm.commission_percent) || 0;
-  const liveComm = (liveAmt * livePct) / 100;
-
-  // Split locations for Data Entry Dropdowns (Sales/Collection)
-  const hqLocations = allLocations.filter(l => l.is_master_node);
-  const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
-  
-  // Split locations for Report Filter Dropdowns
-  const childFranchisesForReports = allLocations.filter(l => !l.is_master_node && (repMasterFilter === "ALL" || l.parent_master_id === parseInt(repMasterFilter)));
-
-  return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
-      
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-200 pb-6 gap-4">
-        <div>
-          <Link href="/dashboard" className="text-blue-600 font-bold hover:underline mb-2 inline-block text-sm">
-            &larr; Back to Command Center
-          </Link>
-          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-            <span className="text-4xl">📊</span> Manager MIS Dashboard
-          </h1>
-          <p className="text-slate-500 font-medium mt-1">Hierarchical MIS Pipeline: Master Procurement & Center Operations.</p>
-        </div>
-      </div>
-
-      {/* TAB NAVIGATION */}
-      <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
-        <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Central Procurement</button>
-        <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Center Sales</button>
-        <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Center Collection</button>
-        <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Live Reporting Engine</button>
-      </div>
-
-      {/* TAB 1: MASTER PURCHASE ENGINE (PROCUREMENT) */}
-      {activeTab === 'purchase' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
-          <div className="bg-slate-900 p-4 rounded-lg mb-6 flex gap-4 items-center">
-            <span className="text-3xl">🏛️</span>
-            <div>
-              <h2 className="text-white font-black uppercase tracking-widest">Master Procurement</h2>
-              <p className="text-slate-400 text-xs font-bold mt-1">Log inventory purchases directly against a Master CTOP Account.</p>
-            </div>
-          </div>
-
-          <form onSubmit={handlePurchaseSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
-              <div className="md:col-span-3">
-                <label className="block text-xs font-black text-indigo-600 uppercase tracking-widest mb-1.5">Target Master CTOP (HQ) *</label>
-                <select required value={purchaseForm.master_ctop_id} onChange={e => setPurchaseForm({...purchaseForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-3 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
-                  <option value="" disabled>-- Select Master CTOP --</option>
-                  {masterCtops.map(m => (
-                    <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Date</label>
-                <input required type="date" value={purchaseForm.purchase_date} onChange={e => setPurchaseForm({...purchaseForm, purchase_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
-              </div>
-              
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Product Category</label>
-                <select value={purchaseForm.product_category} onChange={e => setPurchaseForm({...purchaseForm, product_category: e.target.value, manual_qty_override: false})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
-                  <option value="CBP">CBP</option>
-                  <option value="CTOP">CTOP</option>
-                  <option value="SIM_FREE">SIM (Free)</option>
-                  <option value="SIM_PAID">SIM (Paid)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Amount (₹)</label>
-                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} className={numInputClass} placeholder="Enter Amount" />
-              </div>
-
-              {/* DYNAMIC QTY RENDERER WITH OVERRIDE CHECKBOX */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Final Quantity</label>
-                  {(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && (
-                    <label className="flex items-center gap-1 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={purchaseForm.manual_qty_override} 
-                        onChange={(e) => setPurchaseForm({...purchaseForm, manual_qty_override: e.target.checked})}
-                        className="accent-indigo-600"
-                      />
-                      <span className="text-[9px] font-bold text-indigo-600 uppercase">Override</span>
-                    </label>
-                  )}
-                </div>
-                <input 
-                  required type="number" step="0.01" min="0" 
-                  value={purchaseForm.qty} 
-                  onChange={e => setPurchaseForm({...purchaseForm, qty: e.target.value})} 
-                  disabled={(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override}
-                  className={`${numInputClass} ${((purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override) ? 'bg-slate-100 cursor-not-allowed opacity-80 border-dashed' : ''}`} 
-                  placeholder={purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP' ? 'Auto-calculating...' : 'Enter Quantity'}
-                />
-              </div>
-
-              {purchaseForm.product_category === 'CTOP' && (
-                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
-                    <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
-                  </div>
-                  <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
-                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Calculated Payout</p>
-                    <p className="text-xl text-indigo-600 font-black">₹{liveComm.toFixed(2)}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <button type="submit" disabled={isSubmitting || !purchaseForm.master_ctop_id} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-              {isSubmitting ? "Logging Procurement..." : "Submit to Master Ledger"}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* TAB 2 & 3 SHARED CENTER SELECTION RIBBON (UPDATED TO HUB & SPOKE) */}
-      {(activeTab === 'sales' || activeTab === 'collection') && (
-        <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 animate-in fade-in">
-          
-          {/* Cascading Filter 1: Master HQ */}
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
-            <select 
-              value={entryMasterLocId} 
-              onChange={(e) => {
-                setEntryMasterLocId(e.target.value); 
-                setSelectedChildLocKey(""); // Reset child center on master change
-              }}
-              className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition"
-            >
-              <option value="">-- All Master HQs --</option>
-              {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-            </select>
-          </div>
-
-          {/* Cascading Filter 2: Child Center */}
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
-            <select 
-              value={selectedChildLocKey} 
-              onChange={(e) => setSelectedChildLocKey(e.target.value)}
-              className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition"
-            >
-              <option value="" disabled>-- Select Franchise Center --</option>
-              {entryFilteredFranchises.flatMap(l => {
-                const options = [];
-                if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
-                if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
-                return options;
-              })}
-            </select>
-          </div>
-
-          {/* Month Context */}
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
-            <input 
-              type="month" 
-              value={reportingMonth} 
-              onChange={(e) => setReportingMonth(e.target.value)}
-              className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
-            />
-          </div>
-
-          {/* Operation Mode */}
-          <div className="col-span-1 flex flex-col justify-end">
-            <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
-              <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
-                {locType || 'NONE'}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: MONTHLY SALES ENGINE (CENTER LEVEL) */}
-      {activeTab === 'sales' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
-          <div className="flex justify-between items-end border-b pb-2 mb-6">
-            <div>
-              <h2 className="text-lg font-black text-slate-800">Monthly Center Sales Ledger</h2>
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Closing Month: {reportingMonth}</p>
-            </div>
-          </div>
-
-          {!locType ? (
-            <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
-              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
-            </div>
-          ) : (
-            <form onSubmit={handleSalesSubmit} className="space-y-6">
-              
-              {/* OCSC DYNAMIC GRID */}
-              {locType === 'OCSC' && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} className={numInputClass} /></div>
-                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} className={numInputClass} /></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* CM DYNAMIC AGENT GRID */}
-              {locType === 'CM' && (
-                <div>
-                  <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
-                  {cmSales.length === 0 ? (
-                    <p className="text-sm font-bold text-red-600 bg-red-50 p-4 border border-red-200 rounded">No agents mapped to this Child Center.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {cmSales.map((agent, idx) => (
-                        <div key={agent.agent_ctop_no} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
-                          <span className="font-black text-slate-800 tracking-wider">Agent: {agent.agent_ctop_no}</span>
-                          <div className="flex items-center gap-3">
-                            <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
-                            <input 
-                              type="number" min="0" value={agent.qty} 
-                              onChange={(e) => {
-                                const newSales = [...cmSales];
-                                newSales[idx].qty = e.target.value;
-                                setCmSales(newSales);
-                              }} 
-                              className="border border-slate-300 p-2 rounded font-bold outline-none focus:border-indigo-500 w-32" 
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-                {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
-              </button>
-            </form>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: COLLECTION ENGINE (CENTER LEVEL) */}
-      {activeTab === 'collection' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-          <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Center Collection</h2>
-          
-          {!locType ? (
-            <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
-              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
-            </div>
-          ) : (
-            <form onSubmit={handleCollectionSubmit} className="space-y-6">
-              <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-200 text-center">
-                <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
-                <input 
-                  required type="number" step="0.01" min="0"
-                  value={collectionForm.total_cash_collected} 
-                  onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} 
-                  className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Reconciliation Remarks (Optional)</label>
-                <textarea 
-                  rows={3} 
-                  value={collectionForm.remarks} 
-                  onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} 
-                  placeholder="Explain any shortfalls or surpluses..."
-                  className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none font-medium focus:border-indigo-500" 
-                />
-              </div>
-
-              <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
-                {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
-              </button>
-            </form>
-          )}
-        </div>
-      )}
-
-      {/* ========================================== */}
-      {/* TAB 4: COMPREHENSIVE REPORTING ENGINE */}
-      {/* ========================================== */}
-      {activeTab === 'report' && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 space-y-6">
-          
-          {/* REPORT FILTER RIBBON */}
-          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Time Filter */}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Time Context</label>
-              <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-500">
-                <option value="today">Today</option>
-                <option value="this_week">This Week</option>
-                <option value="this_month">This Month</option>
-                <option value="all">All Time</option>
-              </select>
-            </div>
-
-            {/* Hierarchical Hub (Master) Filter */}
-            <div>
-              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Master HQ (Hub)</label>
-              <select value={repMasterFilter} onChange={(e) => {setRepMasterFilter(e.target.value); setRepChildFilter("ALL");}} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400">
-                <option value="ALL">-- All HQ Hubs --</option>
-                {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-              </select>
-            </div>
-
-            {/* Hierarchical Spoke (Child) Filter */}
-            <div>
-              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Child Center (Spoke)</label>
-              <select value={repChildFilter} onChange={(e) => setRepChildFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400">
-                <option value="ALL">-- All Tethered Centers --</option>
-                {childFranchisesForReports.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
-              </select>
-            </div>
-
-          </div>
-
-          {/* REPORT METRICS BANNER */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total HQ Purchases</p>
-              <p className="text-2xl font-black text-indigo-600">₹{totalPurchasedValue.toLocaleString('en-IN')}</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Center Sales</p>
-              <p className="text-2xl font-black text-blue-600">₹{totalSalesCash.toLocaleString('en-IN')}</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Declared Collections</p>
-              <p className="text-2xl font-black text-emerald-600">₹{totalCollected.toLocaleString('en-IN')}</p>
-            </div>
-            <div className={`p-5 rounded-xl border shadow-sm text-center ${totalCollected >= totalSalesCash ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-              <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>Net Variance</p>
-              <p className={`text-2xl font-black ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>₹{(totalCollected - totalSalesCash).toLocaleString('en-IN')}</p>
-            </div>
-          </div>
-
-          {/* REPORT TABLES */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            
-            {/* Master HQ Purchases Table */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="bg-indigo-50 border-b border-indigo-100 p-4">
-                <h3 className="font-black text-indigo-900 uppercase tracking-widest text-xs">Master HQ Procurement Ledger</h3>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
-                    <tr>
-                      <th className="p-3 font-black">Date & Master CTOP</th>
-                      <th className="p-3 font-black">Product & Qty</th>
-                      <th className="p-3 font-black text-right">Amount (₹)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {fPurchases.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No bulk purchases found for this filter.</td></tr> : 
-                      fPurchases.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50">
-                          <td className="p-3">
-                            <p className="font-bold text-slate-900">{p.purchase_date}</p>
-                            <p className="text-[10px] text-slate-500 uppercase">CTOP: {p.master_ctop_accounts?.master_ctop_no}</p>
-                          </td>
-                          <td className="p-3">
-                            <p className="font-black text-indigo-700">{p.product_category}</p>
-                            <p className="text-xs text-slate-600 font-bold">Qty: {p.qty}</p>
-                          </td>
-                          <td className="p-3 text-right font-black text-slate-800">
-                            ₹{Number(p.amount).toLocaleString('en-IN')}
-                          </td>
-                        </tr>
-                      ))
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Child Collections Table */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="bg-emerald-50 border-b border-emerald-100 p-4">
-                <h3 className="font-black text-emerald-900 uppercase tracking-widest text-xs">Center Collections & Reconciliation</h3>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
-                    <tr>
-                      <th className="p-3 font-black">Center & Month</th>
-                      <th className="p-3 font-black text-right">Collected (₹)</th>
-                      <th className="p-3 font-black">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {fCollections.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No collections found for this filter.</td></tr> : 
-                      fCollections.map(c => (
-                        <tr key={c.id} className="hover:bg-slate-50">
-                          <td className="p-3">
-                            <p className="font-bold text-slate-900">{c.locations?.center_name}</p>
-                            <p className="text-[10px] text-slate-500 uppercase">{c.reporting_month}</p>
-                          </td>
-                          <td className="p-3 text-right font-black text-emerald-700">
-                            ₹{Number(c.total_cash_collected).toLocaleString('en-IN')}
-                          </td>
-                          <td className="p-3 text-xs text-slate-500 max-w-[150px] truncate">
-                            {c.remarks || "No remarks"}
-                          </td>
-                        </tr>
-                      ))
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-    </div>
-  );
-}
-
-================================================================================
 FILE PATH: ./app/dashboard/ocsc/page.tsx
 ================================================================================
 "use client";
@@ -7601,16 +6666,12 @@ export default function OcscDataCommand() {
   const [masters, setMasters] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [partners, setPartners] = useState<any[]>([]);
-  
-  // NEW: State to hold Master Locations (Hubs) for tethering
-  const [masterLocations, setMasterLocations] = useState<any[]>([]);
 
   // Modals & Forms
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // UPGRADED: Added location_id to the Master Form
-  const initialMasterForm = { location_id: "", master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
+  const initialMasterForm = { master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
   const initialAgentForm = { partner_id: "", master_ctop_id: "", agent_ctop_no: "", agent_ocsc_login_id: "" };
   
   const [masterForm, setMasterForm] = useState(initialMasterForm);
@@ -7625,19 +6686,15 @@ export default function OcscDataCommand() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [mastersRes, agentsRes, partnersRes, hqRes] = await Promise.all([
-        // Added locations(center_name) to fetch the anchored HQ name
-        supabase.from("master_ctop_accounts").select("*, locations(center_name)").order("created_at", { ascending: false }),
+      const [mastersRes, agentsRes, partnersRes] = await Promise.all([
+        supabase.from("master_ctop_accounts").select("*").order("created_at", { ascending: false }),
         supabase.from("agent_ctop_mappings").select("*, active_partners(partner_name, locations(center_name)), master_ctop_accounts(master_ctop_no)").order("created_at", { ascending: false }),
-        supabase.from("active_partners").select("id, partner_name, locations(center_name)").eq("status", "Active").order("partner_name", { ascending: true }),
-        // Fetch only Master Nodes (Hubs) for the dropdown
-        supabase.from("locations").select("id, center_name").eq("is_master_node", true).order("center_name", { ascending: true })
+        supabase.from("active_partners").select("id, partner_name, locations(center_name)").eq("status", "Active").order("partner_name", { ascending: true })
       ]);
 
       setMasters(mastersRes.data || []);
       setAgents(agentsRes.data || []);
       setPartners(partnersRes.data || []);
-      setMasterLocations(hqRes.data || []);
     } catch (err: any) {
       console.error(err.message);
     } finally {
@@ -7648,20 +6705,13 @@ export default function OcscDataCommand() {
   const handleMasterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Strict Validations
-    if (!masterForm.location_id) return alert("Validation Error: You must anchor this Master CTOP to a physical Master HQ.");
+    // [FIX 1]: Strict 10-Digit validation for Master CTOP
     if (masterForm.master_ctop_no.length !== 10) return alert("Validation Error: Master CTOP Number must be exactly 10 digits.");
     if (masterForm.mpin.length !== 6) return alert("Validation Error: MPIN must be exactly 6 digits.");
     
     setIsSubmitting(true);
     try {
-      // Cast the location_id to a BIGINT for the database relation
-      const payload = {
-        ...masterForm,
-        location_id: parseInt(masterForm.location_id)
-      };
-
-      const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
+      const { error } = await supabase.from("master_ctop_accounts").insert([masterForm]);
       if (error) throw error;
       setIsModalOpen(false);
       setMasterForm(initialMasterForm);
@@ -7680,7 +6730,7 @@ export default function OcscDataCommand() {
   const handleAgentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Strict 10-Digit validation for Agent CTOP
+    // [FIX 2]: Strict 10-Digit validation for Agent CTOP
     if (agentForm.agent_ctop_no.length !== 10) return alert("Validation Error: Agent CTOP Number must be exactly 10 digits.");
     
     setIsSubmitting(true);
@@ -7739,16 +6789,10 @@ export default function OcscDataCommand() {
             masters.map(m => (
               <div key={m.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
-                  <h3 className="font-black text-lg">Master: {m.master_ctop_no}</h3>
+                  <h3 className="font-black text-lg">Master CTOP: {m.master_ctop_no}</h3>
                   <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
                 </div>
                 <div className="p-5 space-y-4 text-sm font-bold text-slate-700">
-                  <div className="flex justify-between items-center border-b pb-2">
-                    <span className="text-slate-400">Anchored HQ</span>
-                    <span className="text-xs font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-2 py-1 rounded border border-indigo-200">
-                      {m.locations?.center_name || "UNASSIGNED"}
-                    </span>
-                  </div>
                   <div className="flex justify-between border-b pb-2"><span className="text-slate-400">Master OCSC ID</span><span>{m.master_ocsc_user_id}</span></div>
                   <div className="flex justify-between border-b pb-2"><span className="text-slate-400">Sanchar Soft ID</span><span>{m.sanchar_soft_user_id}</span></div>
                   <div className="flex justify-between"><span className="text-slate-400">MPIN</span><span className="text-blue-600 font-black tracking-widest">{m.mpin}</span></div>
@@ -7809,18 +6853,7 @@ export default function OcscDataCommand() {
               
               {activeTab === 'masters' ? (
                 <>
-                  <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-2">
-                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1">Anchor to Master HQ (Hub) *</label>
-                    <select required value={masterForm.location_id} onChange={e => setMasterForm({...masterForm, location_id: e.target.value})} className="w-full border-2 border-blue-300 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600 bg-white">
-                      <option value="" disabled>-- Select Physical HQ --</option>
-                      {masterLocations.length === 0 ? (
-                        <option value="" disabled>No Master HQs Found in Infrastructure</option>
-                      ) : (
-                        masterLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)
-                      )}
-                    </select>
-                  </div>
-
+                  {/* [FIX APPLIED]: Added maxLength={10} to the UI input to physically block extra typing */}
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
@@ -7839,15 +6872,16 @@ export default function OcscDataCommand() {
                     <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Parent Master CTOP *</label>
                     <select required value={agentForm.master_ctop_id} onChange={e => setAgentForm({...agentForm, master_ctop_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Anchor to Master Account --</option>
-                      {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>)}
+                      {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no}</option>)}
                     </select>
                   </div>
+                  {/* [FIX APPLIED]: Confirmed maxLength={10} and \D regex filter are actively stripping letters */}
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                 </>
               )}
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-2">
+              <div className="flex justify-end gap-3 pt-4">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
                 <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">Save Securely</button>
               </div>
@@ -7866,6 +6900,7 @@ FILE PATH: ./app/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import { 
@@ -7875,6 +6910,7 @@ import {
 // --- INJECT DECOUPLED COMPONENT ---
 import StaffManagementEngine from "../components/StaffManagementEngine";
 
+// Helper to get correct local date string (e.g., YYYY-MM-DD in IST instead of UTC)
 const getLocalDateString = (date: Date) => {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
@@ -7883,9 +6919,6 @@ export default function AdminCommandCenter() {
   const router = useRouter();
   const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Strict routing state to prevent "Ghost Clicks"
-  const [isRouting, setIsRouting] = useState(false);
   
   // --- STATE 1: Operational Analytics ---
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
@@ -7910,6 +6943,7 @@ export default function AdminCommandCenter() {
   const [financials, setFinancials] = useState({ cbp: 0, ctop: 0, sim: 0, cheque: 0, totalSalesCash: 0, totalDeposits: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   
+  // Defaulter Lists
   const [missingSales, setMissingSales] = useState<any[]>([]);
   const [missingDeposits, setMissingDeposits] = useState<any[]>([]);
   const [isRefreshingFinance, setIsRefreshingFinance] = useState(false);
@@ -7931,17 +6965,17 @@ export default function AdminCommandCenter() {
         
       if (staffData) setAdminUser(staffData);
 
-      const rawRole = staffData?.role || '';
-      const safeRole = rawRole.trim().toLowerCase(); 
+      const role = staffData?.role;
 
-      if (['admin', 'manager', 'staff'].includes(safeRole)) {
+      // Selective Data Loading based on strict RBAC Roles
+      if (['Admin', 'Manager', 'Staff'].includes(role)) {
         await fetchOperationalData();
       }
       
-      if (['admin', 'accountant'].includes(safeRole)) {
+      if (['Admin', 'Accountant'].includes(role)) {
         await fetchFinancialData("monthly");
       } else {
-        setLoading(false); 
+        setLoading(false); // Release loading lock if Finance Data is not fetched
       }
       
     } catch (err: any) {
@@ -7980,6 +7014,7 @@ export default function AdminCommandCenter() {
       let endDate = new Date();
 
       if (timeMode === "today") {
+        // Keep as today
       } else if (timeMode === "yesterday") {
         startDate.setDate(startDate.getDate() - 1);
         endDate.setDate(endDate.getDate() - 1);
@@ -8116,52 +7151,32 @@ export default function AdminCommandCenter() {
     router.push("/login");
   };
 
-  // [FIX 1]: Safe Router Push with Failsafe Timeout
-  const routeTo = (path: string) => {
-    setIsRouting(true);
-    router.push(path);
-    // Safety net: Automatically dismiss overlay if route takes > 8s due to network error
-    setTimeout(() => setIsRouting(false), 8000);
-  };
-
-  // [FIX 2]: Only return the hard unmount on pure `loading`
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
     </div>
   );
 
-  // --- Normalized RBAC PERMISSION BOOLEANS ---
-  const rawRole = adminUser?.role || '';
-  const safeRole = rawRole.trim().toLowerCase();
-  
-  const isGodMode = safeRole === 'admin';
-  const isFinanceTeam = ['admin', 'accountant'].includes(safeRole);
-  const isOpsTeam = ['admin', 'manager', 'staff'].includes(safeRole);
-  const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
+  // --- RBAC PERMISSION BOOLEANS ---
+  const role = adminUser?.role;
+  const isGodMode = role === 'Admin';
+  const isFinanceTeam = ['Admin', 'Accountant'].includes(role);
+  const isOpsTeam = ['Admin', 'Manager', 'Staff'].includes(role);
+  const isManagerOrAdmin = ['Admin', 'Manager'].includes(role);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
-      
-      {/* [FIX 3]: Z-Index UI Overlay. Keeps the DOM intact so Next.js can transition safely! */}
-      {isRouting && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
-          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
-          <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">Establishing secure connection to module...</p>
-        </div>
-      )}
-
+    <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* --- HEADER --- */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-4">
           <div>
             <h1 className="text-4xl font-black text-slate-900">
-              {safeRole === 'accountant' ? "Finance Command" : safeRole === 'staff' ? "Operations Desk" : "Admin Command Center"}
+              {role === 'Accountant' ? "Finance Command" : role === 'Staff' ? "Operations Desk" : "Admin Command Center"}
             </h1>
             <p className="text-slate-500 mt-2 font-medium">
               Welcome back, <span className="font-bold text-slate-800">{adminUser?.name || "User"}</span> | Role:{" "}
-              <span className="font-black text-purple-600 uppercase tracking-widest">{rawRole || "System"}</span>
+              <span className="font-black text-purple-600 uppercase tracking-widest">{role || "System"}</span>
             </p>
           </div>
           
@@ -8308,11 +7323,11 @@ export default function AdminCommandCenter() {
         {/* --- SECTION 3: OPERATIONAL METRICS (Ops Team Only) --- */}
         {isOpsTeam && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in">
-            <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer">
+            <Link href="/dashboard/applications" className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Action Required</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.pending}</h2>
               <p className="text-yellow-600 font-bold mt-2 text-xs flex items-center justify-between">Pending Apps <span>→</span></p>
-            </div>
+            </Link>
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-green-500">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Network Growth</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.approved}</h2>
@@ -8323,24 +7338,24 @@ export default function AdminCommandCenter() {
               <h2 className="text-3xl font-black text-slate-800">{stats.rejected}</h2>
               <p className="text-red-600 font-bold mt-2 text-xs">Rejected Apps</p>
             </div>
-            <div onClick={() => isManagerOrAdmin ? routeTo("/dashboard/locations") : null} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 transition group block ${isManagerOrAdmin ? 'hover:shadow-md cursor-pointer' : 'cursor-default'}`}>
+            <Link href={isManagerOrAdmin ? "/dashboard/locations" : "#"} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 transition group block ${isManagerOrAdmin ? 'hover:shadow-md' : 'cursor-default'}`}>
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Infrastructure</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.locations}</h2>
               <p className="text-blue-600 font-bold mt-2 text-xs flex items-center justify-between">Active Centers {isManagerOrAdmin && <span>→</span>}</p>
-            </div>
+            </Link>
           </div>
         )}
 
         {/* --- SECTION 4: ENTERPRISE MODULES GRID (DYNAMIC PER ROLE) --- */}
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
-          {safeRole === 'accountant' ? "Financial Modules" : safeRole === 'staff' ? "Assigned Tasks" : "Enterprise Modules"}
+          {role === 'Accountant' ? "Financial Modules" : role === 'Staff' ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
           
           {/* MANAGER & ADMIN ONLY */}
           {isManagerOrAdmin && (
-            <div onClick={() => routeTo("/dashboard/compliance")} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600 cursor-pointer">
+            <Link href="/dashboard/compliance" className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600">
               <div className="flex justify-between items-start mb-3">
                 <div className="text-3xl">🚨</div>
                 <span className="bg-red-100 text-red-700 text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-widest border border-red-200 animate-pulse">
@@ -8349,74 +7364,66 @@ export default function AdminCommandCenter() {
               </div>
               <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">Compliance Engine</h3>
               <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Automated Defaulter Tracking for unlogged sales, cash limit breaches, and ignored alerts.</p>
-            </div>
+            </Link>
           )}
 
           {/* FINANCE TEAM ONLY */}
           {isFinanceTeam && (
             <>
-              <div onClick={() => routeTo("/dashboard/reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
+              <Link href="/dashboard/reports" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block">
                 <div className="text-3xl mb-3">📈</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Corporate MIS Export</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Generate filtered Excel/CSV reports for sales and deposits.</p>
-              </div>
+              </Link>
               
-              <div onClick={() => routeTo("/dashboard/accounts")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
+              <Link href="/dashboard/accounts" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block">
                 <div className="text-3xl mb-3">🏦</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Accountant Portal</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Verify partner cash deposits, OCR slips, and clear ledgers.</p>
-              </div>
+              </Link>
 
-              <div onClick={() => routeTo("/dashboard/sales-verification")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
+              <Link href="/dashboard/sales-verification" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block">
                 <div className="text-3xl mb-3">⚖️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
-              </div>
+              </Link>
 
-              <div onClick={() => routeTo("/dashboard/banking")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block cursor-pointer">
+              <Link href="/dashboard/banking" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block">
                 <div className="text-3xl mb-3">💳</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">Corporate Banking Hub</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage remittance channels, virtual accounts, and UPI configurations.</p>
-              </div>
+              </Link>
             </>
           )}
 
           {/* OPS TEAM ONLY (Admin, Manager, Staff) */}
           {isOpsTeam && (
             <>
-              <div onClick={() => routeTo("/dashboard/ocsc")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
+              <Link href="/dashboard/ocsc" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block">
                 <div className="text-3xl mb-3">📡</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Telecom & OCSC Data</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage Master CTOP accounts, Sanchar Soft credentials, and Agent mappings.</p>
-              </div>
+              </Link>
 
-              <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
+              <Link href="/dashboard/applications" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block">
                 <div className="text-3xl mb-3">📝</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Franchise Onboarding</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Review applications and approve new Fast Ark partners.</p>
-              </div>
+              </Link>
 
-              <div onClick={() => routeTo("/dashboard/logistics")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block cursor-pointer">
+              <Link href="/dashboard/logistics" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block">
                 <div className="text-3xl mb-3">📦</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-green-600">Logistics & Supply</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Approve CTOP/CBP top-ups and mark physical SIMs dispatched.</p>
-              </div>
+              </Link>
 
               {/* Managers & Admins Only */}
               {isManagerOrAdmin && (
-                <>
-                  <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
-                    <div className="text-3xl mb-3">📊</div>
-                    <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Manager MIS Dashboard</h3>
-                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Hierarchical MIS pipeline for procurement, center sales, collections, and live Hub & Spoke reporting.</p>
-                  </div>
-
-                  <div onClick={() => routeTo("/dashboard/messages")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
-                    <div className="text-3xl mb-3">💬</div>
-                    <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
-                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Dispatch secure priority alerts directly to partner dashboards.</p>
-                  </div>
-                </>
+                <Link href="/dashboard/messages" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
+                  <div className="text-3xl mb-3">💬</div>
+                  <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
+                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Dispatch secure priority alerts directly to partner dashboards.</p>
+                </Link>
               )}
             </>
           )}
@@ -8424,12 +7431,11 @@ export default function AdminCommandCenter() {
           {/* SUPER ADMIN EXCLUSIVES */}
           {isGodMode && (
             <>
-              {/* Productivty Matrix mapped correctly to /dashboard/staff-reports */}
-              <div onClick={() => routeTo("/dashboard/staff-reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
+              <Link href="/dashboard/staff-reports" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
                 <div className="text-3xl mb-3">⏱️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Productivity Matrix</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">View real-time staff performance analytics and strict audit trails.</p>
-              </div>
+              </Link>
             </>
           )}
         </div>
@@ -8471,7 +7477,7 @@ export default function AdminCommandCenter() {
                   <ul className="divide-y divide-gray-100">
                     {recentApps.map((app) => (
                       <li key={app.id} className="p-4 hover:bg-slate-50 transition">
-                        <div onClick={() => routeTo(`/dashboard/applications/${app.id}`)} className="block cursor-pointer">
+                        <Link href={`/dashboard/applications/${app.id}`} className="block">
                           <div className="flex justify-between items-start mb-1">
                             <span className="font-bold text-slate-800">{app.name}</span>
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-sm uppercase ${app.status === 'Approved' ? 'bg-green-100 text-green-700' : app.status === 'Rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -8480,7 +7486,7 @@ export default function AdminCommandCenter() {
                           </div>
                           <div className="text-xs text-blue-600 font-bold uppercase">{app.requested_role}</div>
                           <div className="text-[10px] text-gray-400 mt-1 font-bold">{new Date(app.created_at).toLocaleDateString()}</div>
-                        </div>
+                        </Link>
                       </li>
                     ))}
                   </ul>
@@ -8736,11 +7742,8 @@ export default function StaffSalesVerification() {
     
     setIsSubmitting(true);
     try {
-      // FIX: Replaced fragile getUser() network request with robust getSession() cache read
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      
-      if (!user) throw new Error("Staff authentication failed. Session lost.");
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Staff authentication failed.");
 
       const finalRemarks = correctionCategory === "Other" 
         ? `OTHER: ${otherCorrectionText}` 
@@ -8790,7 +7793,7 @@ export default function StaffSalesVerification() {
       // 3. Dispatch UI Alert to Partner
       await supabase.from("partner_messages").insert([{
         partner_id: editingSale.partner_id,
-        subject: `⚠️️ Financial Ledger Correction: ${editingSale.report_date}`,
+        subject: `⚠️ Financial Ledger Correction: ${editingSale.report_date}`,
         body: `Your sales report for ${editingSale.report_date} was audited and corrected by the Back-Office. Reason: ${finalRemarks}. Please check your updated ledger balance.`
       }]);
 
