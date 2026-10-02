@@ -18,6 +18,9 @@ export default function ManagerMISDashboard() {
 
   // Tab Context States
   const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
+  
+  // NEW: Cascading Filter States for Data Entry (Sales & Collection)
+  const [entryMasterLocId, setEntryMasterLocId] = useState("");
   const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
 
   // Tab 1: Purchase Form State
@@ -308,15 +311,12 @@ export default function ManagerMISDashboard() {
 
     const startStr = startDate.toISOString().split('T')[0];
 
-    // Apply Time Filters
     if (repTimeFilter !== "all") {
       fPurchases = fPurchases.filter(p => p.purchase_date >= startStr);
-      // Sales and Collections use reporting_month (YYYY-MM-01)
       fSales = fSales.filter(s => s.reporting_month >= startStr);
       fCollections = fCollections.filter(c => c.reporting_month >= startStr);
     }
 
-    // Apply Hub (Master) Filter
     if (repMasterFilter !== "ALL") {
       const masterId = parseInt(repMasterFilter);
       fPurchases = fPurchases.filter(p => p.location_id === masterId);
@@ -324,16 +324,13 @@ export default function ManagerMISDashboard() {
       fCollections = fCollections.filter(c => c.locations?.parent_master_id === masterId);
     }
 
-    // Apply Spoke (Child) Filter
     if (repChildFilter !== "ALL") {
       const childId = parseInt(repChildFilter);
-      // Purchases happen at HQ, so viewing a specific Child zeroes out bulk purchases
       fPurchases = []; 
       fSales = fSales.filter(s => s.location_id === childId);
       fCollections = fCollections.filter(c => c.location_id === childId);
     }
 
-    // Calculate Aggregates
     const totalPurchasedValue = fPurchases.reduce((sum, p) => sum + Number(p.amount), 0);
     const totalSalesCash = fSales.reduce((sum, s) => sum + 
       Number(s.cbp_landline_cash || 0) + Number(s.cbp_gsm_cash || 0) + Number(s.ctop_recharge_cash || 0) +
@@ -359,9 +356,12 @@ export default function ManagerMISDashboard() {
   const livePct = parseFloat(purchaseForm.commission_percent) || 0;
   const liveComm = (liveAmt * livePct) / 100;
 
-  // Split locations for dropdowns
+  // Split locations for Data Entry Dropdowns (Sales/Collection)
   const hqLocations = allLocations.filter(l => l.is_master_node);
-  const childFranchises = allLocations.filter(l => !l.is_master_node && (repMasterFilter === "ALL" || l.parent_master_id === parseInt(repMasterFilter)));
+  const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
+  
+  // Split locations for Report Filter Dropdowns
+  const childFranchisesForReports = allLocations.filter(l => !l.is_master_node && (repMasterFilter === "ALL" || l.parent_master_id === parseInt(repMasterFilter)));
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
@@ -478,18 +478,36 @@ export default function ManagerMISDashboard() {
         </div>
       )}
 
-      {/* TAB 2 & 3 SHARED CENTER SELECTION RIBBON */}
+      {/* TAB 2 & 3 SHARED CENTER SELECTION RIBBON (UPDATED TO HUB & SPOKE) */}
       {(activeTab === 'sales' || activeTab === 'collection') && (
-        <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 flex flex-col md:flex-row gap-6 mb-6 animate-in fade-in">
-          <div className="flex-1">
-            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Target Child Center (OCSC/CM) *</label>
+        <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 animate-in fade-in">
+          
+          {/* Cascading Filter 1: Master HQ */}
+          <div className="col-span-1">
+            <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
+            <select 
+              value={entryMasterLocId} 
+              onChange={(e) => {
+                setEntryMasterLocId(e.target.value); 
+                setSelectedChildLocKey(""); // Reset child center on master change
+              }}
+              className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition"
+            >
+              <option value="">-- All Master HQs --</option>
+              {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+            </select>
+          </div>
+
+          {/* Cascading Filter 2: Child Center */}
+          <div className="col-span-1">
+            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
             <select 
               value={selectedChildLocKey} 
               onChange={(e) => setSelectedChildLocKey(e.target.value)}
               className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition"
             >
               <option value="" disabled>-- Select Franchise Center --</option>
-              {allLocations.filter(l => !l.is_master_node).flatMap(l => {
+              {entryFilteredFranchises.flatMap(l => {
                 const options = [];
                 if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
                 if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
@@ -497,7 +515,9 @@ export default function ManagerMISDashboard() {
               })}
             </select>
           </div>
-          <div>
+
+          {/* Month Context */}
+          <div className="col-span-1">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
             <input 
               type="month" 
@@ -506,8 +526,10 @@ export default function ManagerMISDashboard() {
               className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
             />
           </div>
-          <div className="flex flex-col justify-end">
-            <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center">
+
+          {/* Operation Mode */}
+          <div className="col-span-1 flex flex-col justify-end">
+            <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
               <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
                 {locType || 'NONE'}
@@ -673,7 +695,7 @@ export default function ManagerMISDashboard() {
               <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Child Center (Spoke)</label>
               <select value={repChildFilter} onChange={(e) => setRepChildFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400">
                 <option value="ALL">-- All Tethered Centers --</option>
-                {childFranchises.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
+                {childFranchisesForReports.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
               </select>
             </div>
 
