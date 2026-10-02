@@ -49,6 +49,15 @@ export default function BackOfficeLoginPage() {
         throw new Error("Account Deactivated: Your clearance has been revoked. Contact Administration.");
       }
 
+      // [CRITICAL FIX]: Self-Healing JWT Token
+      // Instantly patch the Supabase JWT Cookie with the correct DB Role.
+      // This permanently stops "Ghost Click" bounces in the proxy.ts middleware.
+      if (authData.user.user_metadata?.role !== staffData.role) {
+        await supabase.auth.updateUser({
+          data: { role: staffData.role }
+        });
+      }
+
       // 4. Role-Aware Intelligent Dispatch
       setMessage("✅ Clearance verified. Establishing secure connection...");
       router.push("/dashboard");

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 
 const getLocalDateString = (date: Date) => {
@@ -10,11 +11,12 @@ const getLocalDateString = (date: Date) => {
 };
 
 export default function StaffProductivityDashboard() {
+  const router = useRouter();
   const [logs, setLogs] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // [FIX 3]: Initialize as an empty string to prevent SSR Hydration Crashes
+  // Initialize as an empty string to prevent SSR Hydration Crashes
   const [dateFilter, setDateFilter] = useState("");
 
   // Safely mount the current date strictly on the client side
@@ -22,7 +24,6 @@ export default function StaffProductivityDashboard() {
     setDateFilter(getLocalDateString(new Date()));
   }, []);
 
-  // Fetch only when dateFilter is safely populated
   useEffect(() => {
     if (dateFilter) fetchAnalytics();
   }, [dateFilter]);
@@ -30,6 +31,21 @@ export default function StaffProductivityDashboard() {
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
+      // [CRITICAL FIX]: Native Database Verification
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return router.push("/login");
+
+      const { data: currentUser } = await supabase
+        .from('back_office_staff')
+        .select('role')
+        .eq('email', session.user.email)
+        .single();
+
+      if (currentUser?.role !== 'Admin') {
+        return router.push("/dashboard");
+      }
+
+      // Fetch all active back-office staff
       const { data: staff } = await supabase.from('back_office_staff').select('email, name, role');
       if (staff) setStaffList(staff);
 

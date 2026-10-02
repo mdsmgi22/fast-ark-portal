@@ -44,15 +44,13 @@ export function proxy(request: NextRequest) {
       
       const payload = JSON.parse(jsonPayload);
       
-      // [FIX 1]: Normalize the role to lowercase to prevent strict-casing bounces
+      // Normalize the role to lowercase to prevent strict-casing bounces
       const rawRole = payload.user_metadata?.role || '';
       const safeRole = rawRole.trim().toLowerCase();
 
       // 4. Strict RBAC Routing Protocols
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc'];
-      
-      // [FIX 2]: Added '/dashboard/manager-mis' to the permitted manager routes
       const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners', '/dashboard/manager-mis'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
 
@@ -77,9 +75,14 @@ export function proxy(request: NextRequest) {
         }
       }
 
-      // Admin Guard (Super Admin Check)
-      if (adminOnlyRoutes.some(p => pathname.startsWith(p)) && safeRole !== 'admin') {
-        return NextResponse.redirect(new URL('/dashboard', request.url));
+      // [CRITICAL FIX]: Admin Guard Fault Tolerance
+      if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
+        // If we explicitly know they are a lower role, bounce them at the Edge.
+        // If the cookie role is missing (legacy admin) or 'admin', let them through 
+        // to the destination page where the Postgres database will securely verify them natively.
+        if (['accountant', 'staff', 'manager'].includes(safeRole)) {
+          return NextResponse.redirect(new URL('/dashboard', request.url));
+        }
       }
 
     } catch (error) {
