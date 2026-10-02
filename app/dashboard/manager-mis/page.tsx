@@ -34,7 +34,7 @@ export default function ManagerMISDashboard() {
     master_ctop_id: "",
     entry_type: "Opening Balance",
     cbp_qty: "", 
-    ctop_qty: "" // STRICT FIX: Shifted from Amount to Qty
+    ctop_qty: "" // STRICT FIX: Shifted to Qty
   });
 
   // Tab 2: Purchase Form State
@@ -158,7 +158,7 @@ export default function ManagerMISDashboard() {
 
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO QTY)
+  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO PARSE-FLOAT FOR DECIMALS)
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -176,8 +176,8 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_qty: parseInt(balanceForm.cbp_qty, 10) || 0, // Strict Integer
-        ctop_qty: parseInt(balanceForm.ctop_qty, 10) || 0, // Strict Integer
+        cbp_qty: parseFloat(balanceForm.cbp_qty) || 0, // Fractional Qty Support
+        ctop_qty: parseFloat(balanceForm.ctop_qty) || 0, // Fractional Qty Support
         logged_by: user.id
       };
 
@@ -230,7 +230,7 @@ export default function ManagerMISDashboard() {
       master_ctop_id: bal.master_ctop_id,
       entry_type: bal.entry_type,
       cbp_qty: bal.cbp_qty?.toString() || "", 
-      ctop_qty: bal.ctop_qty?.toString() || "" // Mapped safely to QTY
+      ctop_qty: bal.ctop_qty?.toString() || "" 
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -328,7 +328,7 @@ export default function ManagerMISDashboard() {
         const childPayloads = cmSales.map(agent => ({
           monthly_sales_id: parentRecord.id,
           agent_ctop_no: agent.agent_ctop_no,
-          qty: parseFloat(agent.qty) || 0
+          qty: parseFloat(agent.qty) || 0 // Allow fractional agent volumes
         })).filter(payload => payload.qty > 0); 
 
         if (childPayloads.length > 0) {
@@ -556,11 +556,11 @@ export default function ManagerMISDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Quantity *</label>
-                  <input required type="number" step="1" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
+                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Quantity *</label>
-                  <input required type="number" step="1" min="0" value={balanceForm.ctop_qty} onChange={e => setBalanceForm({...balanceForm, ctop_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
+                  <input required type="number" step="0.01" min="0" value={balanceForm.ctop_qty} onChange={e => setBalanceForm({...balanceForm, ctop_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
                 </div>
               </div>
               
@@ -606,8 +606,8 @@ export default function ManagerMISDashboard() {
                           <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
                           <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
                         </td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN')}</td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                         <td className="p-4 text-right">
                           <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
                             Edit
@@ -829,7 +829,7 @@ export default function ManagerMISDashboard() {
                           <div className="flex items-center gap-3">
                             <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
                             <input 
-                              type="number" min="0" step="1" value={agent.qty} 
+                              type="number" min="0" step="0.01" value={agent.qty} 
                               onChange={(e) => {
                                 const newSales = [...cmSales];
                                 newSales[idx].qty = e.target.value;
