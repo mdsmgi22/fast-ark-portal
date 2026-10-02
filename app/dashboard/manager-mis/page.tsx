@@ -474,7 +474,6 @@ export default function ManagerMISDashboard() {
   const livePct = parseFloat(purchaseForm.commission_percent) || 0;
   const liveComm = (liveAmt * livePct) / 100;
 
-  // Navigation Logic Splits
   const hqLocations = allLocations.filter(l => l.is_master_node);
   const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
   const childFranchisesForReports = allLocations.filter(l => !l.is_master_node && (repMasterFilter === "ALL" || l.parent_master_id === parseInt(repMasterFilter)));

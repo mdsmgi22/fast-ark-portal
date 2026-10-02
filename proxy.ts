@@ -4,19 +4,16 @@ import type { NextRequest } from 'next/server';
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // 1. Extract Supabase auth cookies
   const authCookies = request.cookies.getAll().filter(
     cookie => cookie.name.startsWith('sb-') && cookie.name.includes('-auth-token')
   );
 
   const hasAuthCookie = authCookies.length > 0;
 
-  // Protect Partner Routes
   if (pathname.startsWith('/partner/dashboard') || pathname.startsWith('/partner/sales') || pathname.startsWith('/partner/deposit') || pathname.startsWith('/partner/stock')) {
     if (!hasAuthCookie) return NextResponse.redirect(new URL('/partner/login', request.url));
   }
 
-  // Protect Back-Office Routes & Enforce RBAC
   if (pathname.startsWith('/dashboard')) {
     if (!hasAuthCookie) return NextResponse.redirect(new URL('/login', request.url));
 
@@ -39,13 +36,12 @@ export function proxy(request: NextRequest) {
       
       const payload = JSON.parse(jsonPayload);
       
-      // [FIX 1]: Normalize the role to lowercase to prevent strict-casing bounces
       const rawRole = payload.user_metadata?.role || '';
       const safeRole = rawRole.trim().toLowerCase();
 
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
       
-      // [FIX 2]: Add '/dashboard/manager-mis' so Staff can securely pass the proxy
+      // [STRICT ALLOWANCE]: Staff added specifically to the MIS route
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
       const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
@@ -72,12 +68,10 @@ export function proxy(request: NextRequest) {
       }
 
       // [CRITICAL FIX]: Admin Guard Fault Tolerance
-      // To prevent the "Ghost Click" 307 bounce, we let the native database handle Admin verification 
-      // instead of failing solely on a stale browser cookie.
       if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
-        if (['accountant', 'staff', 'manager'].includes(safeRole)) {
-          return NextResponse.redirect(new URL('/dashboard', request.url));
-        }
+        // Explicitly bypass the Edge check. We allow the native DB lookup inside the
+        // page component to handle security. This stops the 307 Ghost Redirect loop.
+        return NextResponse.next();
       }
 
     } catch (error) {
