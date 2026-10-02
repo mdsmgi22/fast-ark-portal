@@ -10,7 +10,6 @@ export default function ManagerMISDashboard() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // [UPGRADED]: Added 'balances' to the tab state architecture
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
   // Architecture Data
@@ -24,7 +23,7 @@ export default function ManagerMISDashboard() {
   const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
 
   // ==========================================
-  // TAB 1: MASTER BALANCES STATE (NEW)
+  // TAB 1: MASTER BALANCES STATE
   // ==========================================
   const [rawBalances, setRawBalances] = useState<any[]>([]);
   const [editingBalanceId, setEditingBalanceId] = useState<string | null>(null);
@@ -34,7 +33,7 @@ export default function ManagerMISDashboard() {
     location_id: "",
     master_ctop_id: "",
     entry_type: "Opening Balance",
-    cbp_amount: "",
+    cbp_qty: "", // Changed from Amount to Qty
     ctop_amount: ""
   });
 
@@ -144,9 +143,25 @@ export default function ManagerMISDashboard() {
     return selectedChildLocKey.split('-')[1]; 
   };
 
+  // ==========================================
+  // [NEW ENGINE]: GLOBAL NUMERIC SAFETY HANDLERS
+  // Prevents Negative Entries & Scroll Glitches
+  // ==========================================
+  const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Blocks the minus sign, plus sign, and exponential 'e' natively
+    if (e.key === '-' || e.key === '+' || e.key === 'e') {
+      e.preventDefault();
+    }
+  };
+  
+  const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+    // Instantly removes focus if the user scrolls, preventing the number from changing
+    (e.target as HTMLInputElement).blur();
+  };
+
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE (NEW)
+  // 1. BALANCE SUBMIT ENGINE
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -164,8 +179,8 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_amount: parseFloat(balanceForm.cbp_amount) || 0,
-        ctop_amount: parseFloat(balanceForm.ctop_amount) || 0,
+        cbp_qty: parseInt(balanceForm.cbp_qty) || 0, // Strict Integer
+        ctop_amount: parseFloat(balanceForm.ctop_amount) || 0, // Strict Decimal
         logged_by: user.id
       };
 
@@ -195,10 +210,9 @@ export default function ManagerMISDashboard() {
         alert("✅ Balance Record Successfully Saved.");
       }
 
-      // Reset and refresh
       setBalanceForm({
         ...balanceForm,
-        cbp_amount: "",
+        cbp_qty: "",
         ctop_amount: ""
       });
       setEditingBalanceId(null);
@@ -218,12 +232,13 @@ export default function ManagerMISDashboard() {
       location_id: bal.location_id.toString(),
       master_ctop_id: bal.master_ctop_id,
       entry_type: bal.entry_type,
-      cbp_amount: bal.cbp_amount,
+      cbp_qty: bal.cbp_qty, // Maps to QTY
       ctop_amount: bal.ctop_amount
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // 2. PROCUREMENT SUBMIT ENGINE
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!purchaseForm.master_ctop_id) return alert("You must select a Master CTOP to log procurement against.");
@@ -275,6 +290,7 @@ export default function ManagerMISDashboard() {
     }
   };
 
+  // 3. SALES SUBMIT ENGINE
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
@@ -343,6 +359,7 @@ export default function ManagerMISDashboard() {
     }
   };
 
+  // 4. COLLECTION SUBMIT ENGINE
   const handleCollectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
@@ -437,7 +454,6 @@ export default function ManagerMISDashboard() {
 
   const { fPurchases, fSales, fCollections, totalPurchasedValue, totalSalesCash, totalCollected } = getFilteredReports();
 
-
   const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   if (loading) return (
@@ -501,7 +517,7 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
               {editingBalanceId && (
-                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_amount: "", ctop_amount: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_qty: "", ctop_amount: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
                   Cancel Edit
                 </button>
               )}
@@ -542,12 +558,12 @@ export default function ManagerMISDashboard() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Amount (₹) *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_amount} onChange={e => setBalanceForm({...balanceForm, cbp_amount: e.target.value})} className={numInputClass} placeholder="0.00" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Quantity *</label>
+                  <input required type="number" step="1" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Amount (₹) *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.ctop_amount} onChange={e => setBalanceForm({...balanceForm, ctop_amount: e.target.value})} className={numInputClass} placeholder="0.00" />
+                  <input required type="number" step="0.01" min="0" value={balanceForm.ctop_amount} onChange={e => setBalanceForm({...balanceForm, ctop_amount: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
                 </div>
               </div>
               
@@ -572,7 +588,7 @@ export default function ManagerMISDashboard() {
                   <tr>
                     <th className="p-4 font-black">Date & Type</th>
                     <th className="p-4 font-black">Master Location & CTOP</th>
-                    <th className="p-4 font-black text-right">CBP (₹)</th>
+                    <th className="p-4 font-black text-right">CBP (Qty)</th>
                     <th className="p-4 font-black text-right">CTOP (₹)</th>
                     <th className="p-4 font-black text-right">Action</th>
                   </tr>
@@ -593,7 +609,7 @@ export default function ManagerMISDashboard() {
                           <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
                           <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
                         </td>
-                        <td className="p-4 text-right font-black text-slate-800">₹{Number(bal.cbp_amount).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN')}</td>
                         <td className="p-4 text-right font-black text-slate-800">₹{Number(bal.ctop_amount).toLocaleString('en-IN')}</td>
                         <td className="p-4 text-right">
                           <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
@@ -651,7 +667,7 @@ export default function ManagerMISDashboard() {
 
               <div>
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Amount (₹)</label>
-                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} className={numInputClass} placeholder="Enter Amount" />
+                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="Enter Amount" />
               </div>
 
               {/* DYNAMIC QTY RENDERER WITH OVERRIDE CHECKBOX */}
@@ -674,6 +690,7 @@ export default function ManagerMISDashboard() {
                   required type="number" step="0.01" min="0" 
                   value={purchaseForm.qty} 
                   onChange={e => setPurchaseForm({...purchaseForm, qty: e.target.value})} 
+                  onKeyDown={preventNegativeScroll} onWheel={handleWheel}
                   disabled={(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override}
                   className={`${numInputClass} ${((purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override) ? 'bg-slate-100 cursor-not-allowed opacity-80 border-dashed' : ''}`} 
                   placeholder={purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP' ? 'Auto-calculating...' : 'Enter Quantity'}
@@ -684,7 +701,7 @@ export default function ManagerMISDashboard() {
                 <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
                   <div className="flex-1">
                     <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
-                    <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
+                    <input required type="number" step="0.01" min="0" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
                   </div>
                   <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
                     <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Calculated Payout</p>
@@ -781,21 +798,21 @@ export default function ManagerMISDashboard() {
                   <div className="space-y-4">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} className={numInputClass} /></div>
-                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" min="0" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                     </div>
                   </div>
                 </div>
@@ -815,12 +832,13 @@ export default function ManagerMISDashboard() {
                           <div className="flex items-center gap-3">
                             <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
                             <input 
-                              type="number" min="0" value={agent.qty} 
+                              type="number" min="0" step="1" value={agent.qty} 
                               onChange={(e) => {
                                 const newSales = [...cmSales];
                                 newSales[idx].qty = e.target.value;
                                 setCmSales(newSales);
                               }} 
+                              onKeyDown={preventNegativeScroll} onWheel={handleWheel}
                               className="border border-slate-300 p-2 rounded font-bold outline-none focus:border-indigo-500 w-32" 
                             />
                           </div>
@@ -856,6 +874,7 @@ export default function ManagerMISDashboard() {
                   required type="number" step="0.01" min="0"
                   value={collectionForm.total_cash_collected} 
                   onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} 
+                  onKeyDown={preventNegativeScroll} onWheel={handleWheel}
                   className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
                   placeholder="0.00"
                 />
