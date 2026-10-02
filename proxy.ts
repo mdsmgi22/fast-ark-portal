@@ -76,13 +76,11 @@ export function proxy(request: NextRequest) {
       }
 
       // [CRITICAL FIX]: Admin Guard Fault Tolerance
+      // We explicitly bypass the Edge JWT check for Admin routes. The database will 
+      // securely verify the user's role natively inside the page component.
+      // This stops the 307 Ghost Redirect loop caused by stale cookies.
       if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
-        // If we explicitly know they are a lower role, bounce them at the Edge.
-        // If the cookie role is missing (legacy admin) or 'admin', let them through 
-        // to the destination page where the Postgres database will securely verify them natively.
-        if (['accountant', 'staff', 'manager'].includes(safeRole)) {
-          return NextResponse.redirect(new URL('/dashboard', request.url));
-        }
+        return NextResponse.next();
       }
 
     } catch (error) {
