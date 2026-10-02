@@ -10,9 +10,8 @@ export default function ManagerMISDashboard() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // [NEW]: Secure Role State for Tab Rendering
+  // Secure Role State for Strict Hard-Code Redaction
   const [userRole, setUserRole] = useState("staff");
-  
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
   // Architecture Data
@@ -37,7 +36,7 @@ export default function ManagerMISDashboard() {
     master_ctop_id: "",
     entry_type: "Opening Balance",
     cbp_qty: "", 
-    ctop_qty: "" 
+    ctop_qty: "" // STRICT FIX: Both are now purely QTY
   });
 
   // Tab 2: Purchase Form State
@@ -88,7 +87,7 @@ export default function ManagerMISDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // [STRICT FIX]: Fetch Native Database Role
+      // [STRICT DATABASE ROLE FETCH]: Resolves the true identity for UI Redaction
       const { data: currentUser } = await supabase
         .from('back_office_staff')
         .select('role')
@@ -170,7 +169,7 @@ export default function ManagerMISDashboard() {
 
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE
+  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO PARSE-FLOAT FOR DECIMALS)
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -340,7 +339,7 @@ export default function ManagerMISDashboard() {
         const childPayloads = cmSales.map(agent => ({
           monthly_sales_id: parentRecord.id,
           agent_ctop_no: agent.agent_ctop_no,
-          qty: parseFloat(agent.qty) || 0 // Allow fractional agent volumes
+          qty: parseFloat(agent.qty) || 0 
         })).filter(payload => payload.qty > 0); 
 
         if (childPayloads.length > 0) {
@@ -502,7 +501,7 @@ export default function ManagerMISDashboard() {
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
         <button onClick={() => setActiveTab('balances')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Master Balances</button>
         
-        {/* Hide all upper-level modules from Staff role natively */}
+        {/* HARD REDACTION: Hide all upper-level modules from Staff role natively */}
         {userRole !== 'staff' && (
           <>
             <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Central Procurement</button>
@@ -641,397 +640,402 @@ export default function ManagerMISDashboard() {
         </div>
       )}
 
-      {/* TAB 2: MASTER PURCHASE ENGINE (PROCUREMENT) */}
-      {activeTab === 'purchase' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
-          <div className="bg-slate-900 p-4 rounded-lg mb-6 flex gap-4 items-center">
-            <span className="text-3xl">🏛️</span>
-            <div>
-              <h2 className="text-white font-black uppercase tracking-widest">Master Procurement</h2>
-              <p className="text-slate-400 text-xs font-bold mt-1">Log inventory purchases directly against a Master CTOP Account.</p>
-            </div>
-          </div>
-
-          <form onSubmit={handlePurchaseSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
-              <div className="md:col-span-3">
-                <label className="block text-xs font-black text-indigo-600 uppercase tracking-widest mb-1.5">Target Master CTOP (HQ) *</label>
-                <select required value={purchaseForm.master_ctop_id} onChange={e => setPurchaseForm({...purchaseForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-3 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
-                  <option value="" disabled>-- Select Master CTOP --</option>
-                  {masterCtops.map(m => (
-                    <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Date</label>
-                <input required type="date" value={purchaseForm.purchase_date} onChange={e => setPurchaseForm({...purchaseForm, purchase_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
-              </div>
-              
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Product Category</label>
-                <select value={purchaseForm.product_category} onChange={e => setPurchaseForm({...purchaseForm, product_category: e.target.value, manual_qty_override: false})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
-                  <option value="CBP">CBP</option>
-                  <option value="CTOP">CTOP</option>
-                  <option value="SIM_FREE">SIM (Free)</option>
-                  <option value="SIM_PAID">SIM (Paid)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Amount (₹)</label>
-                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="Enter Amount" />
-              </div>
-
-              {/* DYNAMIC QTY RENDERER WITH OVERRIDE CHECKBOX */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Final Quantity</label>
-                  {(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && (
-                    <label className="flex items-center gap-1 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={purchaseForm.manual_qty_override} 
-                        onChange={(e) => setPurchaseForm({...purchaseForm, manual_qty_override: e.target.checked})}
-                        className="accent-indigo-600"
-                      />
-                      <span className="text-[9px] font-bold text-indigo-600 uppercase">Override</span>
-                    </label>
-                  )}
-                </div>
-                <input 
-                  required type="number" step="0.01" min="0" 
-                  value={purchaseForm.qty} 
-                  onChange={e => setPurchaseForm({...purchaseForm, qty: e.target.value})} 
-                  onKeyDown={preventNegativeScroll} onWheel={handleWheel}
-                  disabled={(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override}
-                  className={`${numInputClass} ${((purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override) ? 'bg-slate-100 cursor-not-allowed opacity-80 border-dashed' : ''}`} 
-                  placeholder={purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP' ? 'Auto-calculating...' : 'Enter Quantity'}
-                />
-              </div>
-
-              {purchaseForm.product_category === 'CTOP' && (
-                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
-                    <input required type="number" step="0.01" min="0" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
-                  </div>
-                  <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
-                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Calculated Payout</p>
-                    <p className="text-xl text-indigo-600 font-black">₹{liveComm.toFixed(2)}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <button type="submit" disabled={isSubmitting || !purchaseForm.master_ctop_id} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-              {isSubmitting ? "Logging Procurement..." : "Submit to Master Ledger"}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* TAB 3 & 4 SHARED CENTER SELECTION RIBBON */}
-      {(activeTab === 'sales' || activeTab === 'collection') && (
-        <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 animate-in fade-in">
-          
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
-            <select 
-              value={entryMasterLocId} 
-              onChange={(e) => {
-                setEntryMasterLocId(e.target.value); 
-                setSelectedChildLocKey(""); 
-              }}
-              className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition"
-            >
-              <option value="">-- All Master HQs --</option>
-              {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
-            <select 
-              value={selectedChildLocKey} 
-              onChange={(e) => setSelectedChildLocKey(e.target.value)}
-              className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition"
-            >
-              <option value="" disabled>-- Select Franchise Center --</option>
-              {entryFilteredFranchises.flatMap(l => {
-                const options = [];
-                if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
-                if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
-                return options;
-              })}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
-            <input 
-              type="month" 
-              value={reportingMonth} 
-              onChange={(e) => setReportingMonth(e.target.value)}
-              className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
-            />
-          </div>
-
-          <div className="col-span-1 flex flex-col justify-end">
-            <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
-              <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
-                {locType || 'NONE'}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: MONTHLY SALES ENGINE (CENTER LEVEL) */}
-      {activeTab === 'sales' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
-          <div className="flex justify-between items-end border-b pb-2 mb-6">
-            <div>
-              <h2 className="text-lg font-black text-slate-800">Monthly Center Sales Ledger</h2>
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Closing Month: {reportingMonth}</p>
-            </div>
-          </div>
-
-          {!locType ? (
-            <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
-              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
-            </div>
-          ) : (
-            <form onSubmit={handleSalesSubmit} className="space-y-6">
-              
-              {/* OCSC DYNAMIC GRID */}
-              {locType === 'OCSC' && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" min="0" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* CM DYNAMIC AGENT GRID */}
-              {locType === 'CM' && (
+      {/* HARD REDACTION: Stop the remaining render engine entirely for Staff */}
+      {userRole !== 'staff' && (
+        <>
+          {/* TAB 2: MASTER PURCHASE ENGINE (PROCUREMENT) */}
+          {activeTab === 'purchase' && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
+              <div className="bg-slate-900 p-4 rounded-lg mb-6 flex gap-4 items-center">
+                <span className="text-3xl">🏛️</span>
                 <div>
-                  <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
-                  {cmSales.length === 0 ? (
-                    <p className="text-sm font-bold text-red-600 bg-red-50 p-4 border border-red-200 rounded">No agents mapped to this Child Center.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {cmSales.map((agent, idx) => (
-                        <div key={agent.agent_ctop_no} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
-                          <span className="font-black text-slate-800 tracking-wider">Agent: {agent.agent_ctop_no}</span>
-                          <div className="flex items-center gap-3">
-                            <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
-                            <input 
-                              type="number" min="0" step="0.01" value={agent.qty} 
-                              onChange={(e) => {
-                                const newSales = [...cmSales];
-                                newSales[idx].qty = e.target.value;
-                                setCmSales(newSales);
-                              }} 
-                              onKeyDown={preventNegativeScroll} onWheel={handleWheel}
-                              className="border border-slate-300 p-2 rounded font-bold outline-none focus:border-indigo-500 w-32" 
-                            />
-                          </div>
-                        </div>
+                  <h2 className="text-white font-black uppercase tracking-widest">Master Procurement</h2>
+                  <p className="text-slate-400 text-xs font-bold mt-1">Log inventory purchases directly against a Master CTOP Account.</p>
+                </div>
+              </div>
+
+              <form onSubmit={handlePurchaseSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  
+                  <div className="md:col-span-3">
+                    <label className="block text-xs font-black text-indigo-600 uppercase tracking-widest mb-1.5">Target Master CTOP (HQ) *</label>
+                    <select required value={purchaseForm.master_ctop_id} onChange={e => setPurchaseForm({...purchaseForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-3 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
+                      <option value="" disabled>-- Select Master CTOP --</option>
+                      {masterCtops.map(m => (
+                        <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Date</label>
+                    <input required type="date" value={purchaseForm.purchase_date} onChange={e => setPurchaseForm({...purchaseForm, purchase_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Product Category</label>
+                    <select value={purchaseForm.product_category} onChange={e => setPurchaseForm({...purchaseForm, product_category: e.target.value, manual_qty_override: false})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
+                      <option value="CBP">CBP</option>
+                      <option value="CTOP">CTOP</option>
+                      <option value="SIM_FREE">SIM (Free)</option>
+                      <option value="SIM_PAID">SIM (Paid)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Amount (₹)</label>
+                    <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="Enter Amount" />
+                  </div>
+
+                  {/* DYNAMIC QTY RENDERER WITH OVERRIDE CHECKBOX */}
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Final Quantity</label>
+                      {(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && (
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={purchaseForm.manual_qty_override} 
+                            onChange={(e) => setPurchaseForm({...purchaseForm, manual_qty_override: e.target.checked})}
+                            className="accent-indigo-600"
+                          />
+                          <span className="text-[9px] font-bold text-indigo-600 uppercase">Override</span>
+                        </label>
+                      )}
+                    </div>
+                    <input 
+                      required type="number" step="0.01" min="0" 
+                      value={purchaseForm.qty} 
+                      onChange={e => setPurchaseForm({...purchaseForm, qty: e.target.value})} 
+                      onKeyDown={preventNegativeScroll} onWheel={handleWheel}
+                      disabled={(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override}
+                      className={`${numInputClass} ${((purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override) ? 'bg-slate-100 cursor-not-allowed opacity-80 border-dashed' : ''}`} 
+                      placeholder={purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP' ? 'Auto-calculating...' : 'Enter Quantity'}
+                    />
+                  </div>
+
+                  {purchaseForm.product_category === 'CTOP' && (
+                    <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
+                        <input required type="number" step="0.01" min="0" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
+                      </div>
+                      <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
+                        <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Calculated Payout</p>
+                        <p className="text-xl text-indigo-600 font-black">₹{liveComm.toFixed(2)}</p>
+                      </div>
                     </div>
                   )}
                 </div>
-              )}
-
-              <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-                {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
-              </button>
-            </form>
-          )}
-        </div>
-      )}
-
-      {/* TAB 4: COLLECTION ENGINE (CENTER LEVEL) */}
-      {activeTab === 'collection' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-          <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Center Collection</h2>
-          
-          {!locType ? (
-            <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
-              <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
+                
+                <button type="submit" disabled={isSubmitting || !purchaseForm.master_ctop_id} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+                  {isSubmitting ? "Logging Procurement..." : "Submit to Master Ledger"}
+                </button>
+              </form>
             </div>
-          ) : (
-            <form onSubmit={handleCollectionSubmit} className="space-y-6">
-              <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-200 text-center">
-                <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
+          )}
+
+          {/* TAB 3 & 4 SHARED CENTER SELECTION RIBBON */}
+          {(activeTab === 'sales' || activeTab === 'collection') && (
+            <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 animate-in fade-in">
+              
+              <div className="col-span-1">
+                <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
+                <select 
+                  value={entryMasterLocId} 
+                  onChange={(e) => {
+                    setEntryMasterLocId(e.target.value); 
+                    setSelectedChildLocKey(""); 
+                  }}
+                  className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition"
+                >
+                  <option value="">-- All Master HQs --</option>
+                  {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+                </select>
+              </div>
+
+              <div className="col-span-1">
+                <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
+                <select 
+                  value={selectedChildLocKey} 
+                  onChange={(e) => setSelectedChildLocKey(e.target.value)}
+                  className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition"
+                >
+                  <option value="" disabled>-- Select Franchise Center --</option>
+                  {entryFilteredFranchises.flatMap(l => {
+                    const options = [];
+                    if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
+                    if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
+                    return options;
+                  })}
+                </select>
+              </div>
+
+              <div className="col-span-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
                 <input 
-                  required type="number" step="0.01" min="0"
-                  value={collectionForm.total_cash_collected} 
-                  onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} 
-                  onKeyDown={preventNegativeScroll} onWheel={handleWheel}
-                  className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                  placeholder="0.00"
+                  type="month" 
+                  value={reportingMonth} 
+                  onChange={(e) => setReportingMonth(e.target.value)}
+                  className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Reconciliation Remarks (Optional)</label>
-                <textarea 
-                  rows={3} 
-                  value={collectionForm.remarks} 
-                  onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} 
-                  placeholder="Explain any shortfalls or surpluses..."
-                  className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none font-medium focus:border-indigo-500" 
-                />
+              <div className="col-span-1 flex flex-col justify-end">
+                <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
+                  <p className={`font-black tracking-widest uppercase ${locType === 'OCSC' ? 'text-blue-400' : locType === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
+                    {locType || 'NONE'}
+                  </p>
+                </div>
               </div>
-
-              <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
-                {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
-              </button>
-            </form>
+            </div>
           )}
-        </div>
-      )}
 
-      {/* ========================================== */}
-      {/* TAB 5: COMPREHENSIVE REPORTING ENGINE */}
-      {/* ========================================== */}
-      {activeTab === 'report' && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 space-y-6">
-          
-          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Time Context</label>
-              <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-500">
-                <option value="today">Today</option>
-                <option value="this_week">This Week</option>
-                <option value="this_month">This Month</option>
-                <option value="all">All Time</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Master HQ (Hub)</label>
-              <select value={repMasterFilter} onChange={(e) => {setRepMasterFilter(e.target.value); setRepChildFilter("ALL");}} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400">
-                <option value="ALL">-- All HQ Hubs --</option>
-                {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Child Center (Spoke)</label>
-              <select value={repChildFilter} onChange={(e) => setRepChildFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400">
-                <option value="ALL">-- All Tethered Centers --</option>
-                {childFranchisesForReports.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total HQ Purchases</p>
-              <p className="text-2xl font-black text-indigo-600">₹{totalPurchasedValue.toLocaleString('en-IN')}</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Center Sales</p>
-              <p className="text-2xl font-black text-blue-600">₹{totalSalesCash.toLocaleString('en-IN')}</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Declared Collections</p>
-              <p className="text-2xl font-black text-emerald-600">₹{totalCollected.toLocaleString('en-IN')}</p>
-            </div>
-            <div className={`p-5 rounded-xl border shadow-sm text-center ${totalCollected >= totalSalesCash ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-              <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>Net Variance</p>
-              <p className={`text-2xl font-black ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>₹{(totalCollected - totalSalesCash).toLocaleString('en-IN')}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="bg-indigo-50 border-b border-indigo-100 p-4">
-                <h3 className="font-black text-indigo-900 uppercase tracking-widest text-xs">Master HQ Procurement Ledger</h3>
+          {/* TAB 3: MONTHLY SALES ENGINE (CENTER LEVEL) */}
+          {activeTab === 'sales' && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in fade-in slide-in-from-bottom-4">
+              <div className="flex justify-between items-end border-b pb-2 mb-6">
+                <div>
+                  <h2 className="text-lg font-black text-slate-800">Monthly Center Sales Ledger</h2>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Closing Month: {reportingMonth}</p>
+                </div>
               </div>
-              <div className="overflow-y-auto flex-1">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
-                    <tr>
-                      <th className="p-3 font-black">Date & Master CTOP</th>
-                      <th className="p-3 font-black">Product & Qty</th>
-                      <th className="p-3 font-black text-right">Amount (₹)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {fPurchases.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No bulk purchases found.</td></tr> : 
-                      fPurchases.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50">
-                          <td className="p-3">
-                            <p className="font-bold text-slate-900">{p.purchase_date}</p>
-                            <p className="text-[10px] text-slate-500 uppercase">CTOP: {p.master_ctop_accounts?.master_ctop_no}</p>
-                          </td>
-                          <td className="p-3">
-                            <p className="font-black text-indigo-700">{p.product_category}</p>
-                            <p className="text-xs text-slate-600 font-bold">Qty: {p.qty}</p>
-                          </td>
-                          <td className="p-3 text-right font-black text-slate-800">₹{Number(p.amount).toLocaleString('en-IN')}</td>
+
+              {!locType ? (
+                <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
+                  <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleSalesSubmit} className="space-y-6">
+                  
+                  {/* OCSC DYNAMIC GRID */}
+                  {locType === 'OCSC' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      <div className="space-y-4">
+                        <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" min="0" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CM DYNAMIC AGENT GRID */}
+                  {locType === 'CM' && (
+                    <div>
+                      <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
+                      {cmSales.length === 0 ? (
+                        <p className="text-sm font-bold text-red-600 bg-red-50 p-4 border border-red-200 rounded">No agents mapped to this Child Center.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {cmSales.map((agent, idx) => (
+                            <div key={agent.agent_ctop_no} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
+                              <span className="font-black text-slate-800 tracking-wider">Agent: {agent.agent_ctop_no}</span>
+                              <div className="flex items-center gap-3">
+                                <label className="text-[10px] font-bold uppercase text-slate-500">Sales Qty</label>
+                                <input 
+                                  type="number" min="0" step="0.01" value={agent.qty} 
+                                  onChange={(e) => {
+                                    const newSales = [...cmSales];
+                                    newSales[idx].qty = e.target.value;
+                                    setCmSales(newSales);
+                                  }} 
+                                  onKeyDown={preventNegativeScroll} onWheel={handleWheel}
+                                  className="border border-slate-300 p-2 rounded font-bold outline-none focus:border-indigo-500 w-32" 
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+                    {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: COLLECTION ENGINE (CENTER LEVEL) */}
+          {activeTab === 'collection' && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+              <h2 className="text-lg font-black text-slate-800 border-b pb-2 mb-6 text-center">Declare Monthly Center Collection</h2>
+              
+              {!locType ? (
+                <div className="text-center p-8 bg-slate-50 rounded-xl border border-slate-200">
+                  <p className="font-bold text-slate-500">Please select an OCSC or CM Child Center from the ribbon above.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleCollectionSubmit} className="space-y-6">
+                  <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-200 text-center">
+                    <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
+                    <input 
+                      required type="number" step="0.01" min="0"
+                      value={collectionForm.total_cash_collected} 
+                      onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} 
+                      onKeyDown={preventNegativeScroll} onWheel={handleWheel}
+                      className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                      placeholder="0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Reconciliation Remarks (Optional)</label>
+                    <textarea 
+                      rows={3} 
+                      value={collectionForm.remarks} 
+                      onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} 
+                      placeholder="Explain any shortfalls or surpluses..."
+                      className="w-full border-2 border-slate-200 p-3 rounded-lg outline-none font-medium focus:border-indigo-500" 
+                    />
+                  </div>
+
+                  <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition hover:bg-emerald-700">
+                    {isSubmitting ? "Logging Collection..." : "Submit Collection Checkpoint"}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TAB 5: COMPREHENSIVE REPORTING ENGINE */}
+          {/* ========================================== */}
+          {activeTab === 'report' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 space-y-6">
+              
+              <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Time Context</label>
+                  <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-500">
+                    <option value="today">Today</option>
+                    <option value="this_week">This Week</option>
+                    <option value="this_month">This Month</option>
+                    <option value="all">All Time</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Master HQ (Hub)</label>
+                  <select value={repMasterFilter} onChange={(e) => {setRepMasterFilter(e.target.value); setRepChildFilter("ALL");}} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400">
+                    <option value="ALL">-- All HQ Hubs --</option>
+                    {hqLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">Child Center (Spoke)</label>
+                  <select value={repChildFilter} onChange={(e) => setRepChildFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400">
+                    <option value="ALL">-- All Tethered Centers --</option>
+                    {childFranchisesForReports.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total HQ Purchases</p>
+                  <p className="text-2xl font-black text-indigo-600">₹{totalPurchasedValue.toLocaleString('en-IN')}</p>
+                </div>
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Center Sales</p>
+                  <p className="text-2xl font-black text-blue-600">₹{totalSalesCash.toLocaleString('en-IN')}</p>
+                </div>
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm text-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Declared Collections</p>
+                  <p className="text-2xl font-black text-emerald-600">₹{totalCollected.toLocaleString('en-IN')}</p>
+                </div>
+                <div className={`p-5 rounded-xl border shadow-sm text-center ${totalCollected >= totalSalesCash ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>Net Variance</p>
+                  <p className={`text-2xl font-black ${totalCollected >= totalSalesCash ? 'text-emerald-700' : 'text-red-700'}`}>₹{(totalCollected - totalSalesCash).toLocaleString('en-IN')}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
+                  <div className="bg-indigo-50 border-b border-indigo-100 p-4">
+                    <h3 className="font-black text-indigo-900 uppercase tracking-widest text-xs">Master HQ Procurement Ledger</h3>
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                      <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
+                        <tr>
+                          <th className="p-3 font-black">Date & Master CTOP</th>
+                          <th className="p-3 font-black">Product & Qty</th>
+                          <th className="p-3 font-black text-right">Amount (₹)</th>
                         </tr>
-                      ))
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {fPurchases.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No bulk purchases found.</td></tr> : 
+                          fPurchases.map(p => (
+                            <tr key={p.id} className="hover:bg-slate-50">
+                              <td className="p-3">
+                                <p className="font-bold text-slate-900">{p.purchase_date}</p>
+                                <p className="text-[10px] text-slate-500 uppercase">CTOP: {p.master_ctop_accounts?.master_ctop_no}</p>
+                              </td>
+                              <td className="p-3">
+                                <p className="font-black text-indigo-700">{p.product_category}</p>
+                                <p className="text-xs text-slate-600 font-bold">Qty: {p.qty}</p>
+                              </td>
+                              <td className="p-3 text-right font-black text-slate-800">₹{Number(p.amount).toLocaleString('en-IN')}</td>
+                            </tr>
+                          ))
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="bg-emerald-50 border-b border-emerald-100 p-4">
-                <h3 className="font-black text-emerald-900 uppercase tracking-widest text-xs">Center Collections</h3>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
-                    <tr>
-                      <th className="p-3 font-black">Center & Month</th>
-                      <th className="p-3 font-black text-right">Collected (₹)</th>
-                      <th className="p-3 font-black">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {fCollections.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No collections found.</td></tr> : 
-                      fCollections.map(c => (
-                        <tr key={c.id} className="hover:bg-slate-50">
-                          <td className="p-3">
-                            <p className="font-bold text-slate-900">{c.locations?.center_name}</p>
-                            <p className="text-[10px] text-slate-500 uppercase">{c.reporting_month}</p>
-                          </td>
-                          <td className="p-3 text-right font-black text-emerald-700">₹{Number(c.total_cash_collected).toLocaleString('en-IN')}</td>
-                          <td className="p-3 text-xs text-slate-500 max-w-[150px] truncate">{c.remarks || "No remarks"}</td>
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
+                  <div className="bg-emerald-50 border-b border-emerald-100 p-4">
+                    <h3 className="font-black text-emerald-900 uppercase tracking-widest text-xs">Center Collections</h3>
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                      <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0">
+                        <tr>
+                          <th className="p-3 font-black">Center & Month</th>
+                          <th className="p-3 font-black text-right">Collected (₹)</th>
+                          <th className="p-3 font-black">Remarks</th>
                         </tr>
-                      ))
-                    }
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {fCollections.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No collections found.</td></tr> : 
+                          fCollections.map(c => (
+                            <tr key={c.id} className="hover:bg-slate-50">
+                              <td className="p-3">
+                                <p className="font-bold text-slate-900">{c.locations?.center_name}</p>
+                                <p className="text-[10px] text-slate-500 uppercase">{c.reporting_month}</p>
+                              </td>
+                              <td className="p-3 text-right font-black text-emerald-700">₹{Number(c.total_cash_collected).toLocaleString('en-IN')}</td>
+                              <td className="p-3 text-xs text-slate-500 max-w-[150px] truncate">{c.remarks || "No remarks"}</td>
+                            </tr>
+                          ))
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
 
     </div>

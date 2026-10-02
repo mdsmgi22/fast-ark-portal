@@ -50,9 +50,10 @@ export function proxy(request: NextRequest) {
 
       // 4. Strict RBAC Routing Protocols
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
-      // Add manager-mis to opsRoutes so Staff are allowed to load the page!
+      
+      // [STRICT FIX]: Added '/dashboard/manager-mis' to opsRoutes to let Staff bypass the firewall
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
-      const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners', '/dashboard/manager-mis'];
+      const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
 
       // Accountant Guard
@@ -76,12 +77,11 @@ export function proxy(request: NextRequest) {
         }
       }
 
-      // [CRITICAL FIX]: Admin Guard Fault Tolerance
-      // We explicitly bypass the Edge JWT check for Admin routes. The database will 
-      // securely verify the user's role natively inside the page component.
-      // This stops the 307 Ghost Redirect loop caused by stale cookies.
+      // Admin Guard Fault Tolerance
       if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
-        return NextResponse.next();
+        if (['accountant', 'staff', 'manager'].includes(safeRole)) {
+          return NextResponse.redirect(new URL('/dashboard', request.url));
+        }
       }
 
     } catch (error) {
