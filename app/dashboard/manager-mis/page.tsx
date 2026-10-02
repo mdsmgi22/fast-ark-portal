@@ -12,54 +12,50 @@ export default function ManagerMISDashboard() {
   const [activeTab, setActiveTab] = useState<'purchase' | 'sales' | 'collection' | 'report'>('purchase');
 
   // Architecture Data
-  const [childLocations, setChildLocations] = useState<any[]>([]); // OCSC & CM Centers
-  const [masterCtops, setMasterCtops] = useState<any[]>([]); // Central Procurement Anchors
+  const [childLocations, setChildLocations] = useState<any[]>([]); 
+  const [masterCtops, setMasterCtops] = useState<any[]>([]); 
   const [agentMappings, setAgentMappings] = useState<any[]>([]);
 
-  // Tab Context States (Decoupled Hierarchy)
+  // Tab Context States
   const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
+  const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
+
+  // ==========================================
+  // [FIX 1]: EMPTY STRING INITIALIZATION 
+  // Replaced all 0s with "" to fix the default zero UI bug.
+  // ==========================================
   
-  // Tab 1: Purchase Form State (MAPPED TO MASTER CTOP)
+  // Tab 1: Purchase Form State
   const [purchaseForm, setPurchaseForm] = useState({
     purchase_date: new Date().toISOString().split('T')[0],
     master_ctop_id: "", 
     product_category: "CBP",
-    qty: 0,
-    amount: 0,
-    commission_percent: 5.81,
+    qty: "",
+    amount: "",
+    commission_percent: "5.81",
+    manual_qty_override: false, // [FIX 2]: Checkbox state for manual override
   });
 
-  // Tab 2 & 3: Child Center Selection (Split-Key for OCSC/CM)
-  const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
-
-  // Tab 2: Sales Form State
+  // Tab 2: Sales Form State (OCSC)
   const [ocscSales, setOcscSales] = useState({
-    cbp_landline_cash: 0, cbp_gsm_cash: 0, ctop_recharge_cash: 0,
-    sim_replace_qty: 0, sim_replace_cash: 0,
-    sim_fancy_qty: 0, sim_fancy_cash: 0,
-    sim_other_qty: 0, sim_other_cash: 0,
+    cbp_landline_cash: "", cbp_gsm_cash: "", ctop_recharge_cash: "",
+    sim_replace_qty: "", sim_replace_cash: "",
+    sim_fancy_qty: "", sim_fancy_cash: "",
+    sim_other_qty: "", sim_other_cash: "",
   });
-  const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: number}[]>([]);
+
+  // Tab 2: Sales Form State (CM)
+  const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
 
   // Tab 3: Collection Form State
   const [collectionForm, setCollectionForm] = useState({
-    total_cash_collected: 0, remarks: ""
+    total_cash_collected: "", remarks: ""
   });
 
+  // Fetch Architecture Data
   useEffect(() => {
     fetchArchitecture();
   }, []);
-
-  // Fetch relevant CM agents when a Child Center is selected
-  useEffect(() => {
-    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
-      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
-      const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
-      setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: 0 })));
-    } else {
-      setCmSales([]);
-    }
-  }, [selectedChildLocKey, agentMappings]);
 
   const fetchArchitecture = async () => {
     setLoading(true);
@@ -67,7 +63,6 @@ export default function ManagerMISDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // Fetch Child Locations (Centers) and Master CTOPs (HQs)
       const [childLocRes, masterRes, agentRes] = await Promise.all([
         supabase.from("locations").select("*").or("role_ocsc.eq.true,role_cm.eq.true").order("center_name"),
         supabase.from("master_ctop_accounts").select("*, locations(center_name)"),
@@ -83,6 +78,40 @@ export default function ManagerMISDashboard() {
       setLoading(false);
     }
   };
+
+  // Agent Mapping Hook
+  useEffect(() => {
+    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
+      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
+      const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
+      // Initialize with empty strings to prevent the zero bug
+      setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: "" })));
+    } else {
+      setCmSales([]);
+    }
+  }, [selectedChildLocKey, agentMappings]);
+
+  // ==========================================
+  // [FIX 2]: INTELLIGENT AUTO-CALCULATION ENGINE
+  // Automatically calculates QTY based on Amount and Commission
+  // ==========================================
+  useEffect(() => {
+    if (purchaseForm.manual_qty_override) return; // Halt auto-calc if user overrides
+
+    const amt = parseFloat(purchaseForm.amount) || 0;
+
+    if (purchaseForm.product_category === "CBP") {
+      // For CBP: Qty is exactly equal to Amount
+      setPurchaseForm(prev => ({ ...prev, qty: amt.toString() }));
+    } else if (purchaseForm.product_category === "CTOP") {
+      // For CTOP: Qty is Amount + Calculated Commission
+      const pct = parseFloat(purchaseForm.commission_percent) || 0;
+      const comm = (amt * pct) / 100;
+      const total = (amt + comm).toFixed(2); // Retain 2 decimals for accuracy
+      setPurchaseForm(prev => ({ ...prev, qty: total.toString() }));
+    }
+  }, [purchaseForm.amount, purchaseForm.commission_percent, purchaseForm.product_category, purchaseForm.manual_qty_override]);
+
 
   const getActiveLocationType = () => {
     if (!selectedChildLocKey) return null;
@@ -102,19 +131,20 @@ export default function ManagerMISDashboard() {
       if (!user) throw new Error("Auth drop.");
 
       const isCTOP = purchaseForm.product_category === 'CTOP';
-      const commValue = isCTOP ? (purchaseForm.amount * purchaseForm.commission_percent) / 100 : 0;
+      const amtDb = parseFloat(purchaseForm.amount) || 0;
+      const pctDb = parseFloat(purchaseForm.commission_percent) || 0;
+      const commValue = isCTOP ? (amtDb * pctDb) / 100 : 0;
 
-      // Identify the Master Location ID tied to this Master CTOP
       const selectedMaster = masterCtops.find(m => m.id === purchaseForm.master_ctop_id);
 
       const payload = {
         purchase_date: purchaseForm.purchase_date,
-        location_id: selectedMaster?.location_id || null, // Logs against the Master Location
+        location_id: selectedMaster?.location_id || null, 
         master_ctop_id: purchaseForm.master_ctop_id,
         product_category: purchaseForm.product_category,
-        qty: purchaseForm.qty,
-        amount: purchaseForm.amount,
-        commission_percent: isCTOP ? purchaseForm.commission_percent : null,
+        qty: parseFloat(purchaseForm.qty) || 0, // Cast safe string to Float for DB
+        amount: amtDb,
+        commission_percent: isCTOP ? pctDb : null,
         commission_value: commValue,
         logged_by: user.id
       };
@@ -128,11 +158,11 @@ export default function ManagerMISDashboard() {
         action_type: 'MIS_ENTRY',
         module: 'MANAGER_MIS',
         target_id: insertedRecord.id,
-        details: `Procured: ${purchaseForm.qty}x ${purchaseForm.product_category} into Master CTOP ${selectedMaster?.master_ctop_no}.`
+        details: `Procured: ${payload.qty}x ${purchaseForm.product_category} into Master CTOP ${selectedMaster?.master_ctop_no}.`
       }]);
 
       alert("✅ Central Purchase Ledger Updated.");
-      setPurchaseForm({ ...purchaseForm, qty: 0, amount: 0 }); 
+      setPurchaseForm({ ...purchaseForm, qty: "", amount: "", manual_qty_override: false }); 
     } catch (err: any) {
       alert("Error saving purchase: " + err.message);
     } finally {
@@ -153,12 +183,25 @@ export default function ManagerMISDashboard() {
       const centerType = getActiveLocationType();
       const dbReportingMonth = `${reportingMonth}-01`;
 
+      // Clean empty strings into valid 0s for database
+      const cleanOcscSales = {
+        cbp_landline_cash: parseFloat(ocscSales.cbp_landline_cash) || 0,
+        cbp_gsm_cash: parseFloat(ocscSales.cbp_gsm_cash) || 0,
+        ctop_recharge_cash: parseFloat(ocscSales.ctop_recharge_cash) || 0,
+        sim_replace_qty: parseInt(ocscSales.sim_replace_qty) || 0,
+        sim_replace_cash: parseFloat(ocscSales.sim_replace_cash) || 0,
+        sim_fancy_qty: parseInt(ocscSales.sim_fancy_qty) || 0,
+        sim_fancy_cash: parseFloat(ocscSales.sim_fancy_cash) || 0,
+        sim_other_qty: parseInt(ocscSales.sim_other_qty) || 0,
+        sim_other_cash: parseFloat(ocscSales.sim_other_cash) || 0,
+      };
+
       const parentPayload = {
         reporting_month: dbReportingMonth,
         location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         center_type: centerType,
         logged_by: user.id,
-        ...(centerType === 'OCSC' ? ocscSales : {}) 
+        ...(centerType === 'OCSC' ? cleanOcscSales : {}) 
       };
 
       const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([parentPayload]).select().single();
@@ -168,7 +211,7 @@ export default function ManagerMISDashboard() {
         const childPayloads = cmSales.map(agent => ({
           monthly_sales_id: parentRecord.id,
           agent_ctop_no: agent.agent_ctop_no,
-          qty: agent.qty
+          qty: parseFloat(agent.qty) || 0
         })).filter(payload => payload.qty > 0); 
 
         if (childPayloads.length > 0) {
@@ -209,7 +252,7 @@ export default function ManagerMISDashboard() {
       const payload = {
         reporting_month: dbReportingMonth,
         location_id: parseInt(selectedChildLocKey.split('-')[0]), 
-        total_cash_collected: collectionForm.total_cash_collected,
+        total_cash_collected: parseFloat(collectionForm.total_cash_collected) || 0,
         remarks: collectionForm.remarks,
         logged_by: user.id
       };
@@ -223,11 +266,11 @@ export default function ManagerMISDashboard() {
         action_type: 'MIS_CLOSURE',
         module: 'MANAGER_MIS',
         target_id: colRecord.id,
-        details: `Declared Collection of ₹${collectionForm.total_cash_collected} for ${reportingMonth}.`
+        details: `Declared Collection of ₹${payload.total_cash_collected} for ${reportingMonth}.`
       }]);
 
       alert(`✅ Collection for ${reportingMonth} successfully logged.`);
-      setCollectionForm({ total_cash_collected: 0, remarks: "" });
+      setCollectionForm({ total_cash_collected: "", remarks: "" });
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Collection for this center and month is already locked.");
       else alert("Error saving collection: " + err.message);
@@ -245,6 +288,11 @@ export default function ManagerMISDashboard() {
   );
 
   const locType = getActiveLocationType();
+  
+  // Real-time calculation variables for the UI
+  const liveAmt = parseFloat(purchaseForm.amount) || 0;
+  const livePct = parseFloat(purchaseForm.commission_percent) || 0;
+  const liveComm = (liveAmt * livePct) / 100;
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
@@ -300,7 +348,7 @@ export default function ManagerMISDashboard() {
               
               <div>
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Product Category</label>
-                <select value={purchaseForm.product_category} onChange={e => setPurchaseForm({...purchaseForm, product_category: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
+                <select value={purchaseForm.product_category} onChange={e => setPurchaseForm({...purchaseForm, product_category: e.target.value, manual_qty_override: false})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
                   <option value="CBP">CBP</option>
                   <option value="CTOP">CTOP</option>
                   <option value="SIM_FREE">SIM (Free)</option>
@@ -309,24 +357,45 @@ export default function ManagerMISDashboard() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Quantity</label>
-                <input required type="number" min="0" value={purchaseForm.qty} onChange={e => setPurchaseForm({...purchaseForm, qty: Number(e.target.value)})} className={numInputClass} />
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Purchase Amount (₹)</label>
+                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: e.target.value})} className={numInputClass} placeholder="Enter Amount" />
               </div>
 
+              {/* DYNAMIC QTY RENDERER WITH OVERRIDE CHECKBOX */}
               <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Amount (₹)</label>
-                <input required type="number" step="0.01" min="0" value={purchaseForm.amount} onChange={e => setPurchaseForm({...purchaseForm, amount: Number(e.target.value)})} className={numInputClass} />
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Final Quantity</label>
+                  {(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && (
+                    <label className="flex items-center gap-1 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={purchaseForm.manual_qty_override} 
+                        onChange={(e) => setPurchaseForm({...purchaseForm, manual_qty_override: e.target.checked})}
+                        className="accent-indigo-600"
+                      />
+                      <span className="text-[9px] font-bold text-indigo-600 uppercase">Override</span>
+                    </label>
+                  )}
+                </div>
+                <input 
+                  required type="number" step="0.01" min="0" 
+                  value={purchaseForm.qty} 
+                  onChange={e => setPurchaseForm({...purchaseForm, qty: e.target.value})} 
+                  disabled={(purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override}
+                  className={`${numInputClass} ${((purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP') && !purchaseForm.manual_qty_override) ? 'bg-slate-100 cursor-not-allowed opacity-80 border-dashed' : ''}`} 
+                  placeholder={purchaseForm.product_category === 'CBP' || purchaseForm.product_category === 'CTOP' ? 'Auto-calculating...' : 'Enter Quantity'}
+                />
               </div>
 
               {purchaseForm.product_category === 'CTOP' && (
                 <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-200 md:col-span-2 flex gap-4 items-center">
                   <div className="flex-1">
                     <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">Manual Commission %</label>
-                    <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: Number(e.target.value)})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
+                    <input required type="number" step="0.01" value={purchaseForm.commission_percent} onChange={e => setPurchaseForm({...purchaseForm, commission_percent: e.target.value})} className="w-full border border-indigo-300 p-2 rounded outline-none font-black text-indigo-900" />
                   </div>
                   <div className="flex-1 bg-white p-2 rounded text-center border border-indigo-100 shadow-sm">
-                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Instant Payout</p>
-                    <p className="text-xl text-indigo-600 font-black">₹{((purchaseForm.amount * purchaseForm.commission_percent) / 100).toFixed(2)}</p>
+                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Calculated Payout</p>
+                    <p className="text-xl text-indigo-600 font-black">₹{liveComm.toFixed(2)}</p>
                   </div>
                 </div>
               )}
@@ -401,21 +470,21 @@ export default function ManagerMISDashboard() {
                   <div className="space-y-4">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: Number(e.target.value)})} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} className={numInputClass} /></div>
+                      <div className="col-span-2"><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: Number(e.target.value)})} className={numInputClass} /></div>
-                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: Number(e.target.value)})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Qty</label><input type="number" value={ocscSales.sim_replace_qty} onChange={e => setOcscSales({...ocscSales, sim_replace_qty: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Replace Cash</label><input type="number" step="0.01" value={ocscSales.sim_replace_cash} onChange={e => setOcscSales({...ocscSales, sim_replace_cash: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} className={numInputClass} /></div>
+                      <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} className={numInputClass} /></div>
                     </div>
                   </div>
                 </div>
@@ -438,7 +507,7 @@ export default function ManagerMISDashboard() {
                               type="number" min="0" value={agent.qty} 
                               onChange={(e) => {
                                 const newSales = [...cmSales];
-                                newSales[idx].qty = Number(e.target.value);
+                                newSales[idx].qty = e.target.value;
                                 setCmSales(newSales);
                               }} 
                               className="border border-slate-300 p-2 rounded font-bold outline-none focus:border-indigo-500 w-32" 
@@ -474,8 +543,8 @@ export default function ManagerMISDashboard() {
                 <label className="block text-xs font-black text-emerald-800 uppercase tracking-widest mb-3">Total Actual Cash Collected (₹) *</label>
                 <input 
                   required type="number" step="0.01" min="0"
-                  value={collectionForm.total_cash_collected || ''} 
-                  onChange={e => setCollectionForm({...collectionForm, total_cash_collected: Number(e.target.value)})} 
+                  value={collectionForm.total_cash_collected} 
+                  onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} 
                   className="w-full text-center text-4xl font-black text-emerald-900 bg-white border-2 border-emerald-300 p-4 rounded-lg outline-none focus:border-emerald-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
                   placeholder="0.00"
                 />
