@@ -42,17 +42,19 @@ export default function StaffProductivityDashboard() {
     }
   };
 
-  // --- UPGRADED CHART ENGINE ---
-  // Now captures the new 'ONBOARDING' and 'MESSAGES' modules introduced in previous fixes
+  // --- UPGRADED CHART ENGINE [FIX 1: Safe Null Chaining & MIS Tracking] ---
   const chartData = staffList.map(staffMember => {
-    const staffLogs = logs.filter(log => log.staff_email === staffMember.email);
+    const email = staffMember?.email || '';
+    const name = staffMember?.name || 'Unknown';
+    const staffLogs = logs.filter(log => log?.staff_email === email);
+    
     return {
-      name: staffMember.name.split(' ')[0], // First name for chart fit
-      Onboarding: staffLogs.filter(l => l.module === 'ONBOARDING' || l.module === 'APPLICATIONS').length,
-      Deposits: staffLogs.filter(l => l.module === 'DEPOSITS').length,
-      Audits: staffLogs.filter(l => l.module === 'SALES').length,
-      Logistics: staffLogs.filter(l => l.module === 'LOGISTICS').length,
-      Messages: staffLogs.filter(l => l.module === 'MESSAGES').length,
+      name: name.split(' ')[0], // First name for chart fit
+      Onboarding: staffLogs.filter(l => l?.module === 'ONBOARDING' || l?.module === 'APPLICATIONS').length,
+      Deposits: staffLogs.filter(l => l?.module === 'DEPOSITS').length,
+      Audits: staffLogs.filter(l => l?.module === 'SALES' || l?.module === 'MANAGER_MIS').length, // Added MIS Auditing
+      Logistics: staffLogs.filter(l => l?.module === 'LOGISTICS').length,
+      Messages: staffLogs.filter(l => l?.module === 'MESSAGES').length,
       total: staffLogs.length
     };
   }).filter(data => data.total > 0); // Only show active staff
@@ -81,7 +83,7 @@ export default function StaffProductivityDashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* CHIEF KPI METRICS (Upgraded) */}
+        {/* CHIEF KPI METRICS */}
         <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-slate-800">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Total Actions</p>
@@ -96,8 +98,8 @@ export default function StaffProductivityDashboard() {
             <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'DEPOSITS').length}</p>
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-purple-500">
-            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Sales Overrides</p>
-            <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'SALES').length}</p>
+            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Ledger & MIS Audits</p>
+            <p className="text-3xl font-black text-slate-800">{loading ? "..." : logs.filter(l => l.module === 'SALES' || l.module === 'MANAGER_MIS').length}</p>
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-pink-500">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Alerts Sent</p>
@@ -105,17 +107,18 @@ export default function StaffProductivityDashboard() {
           </div>
         </div>
 
-        {/* PERFORMANCE CHART (Upgraded) */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 h-96 relative flex flex-col">
-          <div className="flex justify-between items-center mb-6 shrink-0">
+        {/* PERFORMANCE CHART */}
+        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex justify-between items-center mb-6">
             <h2 className="text-lg font-black text-slate-800">Staff Output by Module</h2>
             {loading && <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>}
           </div>
           
-          <div className="flex-1 w-full min-h-0">
-            {!loading && chartData.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-slate-400 font-bold pb-12">No activity recorded for this date.</div>
-            ) : (
+          {/* [FIX 2: Strict Height applied to prevent Recharts infinite resizing loops] */}
+          {!loading && chartData.length === 0 ? (
+            <div className="flex h-[300px] items-center justify-center text-slate-400 font-bold">No activity recorded for this date.</div>
+          ) : (
+            <div className="w-full h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -130,12 +133,12 @@ export default function StaffProductivityDashboard() {
                   <Bar dataKey="Messages" stackId="a" fill="#ec4899" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* RAW AUDIT FEED */}
-        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-96">
+        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[400px]">
           <div className="bg-slate-900 p-4 flex justify-between items-center shrink-0">
             <h2 className="text-sm font-black uppercase tracking-widest text-white">Live Audit Feed</h2>
             <span className="bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700">{logs.length} Events</span>
@@ -153,17 +156,20 @@ export default function StaffProductivityDashboard() {
               </div>
             ) : (
               // Secure [...logs] clone prevents destructive state mutation during sort
-              [...logs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(log => (
+              [...logs].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()).map(log => (
                 <div key={log.id} className="bg-white border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-300 transition">
                   <div className="flex justify-between items-start mb-2">
-                    <span className="font-black text-slate-800 text-sm truncate pr-2">{log.staff_email.split('@')[0]}</span>
+                    {/* [FIX 3: Fallback 'System' applied to avoid undefined split crashes] */}
+                    <span className="font-black text-slate-800 text-sm truncate pr-2">
+                      {(log.staff_email || 'System').split('@')[0]}
+                    </span>
                     <span className="text-[9px] font-black text-slate-400 uppercase shrink-0">
-                      {new Date(log.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      {new Date(log.created_at || 0).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                     </span>
                   </div>
                   <div>
                     <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase mb-1.5 border ${
-                      log.action_type === 'APPROVAL' || log.action_type === 'VERIFICATION' || log.action_type === 'STOCK_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' :
+                      log.action_type === 'APPROVAL' || log.action_type === 'VERIFICATION' || log.action_type === 'STOCK_APPROVED' || log.action_type === 'MIS_CLOSURE' ? 'bg-green-50 text-green-700 border-green-200' :
                       log.action_type === 'REJECTION' || log.action_type === 'DISCREPANCY' || log.action_type === 'STOCK_REJECTED' ? 'bg-red-50 text-red-700 border-red-200' :
                       log.action_type === 'DISPATCH_ALERT' ? 'bg-pink-50 text-pink-700 border-pink-200' :
                       'bg-purple-50 text-purple-700 border-purple-200'
