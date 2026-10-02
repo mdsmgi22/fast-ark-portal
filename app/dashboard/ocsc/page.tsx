@@ -13,12 +13,16 @@ export default function OcscDataCommand() {
   const [masters, setMasters] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [partners, setPartners] = useState<any[]>([]);
+  
+  // NEW: State to hold Master Locations (Hubs) for tethering
+  const [masterLocations, setMasterLocations] = useState<any[]>([]);
 
   // Modals & Forms
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const initialMasterForm = { master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
+  // UPGRADED: Added location_id to the Master Form
+  const initialMasterForm = { location_id: "", master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
   const initialAgentForm = { partner_id: "", master_ctop_id: "", agent_ctop_no: "", agent_ocsc_login_id: "" };
   
   const [masterForm, setMasterForm] = useState(initialMasterForm);
@@ -33,15 +37,19 @@ export default function OcscDataCommand() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [mastersRes, agentsRes, partnersRes] = await Promise.all([
-        supabase.from("master_ctop_accounts").select("*").order("created_at", { ascending: false }),
+      const [mastersRes, agentsRes, partnersRes, hqRes] = await Promise.all([
+        // Added locations(center_name) to fetch the anchored HQ name
+        supabase.from("master_ctop_accounts").select("*, locations(center_name)").order("created_at", { ascending: false }),
         supabase.from("agent_ctop_mappings").select("*, active_partners(partner_name, locations(center_name)), master_ctop_accounts(master_ctop_no)").order("created_at", { ascending: false }),
-        supabase.from("active_partners").select("id, partner_name, locations(center_name)").eq("status", "Active").order("partner_name", { ascending: true })
+        supabase.from("active_partners").select("id, partner_name, locations(center_name)").eq("status", "Active").order("partner_name", { ascending: true }),
+        // Fetch only Master Nodes (Hubs) for the dropdown
+        supabase.from("locations").select("id, center_name").eq("is_master_node", true).order("center_name", { ascending: true })
       ]);
 
       setMasters(mastersRes.data || []);
       setAgents(agentsRes.data || []);
       setPartners(partnersRes.data || []);
+      setMasterLocations(hqRes.data || []);
     } catch (err: any) {
       console.error(err.message);
     } finally {
@@ -52,13 +60,20 @@ export default function OcscDataCommand() {
   const handleMasterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // [FIX 1]: Strict 10-Digit validation for Master CTOP
+    // Strict Validations
+    if (!masterForm.location_id) return alert("Validation Error: You must anchor this Master CTOP to a physical Master HQ.");
     if (masterForm.master_ctop_no.length !== 10) return alert("Validation Error: Master CTOP Number must be exactly 10 digits.");
     if (masterForm.mpin.length !== 6) return alert("Validation Error: MPIN must be exactly 6 digits.");
     
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("master_ctop_accounts").insert([masterForm]);
+      // Cast the location_id to a BIGINT for the database relation
+      const payload = {
+        ...masterForm,
+        location_id: parseInt(masterForm.location_id)
+      };
+
+      const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
       if (error) throw error;
       setIsModalOpen(false);
       setMasterForm(initialMasterForm);
@@ -77,7 +92,7 @@ export default function OcscDataCommand() {
   const handleAgentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // [FIX 2]: Strict 10-Digit validation for Agent CTOP
+    // Strict 10-Digit validation for Agent CTOP
     if (agentForm.agent_ctop_no.length !== 10) return alert("Validation Error: Agent CTOP Number must be exactly 10 digits.");
     
     setIsSubmitting(true);
@@ -136,10 +151,16 @@ export default function OcscDataCommand() {
             masters.map(m => (
               <div key={m.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
-                  <h3 className="font-black text-lg">Master CTOP: {m.master_ctop_no}</h3>
+                  <h3 className="font-black text-lg">Master: {m.master_ctop_no}</h3>
                   <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
                 </div>
                 <div className="p-5 space-y-4 text-sm font-bold text-slate-700">
+                  <div className="flex justify-between items-center border-b pb-2">
+                    <span className="text-slate-400">Anchored HQ</span>
+                    <span className="text-xs font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-2 py-1 rounded border border-indigo-200">
+                      {m.locations?.center_name || "UNASSIGNED"}
+                    </span>
+                  </div>
                   <div className="flex justify-between border-b pb-2"><span className="text-slate-400">Master OCSC ID</span><span>{m.master_ocsc_user_id}</span></div>
                   <div className="flex justify-between border-b pb-2"><span className="text-slate-400">Sanchar Soft ID</span><span>{m.sanchar_soft_user_id}</span></div>
                   <div className="flex justify-between"><span className="text-slate-400">MPIN</span><span className="text-blue-600 font-black tracking-widest">{m.mpin}</span></div>
@@ -200,7 +221,18 @@ export default function OcscDataCommand() {
               
               {activeTab === 'masters' ? (
                 <>
-                  {/* [FIX APPLIED]: Added maxLength={10} to the UI input to physically block extra typing */}
+                  <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-2">
+                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1">Anchor to Master HQ (Hub) *</label>
+                    <select required value={masterForm.location_id} onChange={e => setMasterForm({...masterForm, location_id: e.target.value})} className="w-full border-2 border-blue-300 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600 bg-white">
+                      <option value="" disabled>-- Select Physical HQ --</option>
+                      {masterLocations.length === 0 ? (
+                        <option value="" disabled>No Master HQs Found in Infrastructure</option>
+                      ) : (
+                        masterLocations.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)
+                      )}
+                    </select>
+                  </div>
+
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
@@ -219,16 +251,15 @@ export default function OcscDataCommand() {
                     <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Parent Master CTOP *</label>
                     <select required value={agentForm.master_ctop_id} onChange={e => setAgentForm({...agentForm, master_ctop_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Anchor to Master Account --</option>
-                      {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no}</option>)}
+                      {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>)}
                     </select>
                   </div>
-                  {/* [FIX APPLIED]: Confirmed maxLength={10} and \D regex filter are actively stripping letters */}
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                   <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                 </>
               )}
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
                 <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">Save Securely</button>
               </div>
