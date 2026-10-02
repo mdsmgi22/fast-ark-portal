@@ -33,8 +33,8 @@ export default function ManagerMISDashboard() {
     location_id: "",
     master_ctop_id: "",
     entry_type: "Opening Balance",
-    cbp_qty: "", // Changed from Amount to Qty
-    ctop_amount: ""
+    cbp_qty: "", 
+    ctop_qty: "" // STRICT FIX: Shifted from Amount to Qty
   });
 
   // Tab 2: Purchase Form State
@@ -75,7 +75,6 @@ export default function ManagerMISDashboard() {
   const [repMasterFilter, setRepMasterFilter] = useState("ALL");
   const [repChildFilter, setRepChildFilter] = useState("ALL");
 
-  // Fetch Architecture & Report Data
   useEffect(() => {
     fetchArchitectureAndReports();
   }, []);
@@ -110,7 +109,6 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // Agent Mapping Hook for Tab 3
   useEffect(() => {
     if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
       const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
@@ -137,7 +135,6 @@ export default function ManagerMISDashboard() {
     }
   }, [purchaseForm.amount, purchaseForm.commission_percent, purchaseForm.product_category, purchaseForm.manual_qty_override]);
 
-
   const getActiveLocationType = () => {
     if (!selectedChildLocKey) return null;
     return selectedChildLocKey.split('-')[1]; 
@@ -149,7 +146,7 @@ export default function ManagerMISDashboard() {
   // ==========================================
   const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
     // Blocks the minus sign, plus sign, and exponential 'e' natively
-    if (e.key === '-' || e.key === '+' || e.key === 'e') {
+    if (e.key === '-' || e.key === '+' || e.key === 'e' || e.key === 'E') {
       e.preventDefault();
     }
   };
@@ -161,7 +158,7 @@ export default function ManagerMISDashboard() {
 
   // --- SUBMISSION ENGINES ---
 
-  // 1. BALANCE SUBMIT ENGINE
+  // 1. BALANCE SUBMIT ENGINE (UPGRADED TO QTY)
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
@@ -179,8 +176,8 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_qty: parseInt(balanceForm.cbp_qty) || 0, // Strict Integer
-        ctop_amount: parseFloat(balanceForm.ctop_amount) || 0, // Strict Decimal
+        cbp_qty: parseInt(balanceForm.cbp_qty, 10) || 0, // Strict Integer
+        ctop_qty: parseInt(balanceForm.ctop_qty, 10) || 0, // Strict Integer
         logged_by: user.id
       };
 
@@ -213,7 +210,7 @@ export default function ManagerMISDashboard() {
       setBalanceForm({
         ...balanceForm,
         cbp_qty: "",
-        ctop_amount: ""
+        ctop_qty: ""
       });
       setEditingBalanceId(null);
       fetchArchitectureAndReports();
@@ -232,8 +229,8 @@ export default function ManagerMISDashboard() {
       location_id: bal.location_id.toString(),
       master_ctop_id: bal.master_ctop_id,
       entry_type: bal.entry_type,
-      cbp_qty: bal.cbp_qty, // Maps to QTY
-      ctop_amount: bal.ctop_amount
+      cbp_qty: bal.cbp_qty?.toString() || "", 
+      ctop_qty: bal.ctop_qty?.toString() || "" // Mapped safely to QTY
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -499,7 +496,7 @@ export default function ManagerMISDashboard() {
       </div>
 
       {/* ========================================== */}
-      {/* TAB 1: MASTER BALANCES ENGINE (NEW) */}
+      {/* TAB 1: MASTER BALANCES ENGINE */}
       {/* ========================================== */}
       {activeTab === 'balances' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
@@ -517,7 +514,7 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
               {editingBalanceId && (
-                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_qty: "", ctop_amount: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_qty: "", ctop_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
                   Cancel Edit
                 </button>
               )}
@@ -562,8 +559,8 @@ export default function ManagerMISDashboard() {
                   <input required type="number" step="1" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Amount (₹) *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.ctop_amount} onChange={e => setBalanceForm({...balanceForm, ctop_amount: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Quantity *</label>
+                  <input required type="number" step="1" min="0" value={balanceForm.ctop_qty} onChange={e => setBalanceForm({...balanceForm, ctop_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
                 </div>
               </div>
               
@@ -589,7 +586,7 @@ export default function ManagerMISDashboard() {
                     <th className="p-4 font-black">Date & Type</th>
                     <th className="p-4 font-black">Master Location & CTOP</th>
                     <th className="p-4 font-black text-right">CBP (Qty)</th>
-                    <th className="p-4 font-black text-right">CTOP (₹)</th>
+                    <th className="p-4 font-black text-right">CTOP (Qty)</th>
                     <th className="p-4 font-black text-right">Action</th>
                   </tr>
                 </thead>
@@ -610,7 +607,7 @@ export default function ManagerMISDashboard() {
                           <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
                         </td>
                         <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN')}</td>
-                        <td className="p-4 text-right font-black text-slate-800">₹{Number(bal.ctop_amount).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty).toLocaleString('en-IN')}</td>
                         <td className="p-4 text-right">
                           <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
                             Edit
