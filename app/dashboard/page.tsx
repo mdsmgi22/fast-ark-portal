@@ -520,11 +520,20 @@ export default function AdminCommandCenter() {
 
               {/* Managers & Admins Only */}
               {isManagerOrAdmin && (
-                <Link href="/dashboard/messages" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
-                  <div className="text-3xl mb-3">💬</div>
-                  <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
-                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Dispatch secure priority alerts directly to partner dashboards.</p>
-                </Link>
+                <>
+                  {/* INJECTED: Manager MIS Dashboard Link */}
+                  <Link href="/dashboard/manager-mis" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block">
+                    <div className="text-3xl mb-3">📊</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Manager MIS Dashboard</h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Hierarchical MIS pipeline for procurement, center sales, collections, and live Hub & Spoke reporting.</p>
+                  </Link>
+
+                  <Link href="/dashboard/messages" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
+                    <div className="text-3xl mb-3">💬</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Dispatch secure priority alerts directly to partner dashboards.</p>
+                  </Link>
+                </>
               )}
             </>
           )}
