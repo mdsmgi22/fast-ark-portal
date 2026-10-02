@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import { 
@@ -11,7 +10,6 @@ import {
 // --- INJECT DECOUPLED COMPONENT ---
 import StaffManagementEngine from "../components/StaffManagementEngine";
 
-// Helper to get correct local date string (e.g., YYYY-MM-DD in IST instead of UTC)
 const getLocalDateString = (date: Date) => {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
@@ -20,6 +18,9 @@ export default function AdminCommandCenter() {
   const router = useRouter();
   const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  
+  // [FIX 1]: Add strict routing state to prevent "Ghost Clicks"
+  const [isRouting, setIsRouting] = useState(false);
   
   // --- STATE 1: Operational Analytics ---
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
@@ -44,7 +45,6 @@ export default function AdminCommandCenter() {
   const [financials, setFinancials] = useState({ cbp: 0, ctop: 0, sim: 0, cheque: 0, totalSalesCash: 0, totalDeposits: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   
-  // Defaulter Lists
   const [missingSales, setMissingSales] = useState<any[]>([]);
   const [missingDeposits, setMissingDeposits] = useState<any[]>([]);
   const [isRefreshingFinance, setIsRefreshingFinance] = useState(false);
@@ -66,17 +66,17 @@ export default function AdminCommandCenter() {
         
       if (staffData) setAdminUser(staffData);
 
-      const role = staffData?.role;
+      const rawRole = staffData?.role || '';
+      const safeRole = rawRole.trim().toLowerCase(); // [FIX 2]: Case-insensitive RBAC security
 
-      // Selective Data Loading based on strict RBAC Roles
-      if (['Admin', 'Manager', 'Staff'].includes(role)) {
+      if (['admin', 'manager', 'staff'].includes(safeRole)) {
         await fetchOperationalData();
       }
       
-      if (['Admin', 'Accountant'].includes(role)) {
+      if (['admin', 'accountant'].includes(safeRole)) {
         await fetchFinancialData("monthly");
       } else {
-        setLoading(false); // Release loading lock if Finance Data is not fetched
+        setLoading(false); 
       }
       
     } catch (err: any) {
@@ -115,7 +115,6 @@ export default function AdminCommandCenter() {
       let endDate = new Date();
 
       if (timeMode === "today") {
-        // Keep as today
       } else if (timeMode === "yesterday") {
         startDate.setDate(startDate.getDate() - 1);
         endDate.setDate(endDate.getDate() - 1);
@@ -252,18 +251,28 @@ export default function AdminCommandCenter() {
     router.push("/login");
   };
 
-  if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+  // [FIX 3]: Instant Transition Router to bypass background hangs
+  const routeTo = (path: string) => {
+    setIsRouting(true);
+    router.push(path);
+  };
+
+  // [FIX 4]: Unified Loading Screen covers both initial loads and routing hangs
+  if (loading || isRouting) return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
       <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+      {isRouting && <p className="text-sm font-bold text-slate-500 animate-pulse tracking-widest uppercase">Establishing secure connection to module...</p>}
     </div>
   );
 
-  // --- RBAC PERMISSION BOOLEANS ---
-  const role = adminUser?.role;
-  const isGodMode = role === 'Admin';
-  const isFinanceTeam = ['Admin', 'Accountant'].includes(role);
-  const isOpsTeam = ['Admin', 'Manager', 'Staff'].includes(role);
-  const isManagerOrAdmin = ['Admin', 'Manager'].includes(role);
+  // --- Normalized RBAC PERMISSION BOOLEANS ---
+  const rawRole = adminUser?.role || '';
+  const safeRole = rawRole.trim().toLowerCase();
+  
+  const isGodMode = safeRole === 'admin';
+  const isFinanceTeam = ['admin', 'accountant'].includes(safeRole);
+  const isOpsTeam = ['admin', 'manager', 'staff'].includes(safeRole);
+  const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
@@ -273,11 +282,11 @@ export default function AdminCommandCenter() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-4">
           <div>
             <h1 className="text-4xl font-black text-slate-900">
-              {role === 'Accountant' ? "Finance Command" : role === 'Staff' ? "Operations Desk" : "Admin Command Center"}
+              {safeRole === 'accountant' ? "Finance Command" : safeRole === 'staff' ? "Operations Desk" : "Admin Command Center"}
             </h1>
             <p className="text-slate-500 mt-2 font-medium">
               Welcome back, <span className="font-bold text-slate-800">{adminUser?.name || "User"}</span> | Role:{" "}
-              <span className="font-black text-purple-600 uppercase tracking-widest">{role || "System"}</span>
+              <span className="font-black text-purple-600 uppercase tracking-widest">{rawRole || "System"}</span>
             </p>
           </div>
           
@@ -424,11 +433,11 @@ export default function AdminCommandCenter() {
         {/* --- SECTION 3: OPERATIONAL METRICS (Ops Team Only) --- */}
         {isOpsTeam && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in">
-            <Link href="/dashboard/applications" className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block">
+            <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Action Required</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.pending}</h2>
               <p className="text-yellow-600 font-bold mt-2 text-xs flex items-center justify-between">Pending Apps <span>→</span></p>
-            </Link>
+            </div>
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-green-500">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Network Growth</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.approved}</h2>
@@ -439,24 +448,25 @@ export default function AdminCommandCenter() {
               <h2 className="text-3xl font-black text-slate-800">{stats.rejected}</h2>
               <p className="text-red-600 font-bold mt-2 text-xs">Rejected Apps</p>
             </div>
-            <Link href={isManagerOrAdmin ? "/dashboard/locations" : "#"} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 transition group block ${isManagerOrAdmin ? 'hover:shadow-md' : 'cursor-default'}`}>
+            <div onClick={() => isManagerOrAdmin ? routeTo("/dashboard/locations") : null} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 transition group block ${isManagerOrAdmin ? 'hover:shadow-md cursor-pointer' : 'cursor-default'}`}>
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Infrastructure</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.locations}</h2>
               <p className="text-blue-600 font-bold mt-2 text-xs flex items-center justify-between">Active Centers {isManagerOrAdmin && <span>→</span>}</p>
-            </Link>
+            </div>
           </div>
         )}
 
         {/* --- SECTION 4: ENTERPRISE MODULES GRID (DYNAMIC PER ROLE) --- */}
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
-          {role === 'Accountant' ? "Financial Modules" : role === 'Staff' ? "Assigned Tasks" : "Enterprise Modules"}
+          {safeRole === 'accountant' ? "Financial Modules" : safeRole === 'staff' ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
         
+        {/* [FIX 5]: Converted ALL grid links to explicitly routing divs to enforce instant click reception */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
           
           {/* MANAGER & ADMIN ONLY */}
           {isManagerOrAdmin && (
-            <Link href="/dashboard/compliance" className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600">
+            <div onClick={() => routeTo("/dashboard/compliance")} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600 cursor-pointer">
               <div className="flex justify-between items-start mb-3">
                 <div className="text-3xl">🚨</div>
                 <span className="bg-red-100 text-red-700 text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-widest border border-red-200 animate-pulse">
@@ -465,74 +475,73 @@ export default function AdminCommandCenter() {
               </div>
               <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">Compliance Engine</h3>
               <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Automated Defaulter Tracking for unlogged sales, cash limit breaches, and ignored alerts.</p>
-            </Link>
+            </div>
           )}
 
           {/* FINANCE TEAM ONLY */}
           {isFinanceTeam && (
             <>
-              <Link href="/dashboard/reports" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📈</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Corporate MIS Export</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Generate filtered Excel/CSV reports for sales and deposits.</p>
-              </Link>
+              </div>
               
-              <Link href="/dashboard/accounts" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/accounts")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">🏦</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Accountant Portal</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Verify partner cash deposits, OCR slips, and clear ledgers.</p>
-              </Link>
+              </div>
 
-              <Link href="/dashboard/sales-verification" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/sales-verification")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">⚖️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
-              </Link>
+              </div>
 
-              <Link href="/dashboard/banking" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/banking")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">💳</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">Corporate Banking Hub</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage remittance channels, virtual accounts, and UPI configurations.</p>
-              </Link>
+              </div>
             </>
           )}
 
           {/* OPS TEAM ONLY (Admin, Manager, Staff) */}
           {isOpsTeam && (
             <>
-              <Link href="/dashboard/ocsc" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/ocsc")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📡</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Telecom & OCSC Data</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage Master CTOP accounts, Sanchar Soft credentials, and Agent mappings.</p>
-              </Link>
+              </div>
 
-              <Link href="/dashboard/applications" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📝</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">Franchise Onboarding</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Review applications and approve new Fast Ark partners.</p>
-              </Link>
+              </div>
 
-              <Link href="/dashboard/logistics" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block">
+              <div onClick={() => routeTo("/dashboard/logistics")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-green-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📦</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-green-600">Logistics & Supply</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Approve CTOP/CBP top-ups and mark physical SIMs dispatched.</p>
-              </Link>
+              </div>
 
               {/* Managers & Admins Only */}
               {isManagerOrAdmin && (
                 <>
-                  {/* INJECTED: Manager MIS Dashboard Link */}
-                  <Link href="/dashboard/manager-mis" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block">
+                  <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                     <div className="text-3xl mb-3">📊</div>
                     <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Manager MIS Dashboard</h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Hierarchical MIS pipeline for procurement, center sales, collections, and live Hub & Spoke reporting.</p>
-                  </Link>
+                  </div>
 
-                  <Link href="/dashboard/messages" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
+                  <div onClick={() => routeTo("/dashboard/messages")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
                     <div className="text-3xl mb-3">💬</div>
                     <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Dispatch secure priority alerts directly to partner dashboards.</p>
-                  </Link>
+                  </div>
                 </>
               )}
             </>
@@ -541,11 +550,12 @@ export default function AdminCommandCenter() {
           {/* SUPER ADMIN EXCLUSIVES */}
           {isGodMode && (
             <>
-              <Link href="/dashboard/staff-reports" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block">
+              {/* Productivty Matrix mapped correctly to /dashboard/staff-reports */}
+              <div onClick={() => routeTo("/dashboard/staff-reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">⏱️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Productivity Matrix</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">View real-time staff performance analytics and strict audit trails.</p>
-              </Link>
+              </div>
             </>
           )}
         </div>
@@ -587,7 +597,7 @@ export default function AdminCommandCenter() {
                   <ul className="divide-y divide-gray-100">
                     {recentApps.map((app) => (
                       <li key={app.id} className="p-4 hover:bg-slate-50 transition">
-                        <Link href={`/dashboard/applications/${app.id}`} className="block">
+                        <div onClick={() => routeTo(`/dashboard/applications/${app.id}`)} className="block cursor-pointer">
                           <div className="flex justify-between items-start mb-1">
                             <span className="font-bold text-slate-800">{app.name}</span>
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-sm uppercase ${app.status === 'Approved' ? 'bg-green-100 text-green-700' : app.status === 'Rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -596,7 +606,7 @@ export default function AdminCommandCenter() {
                           </div>
                           <div className="text-xs text-blue-600 font-bold uppercase">{app.requested_role}</div>
                           <div className="text-[10px] text-gray-400 mt-1 font-bold">{new Date(app.created_at).toLocaleDateString()}</div>
-                        </Link>
+                        </div>
                       </li>
                     ))}
                   </ul>
