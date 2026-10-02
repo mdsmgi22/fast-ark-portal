@@ -32,6 +32,8 @@ export default function InfrastructureCommandCenter() {
     role_ocsc: false,
     role_aadhaar: false,
     role_partner: true, 
+    is_master_node: false, // Architectural Hub Toggle
+    parent_master_id: "",  // Spoke Tethering ID
   };
   const [formData, setFormData] = useState(initialForm);
 
@@ -81,9 +83,10 @@ export default function InfrastructureCommandCenter() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
+      // Fetch locations including the parent tether reference
       const { data, error } = await supabase
         .from("locations")
-        .select("*")
+        .select("*, parent_master:locations(center_name)")
         .order("center_name", { ascending: true });
 
       if (error) throw error;
@@ -116,7 +119,9 @@ export default function InfrastructureCommandCenter() {
       role_cm: loc.role_cm || false,
       role_ocsc: loc.role_ocsc || false,
       role_aadhaar: loc.role_aadhaar || false,
-      role_partner: loc.role_partner || false
+      role_partner: loc.role_partner || false,
+      is_master_node: loc.is_master_node || false,
+      parent_master_id: loc.parent_master_id || "",
     });
     setPinError("");
     setIsModalOpen(true);
@@ -124,6 +129,12 @@ export default function InfrastructureCommandCenter() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Topology Validation
+    if (!formData.is_master_node && !formData.parent_master_id) {
+      return alert("A Franchise Center (Spoke) must be tethered to a Master HQ.");
+    }
+
     setIsSubmitting(true);
 
     const payload = {
@@ -133,10 +144,13 @@ export default function InfrastructureCommandCenter() {
       taluk: formData.taluk,
       dist: formData.dist,
       state: formData.state,
-      role_cm: formData.role_cm,
-      role_ocsc: formData.role_ocsc,
-      role_aadhaar: formData.role_aadhaar,
-      role_partner: formData.role_partner
+      // Architectural Logic applied to payload
+      is_master_node: formData.is_master_node,
+      parent_master_id: formData.is_master_node ? null : parseInt(formData.parent_master_id),
+      role_cm: formData.is_master_node ? false : formData.role_cm,
+      role_ocsc: formData.is_master_node ? false : formData.role_ocsc,
+      role_partner: formData.is_master_node ? false : formData.role_partner,
+      role_aadhaar: formData.role_aadhaar 
     };
 
     try {
@@ -155,19 +169,13 @@ export default function InfrastructureCommandCenter() {
       setIsModalOpen(false);
       fetchLocations();
     } catch (err: any) {
-      // =========================================================================
-      // SECURITY FIX: Obfuscate Raw Database Errors
-      // =========================================================================
-      console.error("Database Transaction Failed:", err); // Safe internal logging
+      console.error("Database Transaction Failed:", err); 
 
       if (err?.code === '23505') {
-        // Postgres Code: unique_violation
         alert("Validation Error: The Center Name or Center Code already exists in the database. These must be uniquely identifiable.");
       } else if (err?.code === '23503') {
-        // Postgres Code: foreign_key_violation
         alert("Validation Error: Cannot process this request due to linked relational records.");
       } else {
-        // Generic Fallback for all other unhandled schema constraints or timeouts
         alert("An unexpected system error occurred while saving the location. Please try again or contact IT support.");
       }
     } finally {
@@ -178,12 +186,16 @@ export default function InfrastructureCommandCenter() {
   // Strict Filter Engine
   const filteredLocations = locations.filter(loc => {
     if (filterRole === "ALL") return true;
+    if (filterRole === "HQ") return loc.is_master_node;
     if (filterRole === "CM") return loc.role_cm;
     if (filterRole === "OCSC") return loc.role_ocsc;
     if (filterRole === "AADHAAR") return loc.role_aadhaar;
     if (filterRole === "PARTNER") return loc.role_partner;
     return true;
   });
+
+  // Extract master locations to populate the tethering dropdown
+  const masterHQs = locations.filter(loc => loc.is_master_node);
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -215,6 +227,9 @@ export default function InfrastructureCommandCenter() {
         <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           All Grid ({locations.length})
         </button>
+        <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          Master HQs ({locations.filter(l => l.is_master_node).length})
+        </button>
         <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           Franchises ({locations.filter(l => l.role_partner).length})
         </button>
@@ -223,9 +238,6 @@ export default function InfrastructureCommandCenter() {
         </button>
         <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
           CM ({locations.filter(l => l.role_cm).length})
-        </button>
-        <button onClick={() => setFilterRole('AADHAAR')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'AADHAAR' ? 'bg-amber-600 text-white border-amber-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          Aadhaar ({locations.filter(l => l.role_aadhaar).length})
         </button>
       </div>
 
@@ -239,7 +251,7 @@ export default function InfrastructureCommandCenter() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
           {filteredLocations.map(loc => (
-            <div key={loc.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 hover:border-blue-300 overflow-hidden flex flex-col transition-all">
+            <div key={loc.id} className={`bg-white rounded-xl shadow-sm border-2 hover:border-blue-300 overflow-hidden flex flex-col transition-all ${loc.is_master_node ? 'border-indigo-400' : 'border-slate-200'}`}>
               
               <div className="p-5 flex-1 border-b border-slate-100">
                 <div className="flex justify-between items-start mb-4">
@@ -251,24 +263,39 @@ export default function InfrastructureCommandCenter() {
                   </span>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                    <span>Partner</span>
-                    <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
-                  </div>
-                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                    <span>OCSC</span>
-                    <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
-                  </div>
-                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                    <span>CM</span>
-                    <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
-                  </div>
-                  <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                    <span>Aadhaar</span>
-                    <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
-                  </div>
+                {/* ARCHITECTURE BADGE */}
+                <div className="mb-4">
+                  {loc.is_master_node ? (
+                    <span className="inline-block bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
+                      🏛️ Master HQ (Hub)
+                    </span>
+                  ) : (
+                    <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
+                      🔗 Tethered to: {loc.parent_master?.center_name || 'N/A'}
+                    </span>
+                  )}
                 </div>
+                
+                {!loc.is_master_node && (
+                  <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      <span>Partner</span>
+                      <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
+                    </div>
+                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      <span>OCSC</span>
+                      <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
+                    </div>
+                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      <span>CM</span>
+                      <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
+                    </div>
+                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      <span>Aadhaar</span>
+                      <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div className="flex items-center text-sm">
@@ -304,9 +331,58 @@ export default function InfrastructureCommandCenter() {
             
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
               
-              {/* SECTION 1: CORE IDENTITY */}
+              {/* SECTION 1: TOPOLOGY MAPPING (HUB VS SPOKE) */}
               <div>
-                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">1. Core Identity</h4>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">1. Network Topology</h4>
+                
+                <div className="flex gap-4 mb-4">
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition ${formData.is_master_node ? 'bg-indigo-50 border-indigo-500' : 'bg-slate-50 border-slate-300 hover:border-indigo-300'}`}>
+                    <input 
+                      type="radio" 
+                      name="nodeType" 
+                      checked={formData.is_master_node}
+                      onChange={() => setFormData({...formData, is_master_node: true, role_ocsc: false, role_cm: false, role_partner: false, parent_master_id: ""})} 
+                      className="accent-indigo-600"
+                    />
+                    <div>
+                      <span className="font-black text-slate-800 text-sm block leading-tight">Master HQ (Hub)</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Procurement Node</span>
+                    </div>
+                  </label>
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition ${!formData.is_master_node ? 'bg-emerald-50 border-emerald-500' : 'bg-slate-50 border-slate-300 hover:border-emerald-300'}`}>
+                    <input 
+                      type="radio" 
+                      name="nodeType" 
+                      checked={!formData.is_master_node}
+                      onChange={() => setFormData({...formData, is_master_node: false})} 
+                      className="accent-emerald-600"
+                    />
+                    <div>
+                      <span className="font-black text-slate-800 text-sm block leading-tight">Franchise (Spoke)</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Retail / Ops Center</span>
+                    </div>
+                  </label>
+                </div>
+
+                {!formData.is_master_node && (
+                  <div className="bg-emerald-50 p-4 border border-emerald-200 rounded-lg animate-in fade-in">
+                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-widest block mb-2">Tether to Master HQ *</label>
+                    <select 
+                      required 
+                      value={formData.parent_master_id} 
+                      onChange={e => setFormData({...formData, parent_master_id: e.target.value})} 
+                      className="w-full bg-white border-2 border-emerald-300 text-slate-800 font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-600"
+                    >
+                      <option value="" disabled>-- Select Hub --</option>
+                      {masterHQs.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 2: CORE IDENTITY */}
+              <div>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">2. Core Identity</h4>
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="md:col-span-1">
@@ -353,52 +429,59 @@ export default function InfrastructureCommandCenter() {
                 </div>
               </div>
 
-              {/* SECTION 2: ROLES MAPPING */}
+              {/* SECTION 3: ROLES MAPPING */}
               <div>
                 <div className="flex justify-between items-end border-b pb-1 mb-4">
-                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">2. Operational Roles (Enable/Disable)</h4>
+                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">3. Operational Roles</h4>
                   <span className="text-[9px] font-bold text-slate-400 uppercase">Toggle operational status here.</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  
-                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_cm ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
-                    <div>
-                      <span className="text-xs font-black uppercase text-slate-800 block">Consumer Mobility</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">CM Services</span>
-                    </div>
-                    <input type="checkbox" checked={formData.role_cm} onChange={e => setFormData({...formData, role_cm: e.target.checked})} className="w-5 h-5 accent-emerald-600" />
-                  </label>
+                
+                {formData.is_master_node ? (
+                  <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-lg">
+                    <p className="text-xs font-bold text-indigo-800">
+                      🏛️ Master HQs handle bulk procurement and administration. Retail operations (OCSC, CM) are disabled at this level.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_cm ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
+                      <div>
+                        <span className="text-xs font-black uppercase text-slate-800 block">Consumer Mobility</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">CM Services</span>
+                      </div>
+                      <input type="checkbox" checked={formData.role_cm} onChange={e => setFormData({...formData, role_cm: e.target.checked})} className="w-5 h-5 accent-emerald-600" />
+                    </label>
 
-                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_ocsc ? 'bg-blue-50 border-blue-300' : 'bg-white border-slate-200'}`}>
-                    <div>
-                      <span className="text-xs font-black uppercase text-slate-800 block">OCSC</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Customer Support</span>
-                    </div>
-                    <input type="checkbox" checked={formData.role_ocsc} onChange={e => setFormData({...formData, role_ocsc: e.target.checked})} className="w-5 h-5 accent-blue-600" />
-                  </label>
+                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_ocsc ? 'bg-blue-50 border-blue-300' : 'bg-white border-slate-200'}`}>
+                      <div>
+                        <span className="text-xs font-black uppercase text-slate-800 block">OCSC</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Customer Support</span>
+                      </div>
+                      <input type="checkbox" checked={formData.role_ocsc} onChange={e => setFormData({...formData, role_ocsc: e.target.checked})} className="w-5 h-5 accent-blue-600" />
+                    </label>
 
-                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_aadhaar ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
-                    <div>
-                      <span className="text-xs font-black uppercase text-slate-800 block">Aadhaar Center</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Seva Kendra</span>
-                    </div>
-                    <input type="checkbox" checked={formData.role_aadhaar} onChange={e => setFormData({...formData, role_aadhaar: e.target.checked})} className="w-5 h-5 accent-amber-600" />
-                  </label>
+                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_aadhaar ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
+                      <div>
+                        <span className="text-xs font-black uppercase text-slate-800 block">Aadhaar Center</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Seva Kendra</span>
+                      </div>
+                      <input type="checkbox" checked={formData.role_aadhaar} onChange={e => setFormData({...formData, role_aadhaar: e.target.checked})} className="w-5 h-5 accent-amber-600" />
+                    </label>
 
-                  <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_partner ? 'bg-purple-50 border-purple-300' : 'bg-white border-slate-200'}`}>
-                    <div>
-                      <span className="text-xs font-black uppercase text-slate-800 block">Franchise Partner</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Base Operations</span>
-                    </div>
-                    <input type="checkbox" checked={formData.role_partner} onChange={e => setFormData({...formData, role_partner: e.target.checked})} className="w-5 h-5 accent-purple-600" />
-                  </label>
-
-                </div>
+                    <label className={`flex items-center justify-between p-3 rounded border cursor-pointer transition ${formData.role_partner ? 'bg-purple-50 border-purple-300' : 'bg-white border-slate-200'}`}>
+                      <div>
+                        <span className="text-xs font-black uppercase text-slate-800 block">Franchise Partner</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Base Operations</span>
+                      </div>
+                      <input type="checkbox" checked={formData.role_partner} onChange={e => setFormData({...formData, role_partner: e.target.checked})} className="w-5 h-5 accent-purple-600" />
+                    </label>
+                  </div>
+                )}
               </div>
 
-              {/* SECTION 3: GEOGRAPHY */}
+              {/* SECTION 4: GEOGRAPHY */}
               <div>
-                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">3. Geographic Mapping</h4>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">4. Geographic Mapping</h4>
                 <div className="space-y-4">
                   <div>
                     <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest block mb-2 flex justify-between">
