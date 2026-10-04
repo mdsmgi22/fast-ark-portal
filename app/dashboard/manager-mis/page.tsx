@@ -77,7 +77,7 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 5: COMMISSIONS STATE (NEW)
+  // TAB 5: COMMISSIONS STATE
   // ==========================================
   const [rawCommissions, setRawCommissions] = useState<any[]>([]);
   const [commissionForm, setCommissionForm] = useState({
@@ -421,7 +421,7 @@ export default function ManagerMISDashboard() {
       const cInst = hqComms.reduce((sum, c) => sum + Number(c.instant_commission||0), 0);
       const cPend = hqComms.reduce((sum, c) => sum + Number(c.pending_commission||0), 0);
 
-      // 5. Variance Math: Open - Close + Purchase + Comm(Inst) + Comm(Pend) - Sales = Variance
+      // 5. Variance Math: (Open - Close) + Purchase + Comm(Inst) + Comm(Pend) - Sales = Variance
       const vCBP = (openCBP - closeCBP) + pCBP - sCBP;
       const vCTOP = (openCTOP - closeCTOP) + pCTOP + cInst + cPend - sCTOP;
       const vSIM = (openSIM - closeSIM) + pSIM - sSIM;
@@ -479,7 +479,7 @@ export default function ManagerMISDashboard() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingBalanceId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
               <div className="flex gap-4 items-center">
-                <span className="text-3xl">⚖️️</span>
+                <span className="text-3xl">⚖️</span>
                 <div>
                   <h2 className={`font-black uppercase tracking-widest ${editingBalanceId ? 'text-amber-900' : 'text-white'}`}>
                     {editingBalanceId ? 'Editing Balance Record' : 'Log Daily Balances'}
