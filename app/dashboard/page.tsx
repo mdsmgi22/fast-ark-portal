@@ -65,7 +65,6 @@ export default function AdminCommandCenter() {
       const rawRole = staffData?.role || '';
       const safeRole = rawRole.trim().toLowerCase(); 
 
-      // Executive data block hidden from base Staff
       if (['admin', 'manager'].includes(safeRole)) {
         await fetchOperationalData();
       }
@@ -73,7 +72,7 @@ export default function AdminCommandCenter() {
       if (['admin', 'accountant'].includes(safeRole)) {
         await fetchFinancialData("monthly");
       } else {
-        setLoading(false); // Releases loading lock for Staff immediately
+        setLoading(false); 
       }
       
     } catch (err: any) {
@@ -254,12 +253,6 @@ export default function AdminCommandCenter() {
     setTimeout(() => setIsRouting(false), 8000);
   };
 
-  if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
-      <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
-    </div>
-  );
-
   // =======================================================
   // [CRITICAL COMPILER FIX]: Explicit RBAC Variable Definitions
   // Guarantees TS2304 is resolved and deployment succeeds
@@ -273,6 +266,12 @@ export default function AdminCommandCenter() {
   const isFinanceTeam = ['admin', 'accountant'].includes(safeRole);
   const isOpsTeam = ['admin', 'manager', 'staff'].includes(safeRole);
   const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-4">
+      <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">

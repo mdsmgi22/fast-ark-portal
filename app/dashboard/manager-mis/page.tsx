@@ -10,7 +10,7 @@ export default function ManagerMISDashboard() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // [STRICT FIX]: Secure Role State for Hard-Code Redaction
+  // Secure Role State for Strict Hard-Code Redaction
   const [userRole, setUserRole] = useState("staff");
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'report'>('balances');
 
@@ -36,7 +36,7 @@ export default function ManagerMISDashboard() {
     master_ctop_id: "",
     entry_type: "Opening Balance",
     cbp_qty: "", 
-    ctop_qty: "" // STRICT FIX: Scrubbed Amount/₹ entirely. Purely Qty.
+    ctop_qty: "" // STRICT FIX: Changed from Amount/₹ to Qty.
   });
 
   // Tab 2: Purchase Form State

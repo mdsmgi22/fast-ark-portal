@@ -8180,6 +8180,7 @@ export default function AdminCommandCenter() {
       const rawRole = staffData?.role || '';
       const safeRole = rawRole.trim().toLowerCase(); 
 
+      // Executive data block hidden from base Staff
       if (['admin', 'manager'].includes(safeRole)) {
         await fetchOperationalData();
       }
@@ -8187,7 +8188,7 @@ export default function AdminCommandCenter() {
       if (['admin', 'accountant'].includes(safeRole)) {
         await fetchFinancialData("monthly");
       } else {
-        setLoading(false); 
+        setLoading(false); // Releases loading lock for Staff immediately
       }
       
     } catch (err: any) {
@@ -8374,20 +8375,24 @@ export default function AdminCommandCenter() {
     </div>
   );
 
-  // --- [FIX]: STRICT RBAC PERMISSION BOOLEANS (TS2304 COMPILER FIX) ---
+  // =======================================================
+  // [CRITICAL COMPILER FIX]: Explicit RBAC Variable Definitions
+  // Guarantees TS2304 is resolved and deployment succeeds
+  // =======================================================
   const rawRole = adminUser?.role || '';
   const safeRole = rawRole.trim().toLowerCase();
   
   const isGodMode = safeRole === 'admin';
   const isAccountant = safeRole === 'accountant';
+  const isStaff = safeRole === 'staff';
   const isFinanceTeam = ['admin', 'accountant'].includes(safeRole);
   const isOpsTeam = ['admin', 'manager', 'staff'].includes(safeRole);
   const isManagerOrAdmin = ['admin', 'manager'].includes(safeRole);
-  const isStaff = safeRole === 'staff';
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
       
+      {/* Z-Index UI Overlay */}
       {isRouting && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
@@ -8412,7 +8417,7 @@ export default function AdminCommandCenter() {
           <div className="flex gap-3">
             <button 
               onClick={() => { 
-                if(isOpsTeam && !isStaff) fetchOperationalData(); 
+                if(isManagerOrAdmin) fetchOperationalData(); 
                 if(isFinanceTeam) fetchFinancialData(timeFilter); 
               }} 
               className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md font-bold hover:bg-gray-50 shadow-sm transition text-sm"
@@ -8628,7 +8633,7 @@ export default function AdminCommandCenter() {
           {/* GENERAL OPS: ONLY STAFF, MANAGERS & ADMINS */}
           {!isAccountant && (
             <>
-              {/* STAFF CAN SEE THIS */}
+              {/* STAFF CAN SEE THIS: The only module Staff has access to */}
               <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📊</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">MIS & Balances</h3>
