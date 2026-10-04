@@ -46,36 +46,36 @@ export default function InfrastructureCommandCenter() {
 
   // AUTO-FETCH ENGINE: PIN -> Taluk, Dist, State
   useEffect(() => {
-    const fetchLocationData = async () => {
-      if (formData.pin_code.length === 6) {
-        setIsFetchingPin(true);
-        setPinError("");
-        try {
-          const res = await fetch(`https://api.postalpincode.in/pincode/${formData.pin_code}`);
-          const data = await res.json();
-          
-          if (data && data[0] && data[0].Status === "Success") {
-            const postOffice = data[0].PostOffice[0];
-            setFormData(prev => ({
-              ...prev,
-              taluk: postOffice.Block || postOffice.Name || "",
-              dist: postOffice.District || "",
-              state: postOffice.State || "" 
-            }));
-          } else {
-            setPinError("Invalid PIN Code. Please verify.");
-          }
-        } catch (err) {
-          setPinError("Network error. Please enter details manually.");
-        } finally {
-          setIsFetchingPin(false);
-        }
-      } else {
-        setPinError("");
-      }
-    };
+    if (formData.pin_code.length !== 6) {
+      setPinError("");
+      return;
+    }
 
-    fetchLocationData();
+    const timer = setTimeout(async () => {
+      setIsFetchingPin(true);
+      setPinError("");
+      try {
+        const res = await fetch(`https://api.postalpincode.in/pincode/${formData.pin_code}`);
+        const data = await res.json();
+        if (data && data[0] && data[0].Status === "Success") {
+          const postOffice = data[0].PostOffice[0];
+          setFormData(prev => ({
+            ...prev,
+            taluk: postOffice.Block || postOffice.Name || "",
+            dist: postOffice.District || "",
+            state: postOffice.State || "" 
+          }));
+        } else {
+          setPinError("Invalid PIN Code. Please verify.");
+        }
+      } catch (err) {
+        setPinError("Network error. Please enter details manually.");
+      } finally {
+        setIsFetchingPin(false);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timer);
   }, [formData.pin_code]);
 
   const fetchLocations = async () => {

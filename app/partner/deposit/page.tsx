@@ -126,6 +126,7 @@ export default function PartnerDepositPage() {
     if (!file) return;
 
     setSlipImage(file);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
     setImagePreview(URL.createObjectURL(file));
     
     // Auto-switch right panel to the High-Res Viewer

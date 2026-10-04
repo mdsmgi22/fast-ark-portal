@@ -17,8 +17,8 @@ const customCookieStorage = {
   },
   setItem: (key: string, value: string) => {
     if (typeof document === 'undefined') return;
-    // Set cookie to expire in 1 year, accessible across the whole app
-    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax; secure`;
+    const isSecure = window.location.protocol === 'https:' ? 'secure;' : '';
+    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax; ${isSecure}`;
   },
   removeItem: (key: string) => {
     if (typeof document === 'undefined') return;

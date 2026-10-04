@@ -278,6 +278,8 @@ export default function PartnerDashboard() {
   };
 
   // --- CSV EXPORT ENGINE ---
+  const sanitize = (str: any) => `"${String(str || '').replace(/"/g, '""')}"`;
+
   const downloadCSV = () => {
     const startStr = timeFilter === "all" ? "2000-01-01" : 
                      timeFilter === "monthly" ? getLocalDateString(new Date(new Date().setDate(1))) :
@@ -296,11 +298,11 @@ export default function PartnerDashboard() {
     const csvContent = [
       headers.join(","),
       ...exportData.map(s => [
-        formatToDDMMYYYY(s.report_date),
+        sanitize(formatToDDMMYYYY(s.report_date)),
         s.cbp_landline_amt || 0, s.cbp_gsm_amt || 0, s.ctop_recharge_amt || 0,
         s.sim_new_qty || 0, s.sim_upgrade_qty || 0, s.sim_replacement_qty || 0, s.sim_replacement_amt || 0,
         s.sim_fancy_qty || 0, s.sim_fancy_amt || 0, s.sim_postpaid_qty || 0, s.sim_postpaid_amt || 0,
-        s.cheque_amt || 0, s.other_amt || 0, s.is_edited_by_staff ? "Audited" : "Original"
+        s.cheque_amt || 0, s.other_amt || 0, sanitize(s.is_edited_by_staff ? "Audited" : "Original")
       ].join(","))
     ].join("\n");
 
