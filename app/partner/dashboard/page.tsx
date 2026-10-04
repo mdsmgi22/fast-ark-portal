@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 // --- Date Normalizers (IST Safe) ---
 const getLocalDateString = (date: Date) => {
@@ -70,6 +71,48 @@ export default function PartnerDashboard() {
     qNew: 0, qUp: 0, qRep: 0, qFan: 0, qPost: 0
   });
 
+  // --- Compliance Document Upload State ---
+  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
+  const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+  const [hasUploadedDocs, setHasUploadedDocs] = useState(false);
+  const [docUploadMessage, setDocUploadMessage] = useState("");
+
+  const getRequiredDocuments = (role: string) => {
+    const r = (role || "").toUpperCase();
+    if (r.includes("OCSC")) {
+      return [
+        "Marks Card",
+        "Photo with Location GPS Tagged (5 Nos)",
+        "HOTO Letter Copy",
+        "Police Verification Certificate",
+        "Bank Passbook / Cancel Cheque"
+      ];
+    } else if (r.includes("AADHAAR")) {
+      return [
+        "Marks Card (12th Pass)",
+        "Photo with Location GPS Tagged (5 Nos)",
+        "HOTO Letter Copy",
+        "Police Verification Certificate",
+        "NSEIT Certificate",
+        "LMS Certificate",
+        "Annexure A & B",
+        "L1 Readiness Document",
+        "100 Rs BSNL Stamp Undertaking",
+        "100 Rs Company Stamp Undertaking",
+        "EA Request Form",
+        "Bank Passbook / Cancel Cheque"
+      ];
+    } else {
+      return [
+        "GST Certificate",
+        "Bank Mapping",
+        "Other Document 1",
+        "Other Document 2",
+        "Other Document 3"
+      ];
+    }
+  };
+
   useEffect(() => {
     initializeDashboard();
   }, [router]);
@@ -79,7 +122,7 @@ export default function PartnerDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/partner/login");
 
-      // 1. Fetch Partner Profile (Note: locations(*) automatically fetches the qr_asset_url)
+      // 1. Fetch Partner Profile
       const { data: partnerData, error: partnerError } = await supabase
         .from("active_partners")
         .select("*, locations(*)")
@@ -97,6 +140,12 @@ export default function PartnerDashboard() {
       if (partnerData.tc_accepted === false) return router.push("/partner/terms");
 
       setPartner(partnerData);
+      
+      // 1b. Check if Compliance Documents are already uploaded
+      const { data: fileList } = await supabase.storage.from('application_documents').list('', { search: `COMPLIANCE_${partnerData.id}` });
+      if (fileList && fileList.length > 0) {
+        setHasUploadedDocs(true);
+      }
       
       // 2. Fetch Treasury Channels
       const { data: banks } = await supabase.from("company_bank_accounts").select("*").eq("is_active", true);
@@ -277,6 +326,112 @@ export default function PartnerDashboard() {
     }
   };
 
+  // --- SECURE COMPLIANCE DOCUMENT UPLOAD ENGINE ---
+  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>, docName: string) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      if (file.size > 5 * 1024 * 1024) { 
+        alert(`File size for ${docName} must be under 5MB.`);
+        e.target.value = ''; 
+        return;
+      }
+      setDocFiles(prev => ({ ...prev, [docName]: file }));
+    }
+  };
+
+  const handleDocUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const requiredDocs = getRequiredDocuments(partner?.role);
+    
+    // Strict Validation
+    for (const doc of requiredDocs) {
+      if (!docFiles[doc]) {
+        return alert(`Please upload the mandatory document: ${doc}`);
+      }
+    }
+
+    setIsUploadingDocs(true);
+    setDocUploadMessage("Fetching network details...");
+
+    try {
+      let userIp = "Unknown";
+      try {
+        const ipRes = await fetch("https://api.ipify.org?format=json");
+        userIp = (await ipRes.json()).ip;
+      } catch (err) { }
+
+      setDocUploadMessage("Merging documents into a secure PDF...");
+
+      const pdfDoc = await PDFDocument.create();
+      const trackingFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const timestamp = new Date().toLocaleString('en-IN');
+      const stampText = `USER: ${partner.email} | LOC: ${partner.locations?.center_name || 'N/A'} | IP: ${userIp} | TIME: ${timestamp}`;
+
+      for (const docName of requiredDocs) {
+        const file = docFiles[docName];
+        if (!file) continue;
+
+        const arrayBuffer = await file.arrayBuffer();
+        const mimeType = file.type.toLowerCase();
+
+        setDocUploadMessage(`Processing ${docName}...`);
+
+        if (mimeType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
+          const loadedPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+          const copiedPages = await pdfDoc.copyPages(loadedPdf, loadedPdf.getPageIndices());
+          
+          copiedPages.forEach((page) => {
+            pdfDoc.addPage(page);
+            const { width } = page.getSize();
+            page.drawRectangle({ x: 0, y: 0, width: width, height: 20, color: rgb(0, 0, 0) });
+            page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 6, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
+          });
+        } else if (mimeType.includes('jpeg') || mimeType.includes('jpg') || mimeType.includes('png') || file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg')) {
+          let image = (mimeType.includes('png') || file.name.toLowerCase().endsWith('.png'))
+            ? await pdfDoc.embedPng(arrayBuffer) 
+            : await pdfDoc.embedJpg(arrayBuffer);
+          
+          let { width, height } = image;
+          const maxWidth = 595.28; 
+          if (width > maxWidth) {
+            const ratio = maxWidth / width;
+            width = maxWidth;
+            height = height * ratio;
+          }
+
+          const page = pdfDoc.addPage([width, height + 25]);
+          page.drawImage(image, { x: 0, y: 25, width: width, height: height });
+          page.drawRectangle({ x: 0, y: 0, width: width, height: 25, color: rgb(0, 0, 0) });
+          page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 8, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
+        }
+      }
+
+      setDocUploadMessage("Uploading secure Compliance PDF to Vault...");
+      const mergedPdfBytes = await pdfDoc.save();
+      const pdfFileName = `COMPLIANCE_${partner.id}_${Date.now()}.pdf`;
+
+      const { error: uploadError, data } = await supabase.storage
+        .from('application_documents')
+        .upload(pdfFileName, mergedPdfBytes, { contentType: 'application/pdf' });
+
+      if (uploadError) throw uploadError;
+
+      // Update active_partners to store the link so Admin Dashboard can easily reference it
+      await supabase.from('active_partners').update({ compliance_docs_url: data.path }).eq('id', partner.id);
+
+      setHasUploadedDocs(true);
+      setDocUploadMessage("✅ Documents successfully locked and stored.");
+      setTimeout(() => setDocUploadMessage(""), 5000);
+
+    } catch (error: any) {
+      console.error(error);
+      alert("Upload Failed: " + error.message);
+      setDocUploadMessage("");
+    } finally {
+      setIsUploadingDocs(false);
+    }
+  };
+
   // --- CSV EXPORT ENGINE ---
   const sanitize = (str: any) => `"${String(str || '').replace(/"/g, '""')}"`;
 
@@ -347,6 +502,7 @@ export default function PartnerDashboard() {
 
   const visibleSales = rawSales.filter(s => normalizeToYYYYMMDD(s.report_date) >= startStr);
   const visibleDeposits = rawDeposits.filter(d => normalizeToYYYYMMDD(d.created_at) >= startStr);
+  const requiredDocs = getRequiredDocuments(partner?.role);
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
@@ -553,7 +709,7 @@ export default function PartnerDashboard() {
             </div>
           </div>
 
-          {/* Card 6: [INJECTED] Store Marketing Assets & QR */}
+          {/* Card 6: Store Marketing Assets & QR */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-full flex flex-col border-t-4 border-t-pink-500">
             <div className="bg-pink-50 px-5 py-3 border-b border-pink-100 flex justify-between items-center">
               <h3 className="text-xs font-black text-pink-900 uppercase tracking-widest">Store Assets & QR</h3>
@@ -585,6 +741,58 @@ export default function PartnerDashboard() {
             </div>
           </div>
 
+        </div>
+
+        {/* SECTION: COMPLIANCE DOCUMENTS UPLOAD ENGINE */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-8">
+          <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
+            <div>
+              <h2 className="font-black text-lg tracking-wide flex items-center gap-2"><span>📂</span> Mandatory Compliance Documents</h2>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Upload required operational documents for your role ({partner?.role})</p>
+            </div>
+            {hasUploadedDocs && (
+              <span className="bg-green-100 text-green-800 border border-green-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">✅ Uploaded & Locked</span>
+            )}
+          </div>
+          
+          <div className="p-6">
+             {hasUploadedDocs ? (
+                <div className="text-center p-8 bg-green-50 border border-green-200 rounded-xl">
+                   <span className="text-4xl mb-3 block">🔒</span>
+                   <h3 className="font-black text-green-800 text-lg">Documents Successfully Submitted</h3>
+                   <p className="text-sm font-bold text-green-700 mt-2">Your compliance documents have been securely merged, watermarked, and locked. They are now visible to the Corporate Command Center.</p>
+                </div>
+             ) : (
+                <form onSubmit={handleDocUploadSubmit} className="space-y-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {requiredDocs.map((docName, idx) => (
+                         <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-lg flex flex-col justify-between">
+                            <label className="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">{idx + 1}. {docName} *</label>
+                            <input 
+                               type="file" 
+                               accept=".pdf, .jpg, .jpeg, .png" 
+                               required 
+                               onChange={(e) => handleDocFileChange(e, docName)}
+                               className="w-full text-xs font-medium text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                            />
+                         </div>
+                      ))}
+                   </div>
+                   {docUploadMessage && (
+                      <div className="p-3 bg-blue-50 text-blue-800 text-sm font-bold rounded border border-blue-200 text-center animate-pulse">
+                         {docUploadMessage}
+                      </div>
+                   )}
+                   <button 
+                      type="submit" 
+                      disabled={isUploadingDocs}
+                      className="w-full py-4 bg-slate-900 text-white font-black rounded-xl shadow-md uppercase tracking-widest hover:bg-blue-600 transition disabled:opacity-50"
+                   >
+                      {isUploadingDocs ? "Processing & Watermarking Securely..." : "Submit & Permanently Lock Documents"}
+                   </button>
+                </form>
+             )}
+          </div>
         </div>
 
         {/* SECTION: LIVE FINANCIAL LEDGER */}
@@ -768,7 +976,7 @@ export default function PartnerDashboard() {
                                   </div>
                                 ) : (
                                   <button onClick={() => setRequestingEditId(sale.id)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition border border-slate-600 flex justify-center items-center gap-2">
-                                    <span>⚠️</span> Request Permission to Edit this Report
+                                    <span>⚠️️</span> Request Permission to Edit this Report
                                   </button>
                                 )
                               )}
