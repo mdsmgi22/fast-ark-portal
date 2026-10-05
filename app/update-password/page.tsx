@@ -56,17 +56,17 @@ export default function UpdatePasswordPage() {
 
       setSuccessMsg("✅ Password updated securely! Routing to your designated command center...");
 
-      // 4. BULLETPROOF ROUTING FIX: Use case-insensitive matching (.ilike)
-      // This prevents Staff from being accidentally routed to the Partner Dashboard
-      const { data: staff } = await supabase
-        .from("back_office_staff")
-        .select("role")
-        .ilike("email", userEmail.trim())
-        .maybeSingle();
+      // 4. BULLETPROOF ROUTING FIX: JWT Session Inspection
+      // Bypasses the database entirely to prevent RLS read blocks and false Partner routing.
+      const rawRole = session.user.user_metadata?.role || "";
+      const safeRole = rawRole.trim().toLowerCase();
+      
+      // Strict check against internal corporate roles
+      const isStaffAccount = ["admin", "manager", "accountant", "staff"].includes(safeRole);
 
       setTimeout(() => {
-        if (staff) {
-          // It is a verified Staff member -> Route to Admin Hub
+        if (isStaffAccount) {
+          // It is a verified Staff member -> Route to Corporate Admin Hub
           router.push("/dashboard");
         } else {
           // It is a Franchise Partner -> Route to Partner Portal
