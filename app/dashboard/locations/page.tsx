@@ -37,13 +37,19 @@ export default function InfrastructureCommandCenter() {
   };
   const [formData, setFormData] = useState(initialForm);
 
-  // DUAL-AXIS FILTERS
+  // TRIPLE-AXIS CASCADING FILTERS
   const [filterRole, setFilterRole] = useState("ALL");
   const [filterState, setFilterState] = useState("ALL");
+  const [filterMasterHQ, setFilterMasterHQ] = useState("ALL");
 
   useEffect(() => {
     fetchLocations();
   }, []);
+
+  // Smart UX: Reset Master HQ filter when the State filter changes
+  useEffect(() => {
+    setFilterMasterHQ("ALL");
+  }, [filterState]);
 
   // AUTO-FETCH ENGINE: PIN -> Taluk, Dist, State
   useEffect(() => {
@@ -184,10 +190,16 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
-  // DYNAMIC DATA EXTRACTION: Get unique states for the filter dropdown
+  // DYNAMIC DATA EXTRACTION
   const uniqueStates = Array.from(new Set(locations.map(loc => loc.state).filter(Boolean))).sort();
+  const masterHQs = locations.filter(loc => loc.is_master_node);
+  
+  // Dynamically populate the Master HQ filter dropdown based on the selected State
+  const masterHQsForFilter = masterHQs
+    .filter(hq => filterState === "ALL" || hq.state === filterState)
+    .sort((a, b) => a.center_name.localeCompare(b.center_name));
 
-  // DUAL-AXIS STRICT FILTER ENGINE
+  // TRIPLE-AXIS STRICT FILTER ENGINE
   const filteredLocations = locations.filter(loc => {
     // 1. Role Verification
     let roleMatch = true;
@@ -197,14 +209,18 @@ export default function InfrastructureCommandCenter() {
     else if (filterRole === "AADHAAR") roleMatch = loc.role_aadhaar;
     else if (filterRole === "PARTNER") roleMatch = loc.role_partner;
 
-    // 2. Geography Verification
+    // 2. Geography Verification (State)
     let stateMatch = filterState === "ALL" || loc.state === filterState;
 
-    return roleMatch && stateMatch;
-  });
+    // 3. Network Topology Verification (Master HQ)
+    let hqMatch = true;
+    if (filterMasterHQ !== "ALL") {
+      // If a Master HQ is selected, only show spokes tethered to it, OR show the HQ itself.
+      hqMatch = loc.parent_master_id?.toString() === filterMasterHQ || loc.id.toString() === filterMasterHQ;
+    }
 
-  // Extract master locations to populate the tethering dropdown
-  const masterHQs = locations.filter(loc => loc.is_master_node);
+    return roleMatch && stateMatch && hqMatch;
+  });
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -231,10 +247,11 @@ export default function InfrastructureCommandCenter() {
         </div>
       </div>
 
-      {/* DUAL-AXIS FILTER CONSOLE */}
+      {/* TRIPLE-AXIS FILTER CONSOLE */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         
-        <div className="flex flex-wrap gap-2">
+        {/* AXIS 1: ROLE */}
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
             All Roles
           </button>
@@ -252,20 +269,38 @@ export default function InfrastructureCommandCenter() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 w-full xl:w-auto pt-4 xl:pt-0 border-t xl:border-t-0 border-slate-100">
-          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">
-            Geographic Filter:
-          </label>
-          <select 
-            value={filterState} 
-            onChange={(e) => setFilterState(e.target.value)} 
-            className="w-full xl:w-64 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:bg-white transition"
-          >
-            <option value="ALL">All States & Regions</option>
-            {uniqueStates.map(state => (
-              <option key={state} value={state}>{state}</option>
-            ))}
-          </select>
+        {/* AXIS 2 & 3: GEOGRAPHY & TOPOLOGY */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full xl:w-auto pt-4 xl:pt-0 border-t xl:border-t-0 border-slate-100">
+          
+          <div className="flex flex-col w-full sm:w-auto">
+            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">State Level Filter:</label>
+            <select 
+              value={filterState} 
+              onChange={(e) => setFilterState(e.target.value)} 
+              className="w-full sm:w-48 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:bg-white transition"
+            >
+              <option value="ALL">All States</option>
+              {uniqueStates.map(state => (
+                <option key={state} value={state}>{state}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col w-full sm:w-auto">
+            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Hub Level Filter:</label>
+            <select 
+              value={filterMasterHQ} 
+              onChange={(e) => setFilterMasterHQ(e.target.value)} 
+              disabled={filterRole === 'HQ' || masterHQsForFilter.length === 0}
+              className="w-full sm:w-56 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition disabled:opacity-50 disabled:bg-slate-100"
+            >
+              <option value="ALL">All Master HQs</option>
+              {masterHQsForFilter.map(hq => (
+                <option key={hq.id} value={hq.id}>{hq.center_name}</option>
+              ))}
+            </select>
+          </div>
+
         </div>
       </div>
 
