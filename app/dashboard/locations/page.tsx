@@ -37,8 +37,9 @@ export default function InfrastructureCommandCenter() {
   };
   const [formData, setFormData] = useState(initialForm);
 
-  // Filters
+  // DUAL-AXIS FILTERS
   const [filterRole, setFilterRole] = useState("ALL");
+  const [filterState, setFilterState] = useState("ALL");
 
   useEffect(() => {
     fetchLocations();
@@ -183,15 +184,23 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
-  // Strict Filter Engine
+  // DYNAMIC DATA EXTRACTION: Get unique states for the filter dropdown
+  const uniqueStates = Array.from(new Set(locations.map(loc => loc.state).filter(Boolean))).sort();
+
+  // DUAL-AXIS STRICT FILTER ENGINE
   const filteredLocations = locations.filter(loc => {
-    if (filterRole === "ALL") return true;
-    if (filterRole === "HQ") return loc.is_master_node;
-    if (filterRole === "CM") return loc.role_cm;
-    if (filterRole === "OCSC") return loc.role_ocsc;
-    if (filterRole === "AADHAAR") return loc.role_aadhaar;
-    if (filterRole === "PARTNER") return loc.role_partner;
-    return true;
+    // 1. Role Verification
+    let roleMatch = true;
+    if (filterRole === "HQ") roleMatch = loc.is_master_node;
+    else if (filterRole === "CM") roleMatch = loc.role_cm;
+    else if (filterRole === "OCSC") roleMatch = loc.role_ocsc;
+    else if (filterRole === "AADHAAR") roleMatch = loc.role_aadhaar;
+    else if (filterRole === "PARTNER") roleMatch = loc.role_partner;
+
+    // 2. Geography Verification
+    let stateMatch = filterState === "ALL" || loc.state === filterState;
+
+    return roleMatch && stateMatch;
   });
 
   // Extract master locations to populate the tethering dropdown
@@ -222,23 +231,46 @@ export default function InfrastructureCommandCenter() {
         </div>
       </div>
 
-      {/* FILTER RIBBON */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          All Grid ({locations.length})
-        </button>
-        <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          Master HQs ({locations.filter(l => l.is_master_node).length})
-        </button>
-        <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          Franchises ({locations.filter(l => l.role_partner).length})
-        </button>
-        <button onClick={() => setFilterRole('OCSC')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'OCSC' ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          OCSC ({locations.filter(l => l.role_ocsc).length})
-        </button>
-        <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          CM ({locations.filter(l => l.role_cm).length})
-        </button>
+      {/* DUAL-AXIS FILTER CONSOLE */}
+      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            All Roles
+          </button>
+          <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            Master HQs
+          </button>
+          <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            Franchises
+          </button>
+          <button onClick={() => setFilterRole('OCSC')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'OCSC' ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            OCSC
+          </button>
+          <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            CM
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 w-full xl:w-auto pt-4 xl:pt-0 border-t xl:border-t-0 border-slate-100">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">
+            Geographic Filter:
+          </label>
+          <select 
+            value={filterState} 
+            onChange={(e) => setFilterState(e.target.value)} 
+            className="w-full xl:w-64 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:bg-white transition"
+          >
+            <option value="ALL">All States & Regions</option>
+            {uniqueStates.map(state => (
+              <option key={state} value={state}>{state}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="mb-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
+        Showing {filteredLocations.length} Results
       </div>
 
       {/* LOCATIONS GRID */}
@@ -246,7 +278,7 @@ export default function InfrastructureCommandCenter() {
         <div className="bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
           <div className="text-5xl mb-4">🌍</div>
           <h2 className="text-xl font-black text-slate-700">No Locations Found</h2>
-          <p className="text-slate-500 font-medium mt-2">No physical centers match this operational role.</p>
+          <p className="text-slate-500 font-medium mt-2">No physical centers match the selected role and geographic filters.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
