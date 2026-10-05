@@ -45,29 +45,31 @@ export default function UpdatePasswordPage() {
       const userEmail = session.user.email || "Unknown";
 
       // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      // This permanently logs the exact time and user who changed the credentials to prevent false claims.
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session.user.id,
-        staff_email: userEmail,
+        staff_email: userEmail.trim().toLowerCase(),
         action_type: 'SECURITY_AUDIT',
         module: 'AUTHENTICATION',
         target_id: session.user.id,
         details: `Credentials updated successfully. Password change locked.`
       }]);
 
-      setSuccessMsg("✅ Password updated securely! Redirecting to your dashboard...");
+      setSuccessMsg("✅ Password updated securely! Routing to your designated command center...");
 
-      // 4. Intelligent routing based on user profile
+      // 4. BULLETPROOF ROUTING FIX: Use case-insensitive matching (.ilike)
+      // This prevents Staff from being accidentally routed to the Partner Dashboard
       const { data: staff } = await supabase
         .from("back_office_staff")
         .select("role")
-        .eq("email", userEmail)
+        .ilike("email", userEmail.trim())
         .maybeSingle();
 
       setTimeout(() => {
         if (staff) {
+          // It is a verified Staff member -> Route to Admin Hub
           router.push("/dashboard");
         } else {
+          // It is a Franchise Partner -> Route to Partner Portal
           router.push("/partner/dashboard");
         }
       }, 2000);
@@ -143,7 +145,7 @@ export default function UpdatePasswordPage() {
             disabled={loading}
             className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition shadow-lg disabled:opacity-50 mt-2"
           >
-            {loading ? "Updating Credentials & Logging..." : "Save & Continue"}
+            {loading ? "Updating Credentials & Routing..." : "Save & Continue"}
           </button>
         </form>
 
