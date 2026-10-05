@@ -20,6 +20,7 @@ export default function OcscDataCommand() {
   // Modals & Forms
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingMasterId, setEditingMasterId] = useState<string | null>(null);
 
   // UPGRADED: Added location_id to the Master Form
   const initialMasterForm = { location_id: "", master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
@@ -57,6 +58,25 @@ export default function OcscDataCommand() {
     }
   };
 
+  const openEditMasterModal = (m: any) => {
+    setEditingMasterId(m.id);
+    setMasterForm({
+      location_id: m.location_id ? m.location_id.toString() : "",
+      master_ctop_no: m.master_ctop_no || "",
+      master_ocsc_user_id: m.master_ocsc_user_id || "",
+      sanchar_soft_user_id: m.sanchar_soft_user_id || "",
+      mpin: m.mpin || ""
+    });
+    setIsModalOpen(true);
+  };
+
+  const openNewModal = () => {
+    setEditingMasterId(null);
+    setMasterForm(initialMasterForm);
+    setAgentForm(initialAgentForm);
+    setIsModalOpen(true);
+  };
+
   const handleMasterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -67,16 +87,39 @@ export default function OcscDataCommand() {
     
     setIsSubmitting(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+
       // Cast the location_id to a BIGINT for the database relation
       const payload = {
         ...masterForm,
         location_id: parseInt(masterForm.location_id)
       };
 
-      const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
-      if (error) throw error;
+      if (editingMasterId) {
+        // UPDATE EXISTING RECORD
+        const { error } = await supabase.from("master_ctop_accounts").update(payload).eq("id", editingMasterId);
+        if (error) throw error;
+        
+        // Audit Telemetry
+        if (session?.user) {
+          await supabase.from('staff_activity_logs').insert([{
+            staff_id: session.user.id,
+            staff_email: session.user.email,
+            action_type: 'UPDATE',
+            module: 'TELECOM_OCSC',
+            target_id: editingMasterId,
+            details: `Updated and Re-Assigned Master CTOP: ${payload.master_ctop_no}`
+          }]);
+        }
+      } else {
+        // INSERT NEW RECORD
+        const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
+        if (error) throw error;
+      }
+      
       setIsModalOpen(false);
       setMasterForm(initialMasterForm);
+      setEditingMasterId(null);
       fetchArchitecture();
     } catch (err: any) {
       if (err.message.includes("unique constraint")) {
@@ -132,7 +175,7 @@ export default function OcscDataCommand() {
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200">
             &larr; Admin
           </Link>
-          <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
+          <button onClick={openNewModal} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
             <span>+</span> {activeTab === 'masters' ? "Add Master CTOP" : "Map Agent CTOP"}
           </button>
         </div>
@@ -152,7 +195,15 @@ export default function OcscDataCommand() {
               <div key={m.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
                   <h3 className="font-black text-lg">Master: {m.master_ctop_no}</h3>
-                  <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => openEditMasterModal(m)} 
+                      className="text-[10px] px-3 py-1 font-black uppercase tracking-widest rounded bg-blue-600 hover:bg-blue-500 transition shadow-sm border border-blue-400"
+                    >
+                      Edit / Re-Assign
+                    </button>
+                    <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
+                  </div>
                 </div>
                 <div className="p-5 space-y-4 text-sm font-bold text-slate-700">
                   <div className="flex justify-between items-center border-b pb-2">
@@ -213,7 +264,9 @@ export default function OcscDataCommand() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-2xl border w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95">
             <div className={`p-5 flex justify-between items-center text-white ${activeTab === 'masters' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-              <h3 className="font-black text-lg">{activeTab === 'masters' ? "New Master Credentials" : "Map Agent to Partner"}</h3>
+              <h3 className="font-black text-lg">
+                {activeTab === 'masters' ? (editingMasterId ? "Edit / Re-Assign Master" : "New Master Credentials") : "Map Agent to Partner"}
+              </h3>
               <button onClick={() => setIsModalOpen(false)} className="hover:opacity-70 text-2xl">&times;</button>
             </div>
             
@@ -222,7 +275,7 @@ export default function OcscDataCommand() {
               {activeTab === 'masters' ? (
                 <>
                   <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-2">
-                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1">Anchor to Master HQ (Hub) *</label>
+                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1 tracking-widest">Anchor to Master HQ (Hub) *</label>
                     <select required value={masterForm.location_id} onChange={e => setMasterForm({...masterForm, location_id: e.target.value})} className="w-full border-2 border-blue-300 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600 bg-white">
                       <option value="" disabled>-- Select Physical HQ --</option>
                       {masterLocations.length === 0 ? (
@@ -233,35 +286,37 @@ export default function OcscDataCommand() {
                     </select>
                   </div>
 
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">MPIN (6 Digits) *</label><input required type="text" maxLength={6} placeholder="6-digit numeric" value={masterForm.mpin} onChange={e => setMasterForm({...masterForm, mpin: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-black text-blue-600 tracking-widest outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">MPIN (6 Digits) *</label><input required type="text" maxLength={6} placeholder="6-digit numeric" value={masterForm.mpin} onChange={e => setMasterForm({...masterForm, mpin: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-black text-blue-600 tracking-widest outline-none focus:border-blue-600" /></div>
                 </>
               ) : (
                 <>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Partner *</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Select Partner *</label>
                     <select required value={agentForm.partner_id} onChange={e => setAgentForm({...agentForm, partner_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Select Franchise Partner --</option>
                       {partners.map(p => <option key={p.id} value={p.id}>{p.partner_name} ({p.locations?.center_name})</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Parent Master CTOP *</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Select Parent Master CTOP *</label>
                     <select required value={agentForm.master_ctop_id} onChange={e => setAgentForm({...agentForm, master_ctop_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Anchor to Master Account --</option>
                       {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>)}
                     </select>
                   </div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                 </>
               )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
-                <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">Save Securely</button>
+                <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">
+                  {isSubmitting ? "Processing..." : (activeTab === 'masters' && editingMasterId ? "Update Configuration" : "Save Securely")}
+                </button>
               </div>
             </form>
           </div>
