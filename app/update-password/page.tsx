@@ -28,7 +28,7 @@ export default function UpdatePasswordPage() {
     setLoading(true);
 
     try {
-      // 1. Verify active session (from First-Login or Email Recovery Link)
+      // 1. Verify active session
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         throw new Error("No active recovery session found. Please request a new reset link.");
@@ -56,16 +56,16 @@ export default function UpdatePasswordPage() {
 
       setSuccessMsg("✅ Password updated securely! Routing to your designated command center...");
 
-      // 4. BULLETPROOF ROUTING FIX: JWT Session Inspection
-      // Bypasses the database entirely to prevent RLS read blocks and false Partner routing.
-      const rawRole = session.user.user_metadata?.role || "";
-      const safeRole = rawRole.trim().toLowerCase();
-      
-      // Strict check against internal corporate roles
-      const isStaffAccount = ["admin", "manager", "accountant", "staff"].includes(safeRole);
+      // 4. BULLETPROOF ROUTING FIX: Direct Database Query
+      // Because auth_id is now mapped, RLS allows this query to succeed securely.
+      const { data: staff } = await supabase
+        .from("back_office_staff")
+        .select("role")
+        .ilike("email", userEmail.trim())
+        .maybeSingle();
 
       setTimeout(() => {
-        if (isStaffAccount) {
+        if (staff) {
           // It is a verified Staff member -> Route to Corporate Admin Hub
           router.push("/dashboard");
         } else {

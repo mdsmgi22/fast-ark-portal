@@ -70,13 +70,12 @@ export async function POST(request: Request) {
     const tempPassword = `FastArk@${Math.floor(100000 + Math.random() * 900000)}`;
 
     // =========================================================================
-    // 3. ARCHITECTURAL FIX: 2-STEP BYPASS TO PREVENT TRIGGER CRASHES
+    // 3. ARCHITECTURAL FIX: 2-STEP BYPASS WITH AUTH_ID BINDING
     // =========================================================================
     
-    // STEP A: Create the Auth User WITHOUT metadata. 
-    // This bypasses the strict postgres trigger since the payload is empty.
+    // STEP A: Create the Auth User WITHOUT metadata to bypass the legacy trigger.
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: email,
+      email: email.trim().toLowerCase(),
       password: tempPassword,
       email_confirm: true
     });
@@ -84,9 +83,11 @@ export async function POST(request: Request) {
     if (authError) throw new Error(`Auth Creation Failed: ${authError.message}`);
     const newUserId = authData.user.id;
 
-    // STEP B: Manually inject the user into the back_office_staff table
+    // STEP B: Manually inject the user into the database WITH their auth_id.
+    // This CRITICAL step ensures Row Level Security (RLS) allows them to log in.
     const { error: dbError } = await supabaseAdmin.from('back_office_staff').insert([{
-      email: email,
+      auth_id: newUserId, 
+      email: email.trim().toLowerCase(),
       name: name,
       role: role,
       mobile: mobile || null,
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
       throw new Error(`Database record creation failed: ${dbError.message}`);
     }
 
-    // STEP C: Safely update user_metadata now that the trigger window has safely passed
+    // STEP C: Safely update user_metadata now that the database is mapped.
     await supabaseAdmin.auth.admin.updateUserById(newUserId, {
       user_metadata: {
         name: name,
