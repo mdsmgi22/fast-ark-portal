@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { supabase } from "../lib/supabase";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -19,69 +18,30 @@ export default function ForgotPasswordPage() {
     const targetEmail = email.trim().toLowerCase();
 
     try {
-      // =====================================================================
-      // 1. STRICT DATABASE VERIFICATION (Security Fix)
-      // Prevent unauthorized or suspended users from generating a reset token
-      // =====================================================================
-      const [staffRes, partnerRes] = await Promise.all([
-        supabase.from("back_office_staff").select("status").eq("email", targetEmail).maybeSingle(),
-        supabase.from("active_partners").select("status").eq("email", targetEmail).maybeSingle()
-      ]);
-
-      const staffData = staffRes.data;
-      const partnerData = partnerRes.data;
-
-      // Rule A: Identity must exist in our corporate directories
-      if (!staffData && !partnerData) {
-        throw new Error("Access Denied: This email is not registered in the corporate or partner directory.");
-      }
-
-      // Rule B: Identity must be currently Active (No suspensions)
-      if ((staffData && staffData.status !== "Active") || (partnerData && partnerData.status !== "Active")) {
-        throw new Error("Account Deactivated: Your clearance has been revoked. Password recovery is disabled.");
-      }
-
-      // =====================================================================
-      // 2. DISPATCH RECOVERY EMAIL
-      // =====================================================================
-      const redirectUrl = `${window.location.origin}/update-password`;
-
-      const { error: authError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
-        redirectTo: redirectUrl,
+      // 1. Route the request through the secure backend API to bypass RLS blocks
+      const response = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: targetEmail })
       });
 
-      if (authError) throw authError;
+      const data = await response.json();
 
-      // =====================================================================
-      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      // =====================================================================
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: 'SYSTEM',
-        staff_email: targetEmail,
-        action_type: 'SECURITY_AUDIT',
-        module: 'AUTHENTICATION',
-        target_id: 'PASSWORD_RESET_REQUEST',
-        details: `Verified account status and dispatched password recovery link to ${targetEmail}.`
-      }]);
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to dispatch reset link.");
+      }
 
+      // 2. Handle Success
       setIsError(false);
-      setStatusMsg("✅ Password reset link has been securely dispatched to your email address.");
+      setStatusMsg(data.message);
       setEmail("");
       
     } catch (err: any) {
+      // 3. Handle Rejection
       setIsError(true);
-      setStatusMsg("❌ " + (err.message || "Failed to dispatch reset link."));
-      
-      // Optional: Log failed unauthorized attempts silently for security monitoring
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: 'SYSTEM',
-        staff_email: targetEmail,
-        action_type: 'SECURITY_BLOCKED',
-        module: 'AUTHENTICATION',
-        target_id: 'UNAUTHORIZED_RESET_ATTEMPT',
-        details: `Blocked password reset attempt: ${err.message}`
-      }]);
-      
+      setStatusMsg("❌ " + err.message);
     } finally {
       setLoading(false);
     }
