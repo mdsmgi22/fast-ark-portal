@@ -19,32 +19,69 @@ export default function ForgotPasswordPage() {
     const targetEmail = email.trim().toLowerCase();
 
     try {
+      // =====================================================================
+      // 1. STRICT DATABASE VERIFICATION (Security Fix)
+      // Prevent unauthorized or suspended users from generating a reset token
+      // =====================================================================
+      const [staffRes, partnerRes] = await Promise.all([
+        supabase.from("back_office_staff").select("status").eq("email", targetEmail).maybeSingle(),
+        supabase.from("active_partners").select("status").eq("email", targetEmail).maybeSingle()
+      ]);
+
+      const staffData = staffRes.data;
+      const partnerData = partnerRes.data;
+
+      // Rule A: Identity must exist in our corporate directories
+      if (!staffData && !partnerData) {
+        throw new Error("Access Denied: This email is not registered in the corporate or partner directory.");
+      }
+
+      // Rule B: Identity must be currently Active (No suspensions)
+      if ((staffData && staffData.status !== "Active") || (partnerData && partnerData.status !== "Active")) {
+        throw new Error("Account Deactivated: Your clearance has been revoked. Password recovery is disabled.");
+      }
+
+      // =====================================================================
+      // 2. DISPATCH RECOVERY EMAIL
+      // =====================================================================
       const redirectUrl = `${window.location.origin}/update-password`;
 
-      // 1. Dispatch Supabase Recovery Email
-      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+      const { error: authError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
         redirectTo: redirectUrl,
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
 
-      // 2. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      // Logs the attempt even though the user isn't authenticated yet to track potential spam/attacks.
+      // =====================================================================
+      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+      // =====================================================================
       await supabase.from('staff_activity_logs').insert([{
         staff_id: 'SYSTEM',
         staff_email: targetEmail,
         action_type: 'SECURITY_AUDIT',
         module: 'AUTHENTICATION',
         target_id: 'PASSWORD_RESET_REQUEST',
-        details: `Password recovery link requested and dispatched to ${targetEmail}.`
+        details: `Verified account status and dispatched password recovery link to ${targetEmail}.`
       }]);
 
       setIsError(false);
-      setStatusMsg("✅ Password reset link has been dispatched to your email address.");
+      setStatusMsg("✅ Password reset link has been securely dispatched to your email address.");
       setEmail("");
+      
     } catch (err: any) {
       setIsError(true);
       setStatusMsg("❌ " + (err.message || "Failed to dispatch reset link."));
+      
+      // Optional: Log failed unauthorized attempts silently for security monitoring
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: 'SYSTEM',
+        staff_email: targetEmail,
+        action_type: 'SECURITY_BLOCKED',
+        module: 'AUTHENTICATION',
+        target_id: 'UNAUTHORIZED_RESET_ATTEMPT',
+        details: `Blocked password reset attempt: ${err.message}`
+      }]);
+      
     } finally {
       setLoading(false);
     }
@@ -65,7 +102,7 @@ export default function ForgotPasswordPage() {
         </div>
 
         {statusMsg && (
-          <div className={`mb-4 p-3 text-xs font-bold rounded-lg border leading-relaxed ${
+          <div className={`mb-4 p-4 text-xs font-bold rounded-lg border leading-relaxed ${
             isError ? "bg-red-950/60 border-red-800 text-red-300" : "bg-emerald-950/60 border-emerald-800 text-emerald-300"
           }`}>
             {statusMsg}
@@ -83,7 +120,7 @@ export default function ForgotPasswordPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@fastark.in"
-              className="w-full p-3 bg-slate-900 border border-slate-700 rounded-lg text-sm font-bold text-white outline-none focus:border-blue-500 transition"
+              className="w-full p-3 bg-slate-900 border border-slate-700 rounded-lg text-sm font-bold text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition placeholder:text-slate-600"
               disabled={loading}
             />
           </div>
@@ -93,7 +130,7 @@ export default function ForgotPasswordPage() {
             disabled={loading}
             className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition shadow-lg disabled:opacity-50 mt-2"
           >
-            {loading ? "Logging Request & Dispatching..." : "Send Password Reset Link"}
+            {loading ? "Verifying & Dispatching..." : "Send Password Reset Link"}
           </button>
         </form>
 
