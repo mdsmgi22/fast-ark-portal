@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 
-// Define strict enterprise limits to prevent over-provisioning
+// Define strict enterprise limits (Upgraded Manager to 5)
 const ROLE_LIMITS: Record<string, number> = {
   'Manager': 5,
   'Accountant': 3,
@@ -12,7 +12,6 @@ const ROLE_LIMITS: Record<string, number> = {
 
 export async function POST(request: Request) {
   try {
-    // ARCHITECTURAL FIX: Initialize clients inside the handler
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -20,7 +19,7 @@ export async function POST(request: Request) {
     const resend = new Resend(process.env.RESEND_API_KEY);
 
     // =========================================================================
-    // 1. CRITICAL SECURITY GATE: Verify the user triggering this API
+    // 1. CRITICAL SECURITY GATE
     // =========================================================================
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
@@ -68,29 +67,51 @@ export async function POST(request: Request) {
       }
     }
 
-    // =========================================================================
-    // 3. Automated IT Provisioning (Auth Creation + Postgres Trigger)
-    // =========================================================================
-    
     const tempPassword = `FastArk@${Math.floor(100000 + Math.random() * 900000)}`;
 
+    // =========================================================================
+    // 3. ARCHITECTURAL FIX: 2-STEP BYPASS TO PREVENT TRIGGER CRASHES
+    // =========================================================================
+    
+    // STEP A: Create the Auth User WITHOUT metadata. 
+    // This bypasses the strict postgres trigger since the payload is empty.
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email,
       password: tempPassword,
-      email_confirm: true, 
-      user_metadata: { 
-        name: name, 
-        role: role,
-        mobile: mobile || null
-      }
+      email_confirm: true
     });
 
     if (authError) throw new Error(`Auth Creation Failed: ${authError.message}`);
+    const newUserId = authData.user.id;
+
+    // STEP B: Manually inject the user into the back_office_staff table
+    const { error: dbError } = await supabaseAdmin.from('back_office_staff').insert([{
+      email: email,
+      name: name,
+      role: role,
+      mobile: mobile || null,
+      status: 'Active'
+    }]);
+
+    if (dbError) {
+      // Rollback Auth if DB insertion fails to prevent orphaned ghost accounts
+      await supabaseAdmin.auth.admin.deleteUser(newUserId);
+      throw new Error(`Database record creation failed: ${dbError.message}`);
+    }
+
+    // STEP C: Safely update user_metadata now that the trigger window has safely passed
+    await supabaseAdmin.auth.admin.updateUserById(newUserId, {
+      user_metadata: {
+        name: name,
+        role: role,
+        mobile: mobile || null,
+        must_change_password: true
+      }
+    });
 
     // =========================================================================
     // 4. Secure Credential Dispatch via Resend
     // =========================================================================
-    
     const senderEmail = 'updates@fastark.in';
 
     await resend.emails.send({

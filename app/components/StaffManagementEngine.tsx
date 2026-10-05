@@ -5,14 +5,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
 export default function StaffManagementEngine() {
-  const router = useRouter(); // Added router injection
+  const router = useRouter(); 
   const [staffList, setStaffList] = useState<any[]>([]);
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
-  
-  // [FIX]: Added routing state for smooth transition
   const [isRouting, setIsRouting] = useState(false);
   
-  // UPGRADED: Manager limit increased from 3 to 5
+  // UPGRADED: Manager limit expanded to 5
   const LIMITS = { Manager: 5, Accountant: 3, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
@@ -91,7 +89,7 @@ export default function StaffManagementEngine() {
   const routeToMatrix = () => {
     setIsRouting(true);
     router.push("/dashboard/staff-reports");
-    setTimeout(() => setIsRouting(false), 8000); // 8-second safety release
+    setTimeout(() => setIsRouting(false), 8000); 
   };
 
   const getRoleCount = (roleName: string) => staffList.filter(s => s.role === roleName).length;
@@ -157,7 +155,6 @@ export default function StaffManagementEngine() {
             </button>
           </form>
 
-          {/* UPGRADED ROUTER BUTTON */}
           <div className="mt-6 pt-4 border-t border-slate-100">
             <button 
               onClick={routeToMatrix}
