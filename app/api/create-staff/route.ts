@@ -4,7 +4,7 @@ import { Resend } from 'resend';
 
 // Define strict enterprise limits to prevent over-provisioning
 const ROLE_LIMITS: Record<string, number> = {
-  'Manager': 3,
+  'Manager': 5,
   'Accountant': 3,
   'Staff': 11,
   'Admin': 2 

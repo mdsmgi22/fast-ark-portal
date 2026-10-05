@@ -11,7 +11,9 @@ export default function StaffManagementEngine() {
   
   // [FIX]: Added routing state for smooth transition
   const [isRouting, setIsRouting] = useState(false);
-  const LIMITS = { Manager: 3, Accountant: 3, Staff: 11 };
+  
+  // UPGRADED: Manager limit increased from 3 to 5
+  const LIMITS = { Manager: 5, Accountant: 3, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
     name: "",
@@ -39,12 +41,32 @@ export default function StaffManagementEngine() {
     setIsSubmittingStaff(true);
 
     try {
-      const { error } = await supabase.from("back_office_staff").insert([staffForm]);
-      if (error) throw error;
+      // 1. Retrieve the current super-admin's secure session token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Authentication missing or expired.");
 
-      alert(`✅ New ${staffForm.role} account created for ${staffForm.name}. They can now be assigned credentials.`);
+      // 2. Route the payload through the secure provisioning API
+      const response = await fetch('/api/create-staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify(staffForm)
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to provision staff account.");
+      }
+
+      // 3. UI Success Confirmation
+      alert(`✅ New ${staffForm.role} account created for ${staffForm.name}. Credentials have been emailed securely.`);
+      
       setStaffForm({ name: "", email: "", mobile: "", role: "Staff" });
       fetchStaffList();
+      
     } catch (err: any) {
       alert("Error creating staff: " + err.message);
     } finally {

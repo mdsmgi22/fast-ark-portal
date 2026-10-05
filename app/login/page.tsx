@@ -28,6 +28,12 @@ export default function BackOfficeLoginPage() {
       if (authError) throw new Error(authError.message);
       if (!authData.user) throw new Error("Authentication failed.");
 
+      // Insert right after authData is returned and verified:
+      if (authData.user.user_metadata?.must_change_password) {
+        router.push("/update-password");
+        return;
+      }
+
       // 2. Strict Verification against back_office_staff Table
       const { data: staffData, error: staffError } = await supabase
         .from("back_office_staff")
@@ -110,9 +116,14 @@ export default function BackOfficeLoginPage() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-              Secure Password
-            </label>
+            <div className="flex justify-between items-center mb-1.5">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                Secure Password
+              </label>
+              <Link href="/forgot-password" className="text-[10px] font-bold text-blue-400 hover:underline">
+                Forgot Password?
+              </Link>
+            </div>
             <input 
               type="password" 
               required 

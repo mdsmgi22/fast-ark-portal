@@ -20,7 +20,7 @@ export default function PartnerLogin() {
     try {
       // 1. Authenticate with Supabase
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim().toLowerCase(),
         password,
       });
 
@@ -30,8 +30,8 @@ export default function PartnerLogin() {
       // 2. Verify they are an Active Partner in the database
       const { data: partnerData, error: partnerError } = await supabase
         .from('active_partners')
-        .select('status, tc_accepted')
-        .eq('email', email)
+        .select('id, status, tc_accepted')
+        .eq('email', email.trim().toLowerCase())
         .single();
 
       if (partnerError || !partnerData) {
@@ -44,7 +44,23 @@ export default function PartnerLogin() {
         throw new Error("Account Suspended: Please contact your Fast Ark manager.");
       }
 
-      // 3. Intelligent Routing (The T&C Wall)
+      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+      // Tracks the exact timestamp and user ID of the login to prevent false claims.
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: authData.user.id,
+        staff_email: email.trim().toLowerCase(),
+        action_type: 'SECURITY_AUDIT',
+        module: 'AUTHENTICATION',
+        target_id: partnerData.id,
+        details: `Partner successfully authenticated and established a secure session.`
+      }]);
+
+      // 4. Intelligent Routing (First-time password change -> T&C -> Dashboard)
+      if (authData.user.user_metadata?.must_change_password) {
+        router.push("/update-password");
+        return;
+      }
+
       if (!partnerData.tc_accepted) {
         router.push("/partner/terms");
       } else {
@@ -72,7 +88,7 @@ export default function PartnerLogin() {
 
         <div className="p-8">
           {errorMsg && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 font-bold text-sm rounded-lg shadow-sm">
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 font-bold text-sm rounded-lg shadow-sm leading-relaxed">
               {errorMsg}
             </div>
           )}
@@ -87,11 +103,17 @@ export default function PartnerLogin() {
                 placeholder="Enter your registered email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
               />
             </div>
 
             <div>
-              <label className="block text-[10px] uppercase tracking-widest font-black text-slate-500 mb-1.5">Password</label>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-[10px] uppercase tracking-widest font-black text-slate-500">Password</label>
+                <Link href="/forgot-password" className="text-[10px] font-bold text-blue-600 hover:underline">
+                  Forgot Password?
+                </Link>
+              </div>
               <input 
                 type="password" 
                 required 
@@ -99,6 +121,7 @@ export default function PartnerLogin() {
                 placeholder="Enter the password sent to your email"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
               />
             </div>
 
@@ -107,7 +130,7 @@ export default function PartnerLogin() {
               disabled={loading}
               className="w-full bg-slate-900 text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg hover:bg-blue-600 transition transform hover:-translate-y-0.5 disabled:bg-slate-300 disabled:text-slate-500 disabled:transform-none mt-2"
             >
-              {loading ? "Authenticating..." : "Secure Login"}
+              {loading ? "Authenticating Clearance & Logging..." : "Secure Login"}
             </button>
           </form>
 
