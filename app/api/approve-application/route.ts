@@ -87,6 +87,7 @@ export async function POST(request: Request) {
             page++;
           }
         }
+        if (!authUserId) throw new Error(`Auth Recovery Failed: Could not locate ghost user for ${cleanEmail}`);
       } else {
         throw new Error(`Auth Creation Failed: ${authError.message}`);
       }
@@ -98,7 +99,7 @@ export async function POST(request: Request) {
     const { error: insertError } = await supabaseAdmin
       .from('active_partners')
       .insert([{
-         application_id: appId, // <-- THE FIX: Maps the pending application ID securely
+         application_id: appId,
          auth_id: authUserId,
          partner_name: applicantName,
          email: cleanEmail,
@@ -113,7 +114,7 @@ export async function POST(request: Request) {
       if (insertError.code === '23505') {
         // If profile exists, force reactivation
         const { error: updateProfileError } = await supabaseAdmin.from('active_partners').update({
-             application_id: appId, // <-- THE FIX: Maps the ID on reactivation
+             application_id: appId,
              auth_id: authUserId,
              status: 'Active',
              role: role,

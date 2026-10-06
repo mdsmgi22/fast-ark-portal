@@ -15,22 +15,28 @@ export default function ApplicationsList() {
 
   useEffect(() => {
     const initializePage = async () => {
-      // 1. Security Check: Verify active session before loading CRM data
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
         router.push("/login"); 
         return; 
       }
-
-      // 2. Fetch data only if authenticated
       fetchApplications();
     };
 
     initializePage();
+
+    // --- THE CACHE-BUSTING ENGINE ---
+    const handleFocus = () => fetchApplications();
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('popstate', handleFocus); 
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('popstate', handleFocus);
+    };
   }, [router]);
 
-  // Secure Sign Out Function
   const handleSignOut = async () => {
     setLoading(true);
     await supabase.auth.signOut(); 
@@ -47,6 +53,10 @@ export default function ApplicationsList() {
 
       if (error) throw error;
       if (data) setApplications(data);
+
+      // Force Next.js to obliterate the stale router cache in the background
+      router.refresh();
+      
     } catch (error: any) {
       console.error("Error fetching applications:", error.message);
     } finally {
@@ -115,14 +125,13 @@ export default function ApplicationsList() {
         
         <div className="flex justify-between items-end mb-8">
           <div>
-  <Link href="/dashboard" className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-flex items-center gap-1">
-    &larr; Back to Command Center
-  </Link>
-  <h1 className="text-3xl font-black text-slate-900">Partner Applications</h1>
-  <p className="text-slate-500 mt-1 font-medium">Manage and review all incoming franchise and agent requests.</p>
-</div>
+            <Link href="/dashboard" className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-flex items-center gap-1">
+              &larr; Back to Command Center
+            </Link>
+            <h1 className="text-3xl font-black text-slate-900">Partner Applications</h1>
+            <p className="text-slate-500 mt-1 font-medium">Manage and review all incoming franchise and agent requests.</p>
+          </div>
           
-          {/* Action Buttons Group */}
           <div className="flex gap-3">
             <Link href="/dashboard/locations">
               <button className="bg-indigo-600 border border-indigo-700 text-white px-4 py-2 rounded-md font-bold hover:bg-indigo-700 shadow-sm transition">
@@ -140,7 +149,6 @@ export default function ApplicationsList() {
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           
-          {/* Toolbar */}
           <div className="p-4 border-b border-gray-200 bg-gray-50 flex gap-4">
             <input 
               type="text" 
@@ -151,7 +159,6 @@ export default function ApplicationsList() {
             />
           </div>
 
-          {/* Data Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
