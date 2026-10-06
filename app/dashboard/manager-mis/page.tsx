@@ -62,9 +62,13 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 3: SALES STATE
+  // TAB 3: SALES STATE (UPGRADED WITH EDIT & CONFIRM)
   // ==========================================
   const [rawSales, setRawSales] = useState<any[]>([]);
+  const [editingSalesId, setEditingSalesId] = useState<string | null>(null);
+  const [confirmSalesLock, setConfirmSalesLock] = useState(false);
+  const [salesEditRemarks, setSalesEditRemarks] = useState("");
+
   const [ocscSales, setOcscSales] = useState({
     cbp_landline_qty: "", cbp_landline_cash: "", cbp_gsm_qty: "", cbp_gsm_cash: "", 
     ctop_recharge_qty: "", ctop_recharge_cash: "",
@@ -85,7 +89,7 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 5: COMMISSIONS STATE (NEW)
+  // TAB 5: COMMISSIONS STATE
   // ==========================================
   const [rawCommissions, setRawCommissions] = useState<any[]>([]);
   const [commissionForm, setCommissionForm] = useState({
@@ -144,15 +148,29 @@ export default function ManagerMISDashboard() {
     }
   };
 
+  // Upgraded CM Agent Auto-Fetcher to support hydration during Editing
   useEffect(() => {
-    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
-      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
-      const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
-      setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: "" })));
-    } else {
-      setCmSales([]);
-    }
-  }, [selectedChildLocKey, agentMappings]);
+    const loadCmSales = async () => {
+      if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
+        const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
+        const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
+        
+        let existingChildSales: any[] = [];
+        if (editingSalesId) {
+           const { data } = await supabase.from('mis_cm_agent_sales').select('*').eq('monthly_sales_id', editingSalesId);
+           existingChildSales = data || [];
+        }
+        
+        setCmSales(filteredAgents.map(a => {
+          const existing = existingChildSales.find(e => e.agent_ctop_no === a.agent_ctop_no);
+          return { agent_ctop_no: a.agent_ctop_no, qty: existing ? existing.qty.toString() : "" };
+        }));
+      } else {
+        setCmSales([]);
+      }
+    };
+    loadCmSales();
+  }, [selectedChildLocKey, agentMappings, editingSalesId]);
 
   useEffect(() => {
     if (purchaseForm.manual_qty_override) return; 
@@ -295,9 +313,11 @@ export default function ManagerMISDashboard() {
     }
   };
 
+  // --- UPGRADED SALES SUBMISSION (HANDLES INSERTS & EDITS SAFELY) ---
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
+    if (!confirmSalesLock) return alert("You must check the confirmation box to proceed.");
     setIsSubmitting(true);
 
     try {
@@ -327,7 +347,7 @@ export default function ManagerMISDashboard() {
         sim_other_cash: parseFloat(ocscSales.sim_other_cash) || 0,
       };
 
-      const parentPayload = {
+      const basePayload = {
         reporting_month: dbReportingMonth,
         location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         center_type: centerType,
@@ -335,28 +355,74 @@ export default function ManagerMISDashboard() {
         ...(centerType === 'OCSC' ? cleanOcscSales : {}) 
       };
 
-      const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([parentPayload]).select().single();
-      if (parentError) throw parentError;
-
-      if (centerType === 'CM' && cmSales.length > 0) {
-        const childPayloads = cmSales.map(agent => ({
-          monthly_sales_id: parentRecord.id,
-          agent_ctop_no: agent.agent_ctop_no,
-          qty: parseFloat(agent.qty) || 0 
-        })).filter(payload => payload.qty > 0); 
-
-        if (childPayloads.length > 0) {
-          const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
-          if (childError) throw childError;
+      if (editingSalesId) {
+        // EDIT MODE
+        if (!salesEditRemarks || salesEditRemarks.trim().length < 5) {
+          setIsSubmitting(false);
+          return alert("Audit log remarks are mandatory for modifying a locked sales ledger.");
         }
+
+        const updatePayload = {
+          ...basePayload,
+          is_edited_by_staff: true,
+          staff_edit_remarks: salesEditRemarks
+        };
+
+        const { error: updateError } = await supabase.from('mis_monthly_sales').update(updatePayload).eq('id', editingSalesId);
+        if (updateError) throw updateError;
+
+        // Wipe and recreate child records for CM to ensure absolute sync
+        if (centerType === 'CM' && cmSales.length > 0) {
+          await supabase.from('mis_cm_agent_sales').delete().eq('monthly_sales_id', editingSalesId);
+          
+          const childPayloads = cmSales.map(agent => ({
+            monthly_sales_id: editingSalesId,
+            agent_ctop_no: agent.agent_ctop_no,
+            qty: parseFloat(agent.qty) || 0 
+          })).filter(payload => payload.qty > 0); 
+
+          if (childPayloads.length > 0) {
+            const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
+            if (childError) throw childError;
+          }
+        }
+
+        await supabase.from('staff_activity_logs').insert([{
+          staff_id: user.id, staff_email: user.email, action_type: 'MIS_EDIT', module: 'MANAGER_MIS',
+          target_id: editingSalesId, details: `Modified Sales Ledger for ${centerType}. Remarks: ${salesEditRemarks}`
+        }]);
+
+        alert(`✅ Center Sales successfully updated & audited.`);
+
+      } else {
+        // INSERT MODE
+        const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([basePayload]).select().single();
+        if (parentError) throw parentError;
+
+        if (centerType === 'CM' && cmSales.length > 0) {
+          const childPayloads = cmSales.map(agent => ({
+            monthly_sales_id: parentRecord.id,
+            agent_ctop_no: agent.agent_ctop_no,
+            qty: parseFloat(agent.qty) || 0 
+          })).filter(payload => payload.qty > 0); 
+
+          if (childPayloads.length > 0) {
+            const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
+            if (childError) throw childError;
+          }
+        }
+
+        await supabase.from('staff_activity_logs').insert([{
+          staff_id: user.id, staff_email: user.email, action_type: 'MIS_CLOSURE', module: 'MANAGER_MIS',
+          target_id: parentRecord.id, details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
+        }]);
+
+        alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
       }
 
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: user.id, staff_email: user.email, action_type: 'MIS_CLOSURE', module: 'MANAGER_MIS',
-        target_id: parentRecord.id, details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
-      }]);
-
-      alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
+      setEditingSalesId(null);
+      setConfirmSalesLock(false);
+      setSalesEditRemarks("");
       fetchArchitectureAndReports(); 
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
@@ -364,6 +430,44 @@ export default function ManagerMISDashboard() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleEditSales = (sale: any) => {
+    setEditingSalesId(sale.id);
+    setReportingMonth(sale.reporting_month.substring(0, 7));
+    setEntryMasterLocId(sale.locations?.parent_master_id?.toString() || "");
+    setSelectedChildLocKey(`${sale.location_id}-${sale.center_type}`);
+    setConfirmSalesLock(false);
+    setSalesEditRemarks("");
+    
+    if (sale.center_type === 'OCSC') {
+      setOcscSales({
+        cbp_landline_qty: sale.cbp_landline_qty?.toString() || "",
+        cbp_landline_cash: sale.cbp_landline_cash?.toString() || "",
+        cbp_gsm_qty: sale.cbp_gsm_qty?.toString() || "",
+        cbp_gsm_cash: sale.cbp_gsm_cash?.toString() || "",
+        ctop_recharge_qty: sale.ctop_recharge_qty?.toString() || "",
+        ctop_recharge_cash: sale.ctop_recharge_cash?.toString() || "",
+        sim_new_qty: sale.sim_new_qty?.toString() || "",
+        sim_upgrade_qty: sale.sim_upgrade_qty?.toString() || "",
+        sim_postpaid_qty: sale.sim_postpaid_qty?.toString() || "",
+        sim_postpaid_amt: sale.sim_postpaid_amt?.toString() || "",
+        sim_replace_qty: sale.sim_replace_qty?.toString() || "",
+        sim_replace_cash: sale.sim_replace_cash?.toString() || "",
+        sim_fancy_qty: sale.sim_fancy_qty?.toString() || "",
+        sim_fancy_cash: sale.sim_fancy_cash?.toString() || "",
+        sim_other_qty: sale.sim_other_qty?.toString() || "",
+        sim_other_cash: sale.sim_other_cash?.toString() || "",
+      });
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelSalesEdit = () => {
+    setEditingSalesId(null);
+    setConfirmSalesLock(false);
+    setSalesEditRemarks("");
+    setSelectedChildLocKey("");
   };
 
   const handleCollectionSubmit = async (e: React.FormEvent) => {
@@ -457,8 +561,8 @@ export default function ManagerMISDashboard() {
         `${r.purchase_date},${sanitizeCSV(r.locations?.center_name || 'N/A')},${r.master_ctop_accounts?.master_ctop_no},${r.product_category},${r.qty},${r.amount}`
       ).join("\n");
     } else if (type === 'sales') {
-      csvContent = "Month,Location,Type,CBP_Landline_Cash,CBP_GSM_Cash,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty\n" + data.map(r => 
-        `${r.reporting_month},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_cash||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0}`
+      csvContent = "Month,Location,Type,CBP_Landline_Cash,CBP_GSM_Cash,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,Edited,Audit_Remarks\n" + data.map(r => 
+        `${r.reporting_month},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_cash||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
       ).join("\n");
     } else if (type === 'collections') {
       csvContent = "Month,Location,Collected_INR,Remarks,Edited,Audit_Remarks\n" + data.map(r => 
@@ -477,8 +581,6 @@ export default function ManagerMISDashboard() {
     link.click();
   };
 
-
-  // 🔴 CRITICAL FIX: To prevent Temporal Dead Zone ReferenceError during Vercel Build
   const locType = getActiveLocationType();
   const liveAmt = parseFloat(purchaseForm.amount) || 0;
   const livePct = parseFloat(purchaseForm.commission_percent) || 0;
@@ -942,8 +1044,20 @@ export default function ManagerMISDashboard() {
           {activeTab === 'sales' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <div className="flex justify-between items-center mb-6 border-b pb-4">
-                  <h2 className="text-lg font-black text-slate-800">Sales Entry ({reportingMonth})</h2>
+                <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
+                  <div className="flex gap-4 items-center">
+                    <span className="text-3xl">📝</span>
+                    <div>
+                      <h2 className={`font-black uppercase tracking-widest ${editingSalesId ? 'text-amber-900' : 'text-white'}`}>
+                        {editingSalesId ? `Editing Sales Ledger (${reportingMonth})` : `Sales Entry (${reportingMonth})`}
+                      </h2>
+                    </div>
+                  </div>
+                  {editingSalesId && (
+                    <button onClick={cancelSalesEdit} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                      Cancel Edit
+                    </button>
+                  )}
                 </div>
 
                 {!locType ? (
@@ -1017,8 +1131,30 @@ export default function ManagerMISDashboard() {
                         )}
                       </div>
                     )}
-                    <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-                      {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
+
+                    {/* TWO-FACTOR VERIFICATION ENGINE */}
+                    {editingSalesId && (
+                      <div className="bg-red-50 p-4 border border-red-200 rounded-lg animate-in fade-in">
+                        <label className="block text-[10px] text-red-600 font-black uppercase tracking-widest mb-1.5">Audit Remarks (Mandatory for Modifying Locked Sales) *</label>
+                        <input required type="text" value={salesEditRemarks} onChange={e => setSalesEditRemarks(e.target.value)} className={numInputClass} placeholder="Reason for editing this locked entry..." />
+                      </div>
+                    )}
+
+                    <div className="bg-amber-50 p-4 border border-amber-200 rounded-lg flex items-center gap-3 animate-in fade-in">
+                      <input 
+                        type="checkbox" 
+                        id="confirmSales"
+                        checked={confirmSalesLock} 
+                        onChange={(e) => setConfirmSalesLock(e.target.checked)}
+                        className="w-5 h-5 accent-amber-600 cursor-pointer" 
+                      />
+                      <label htmlFor="confirmSales" className="text-xs font-black text-amber-800 uppercase tracking-widest cursor-pointer flex-1">
+                        I confirm these sales figures are accurate and verified. {editingSalesId && "(Audit action will be logged)"}
+                      </label>
+                    </div>
+
+                    <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0) || !confirmSalesLock} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+                      {isSubmitting ? "Locking Ledger..." : editingSalesId ? "Update & Save Ledger" : "Finalize & Lock Center Sales"}
                     </button>
                   </form>
                 )}
@@ -1027,21 +1163,29 @@ export default function ManagerMISDashboard() {
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
                   <h3 className="font-black uppercase text-xs">Sales Ledger</h3>
-                  <button onClick={() => downloadCSV('sales', rawSales)} className="bg-slate-700 px-3 py-1 rounded text-[10px] font-bold">📥 CSV</button>
+                  <button onClick={() => downloadCSV('sales', rawSales)} className="bg-slate-700 px-3 py-1 rounded text-[10px] font-bold shadow transition">📥 CSV</button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm whitespace-nowrap">
-                    <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 border-b">
-                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Qty (New)</th></tr>
+                    <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b">
+                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Qty (New)</th><th className="p-4 text-right">Action</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {rawSales.slice(0, 50).map(s => (
-                        <tr key={s.id} className="hover:bg-slate-50">
+                        <tr key={s.id} className={`transition ${editingSalesId === s.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
                           <td className="p-4 font-black">{s.reporting_month}</td>
-                          <td className="p-4 font-bold text-slate-800">{s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span></td>
+                          <td className="p-4 font-bold text-slate-800">
+                            {s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span>
+                            {s.is_edited_by_staff && <span className="block text-[9px] text-red-500 font-bold uppercase mt-1">Edited: {s.staff_edit_remarks}</span>}
+                          </td>
                           <td className="p-4 text-right font-black">₹{Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)}</td>
                           <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0)}</td>
                           <td className="p-4 text-right font-black">{s.sim_new_qty||0}</td>
+                          <td className="p-4 text-right">
+                            <button onClick={() => handleEditSales(s)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
+                              Edit
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
