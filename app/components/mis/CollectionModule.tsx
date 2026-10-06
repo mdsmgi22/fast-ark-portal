@@ -16,7 +16,7 @@ const calculateTotalSalesCash = (s: any) => {
 const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
 export default function CollectionModule({ 
-  hqLocations, uniqueStates, entryFilteredFranchises, allLocations,
+  hqLocations, uniqueStates, allLocations,
   rawCollections, rawSales, fetchArchitectureAndReports,
   reportingMonth, setReportingMonth, entryMasterLocId, setEntryMasterLocId, selectedChildLocKey, setSelectedChildLocKey 
 }: any) {
@@ -28,9 +28,20 @@ export default function CollectionModule({
     total_cash_collected: "", remark_option: "", remarks: "", edit_remarks: "" 
   });
   
+  // ENTRY FILTERS
+  const [colEntryStateFilter, setColEntryStateFilter] = useState("ALL");
+
+  // LEDGER FILTERS
   const [colStateFilter, setColStateFilter] = useState("ALL");
-  const [colMonthFilter, setColMonthFilter] = useState(new Date().toISOString().substring(0, 7));
   const [colHqFilter, setColHqFilter] = useState("ALL");
+  const [colChildLocFilter, setColChildLocFilter] = useState("ALL");
+  const [colMonthFilter, setColMonthFilter] = useState(new Date().toISOString().substring(0, 7));
+
+  // CORRECTION FILTERS
+  const [corrStateFilter, setCorrStateFilter] = useState("ALL");
+  const [corrHqFilter, setCorrHqFilter] = useState("ALL");
+  const [corrChildLocFilter, setCorrChildLocFilter] = useState("ALL");
+  const [corrMonthFilter, setCorrMonthFilter] = useState(new Date().toISOString().substring(0, 7));
 
   const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === '-' || e.key === '+' || e.key === 'e' || e.key === 'E') e.preventDefault();
@@ -53,8 +64,6 @@ export default function CollectionModule({
       if (!user) throw new Error("Auth drop.");
 
       const dbReportingMonth = `${reportingMonth}-01`;
-      
-      // Determine final remarks based on dropdown selection
       const finalRemarks = collectionForm.remark_option === 'Other reason' ? collectionForm.remarks : collectionForm.remark_option;
 
       const payload = {
@@ -112,7 +121,6 @@ export default function CollectionModule({
     setSelectedChildLocKey(`${col.location_id}-${col.locations?.role_ocsc ? 'OCSC' : 'CM'}`);
     setReportingMonth(col.reporting_month.substring(0, 7));
     
-    // Smart Hydration: Map existing database text back to the proper dropdown option
     let existingRemark = col.remarks || "";
     let mappedOption = "";
     let mappedText = "";
@@ -134,15 +142,17 @@ export default function CollectionModule({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Upgraded Ledger Filters including State
-  const filteredCollectionsLedger = rawCollections.filter((c: any) => {
-    let mMatch = colMonthFilter === "ALL" || c.reporting_month === `${colMonthFilter}-01`;
-    let sMatch = colStateFilter === "ALL" || c.locations?.state === colStateFilter;
-    let hMatch = colHqFilter === "ALL" || c.locations?.parent_master_id?.toString() === colHqFilter;
-    return mMatch && sMatch && hMatch;
-  });
+  // --- ENTRY DATA ARCHITECTURE ---
+  const filteredHQsForEntry = hqLocations.filter((h: any) => colEntryStateFilter === "ALL" || h.state === colEntryStateFilter);
+  const localEntryFranchises = allLocations.filter((l: any) => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id?.toString() === entryMasterLocId));
 
-  const locationReconciliation = allLocations.filter((l: any) => !l.is_master_node && (colStateFilter === "ALL" || l.state === colStateFilter) && (colHqFilter === "ALL" || l.parent_master_id?.toString() === colHqFilter)).flatMap((loc: any) => {
+  // --- LEDGER RECONCILIATION ENGINE ---
+  const locationReconciliation = allLocations.filter((l: any) => 
+    !l.is_master_node && 
+    (colStateFilter === "ALL" || l.state === colStateFilter) && 
+    (colHqFilter === "ALL" || l.parent_master_id?.toString() === colHqFilter) &&
+    (colChildLocFilter === "ALL" || l.id.toString() === colChildLocFilter)
+  ).flatMap((loc: any) => {
     const s = rawSales.find((sale: any) => sale.location_id === loc.id && sale.reporting_month === `${colMonthFilter}-01`);
     const c = rawCollections.find((col: any) => col.location_id === loc.id && col.reporting_month === `${colMonthFilter}-01`);
     
@@ -158,16 +168,38 @@ export default function CollectionModule({
     }];
   });
 
-  const downloadCSV = () => {
-    if (filteredCollectionsLedger.length === 0) return alert("No data available to export.");
+  // --- CORRECTIONS LEDGER ENGINE ---
+  const filteredCorrectionsLedger = rawCollections.filter((c: any) => {
+    let mMatch = corrMonthFilter === "ALL" || c.reporting_month === `${corrMonthFilter}-01`;
+    let sMatch = corrStateFilter === "ALL" || c.locations?.state === corrStateFilter;
+    let hMatch = corrHqFilter === "ALL" || c.locations?.parent_master_id?.toString() === corrHqFilter;
+    let cMatch = corrChildLocFilter === "ALL" || c.location_id?.toString() === corrChildLocFilter;
+    return mMatch && sMatch && hMatch && cMatch;
+  });
+
+  const downloadReconciliationCSV = () => {
+    if (locationReconciliation.length === 0) return alert("No data available to export.");
+    const csvContent = "Center,Total_Sales_INR,Total_Collected_INR,Pending_Balance_INR,Status\n" + 
+      locationReconciliation.map((r: any) => 
+      `${sanitizeCSV(r.name)},${r.sales},${r.collection},${r.pending},${r.pending <= 0 ? 'Settled' : 'Pending'}`
+    ).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `FastArk_MIS_Reconciliation_${colMonthFilter}.csv`;
+    link.click();
+  };
+
+  const downloadCorrectionsCSV = () => {
+    if (filteredCorrectionsLedger.length === 0) return alert("No data available to export.");
     const csvContent = "Month,Location,Collected_INR,Remarks,Edited,Audit_Remarks\n" + 
-      filteredCollectionsLedger.map((r: any) => 
+      filteredCorrectionsLedger.map((r: any) => 
       `${r.reporting_month},${sanitizeCSV(r.locations?.center_name)},${r.total_cash_collected},${sanitizeCSV(r.remarks)},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
     ).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `FastArk_MIS_Collections_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `FastArk_MIS_Collections_Ledger_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
 
@@ -179,21 +211,31 @@ export default function CollectionModule({
         <button onClick={() => setCollectionMode('correction')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded transition ${collectionMode === 'correction' ? 'bg-amber-600 text-white shadow' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>🛠️ Corrections Hub</button>
       </div>
 
+      {/* ==========================================
+          ENTRY MODE 
+      ========================================== */}
       {collectionMode === 'entry' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mx-auto animate-in fade-in">
-          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-3xl mx-auto animate-in fade-in">
+          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <div>
-              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1.5 block">HQ Scope</label>
-              <select value={entryMasterLocId} onChange={(e) => { setEntryMasterLocId(e.target.value); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition">
-                <option value="">-- All Master HQs --</option>
-                {hqLocations.map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 block">1. State Scope</label>
+              <select value={colEntryStateFilter} onChange={(e) => { setColEntryStateFilter(e.target.value); setEntryMasterLocId(""); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-indigo-400 transition">
+                <option value="ALL">-- All States --</option>
+                {uniqueStates.map((st: string) => <option key={st} value={st}>{st}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1.5 block">Target Center *</label>
+              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 block">2. Master HQ</label>
+              <select value={entryMasterLocId} onChange={(e) => { setEntryMasterLocId(e.target.value); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-indigo-400 transition">
+                <option value="">-- Select HQ --</option>
+                {filteredHQsForEntry.map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1.5 block">3. Target Center *</label>
               <select value={selectedChildLocKey} onChange={(e) => setSelectedChildLocKey(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition">
                 <option value="" disabled>-- Select Center --</option>
-                {entryFilteredFranchises.flatMap((l: any) => {
+                {localEntryFranchises.flatMap((l: any) => {
                   const options = [];
                   if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
                   if (l.role_cm) options.push(<option key={`${l.id}-CM`} value={`${l.id}-CM`}>{l.center_name} (CM)</option>);
@@ -258,21 +300,28 @@ export default function CollectionModule({
         </div>
       )}
 
+      {/* ==========================================
+          LEDGER & RECONCILIATION MODE 
+      ========================================== */}
       {collectionMode === 'ledger' && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
           <div className="bg-slate-900 p-5 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h3 className="font-black uppercase tracking-widest text-white text-sm">Collection Ledger & Reconciliation</h3>
             <div className="flex flex-wrap gap-3">
-              <select value={colStateFilter} onChange={(e) => { setColStateFilter(e.target.value); setColHqFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition">
+              <select value={colStateFilter} onChange={(e) => { setColStateFilter(e.target.value); setColHqFilter("ALL"); setColChildLocFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition">
                 <option value="ALL">All States</option>
                 {uniqueStates?.map((st: string) => <option key={st} value={st}>{st}</option>)}
               </select>
-              <select value={colHqFilter} onChange={(e) => setColHqFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[200px] outline-none focus:border-emerald-400 transition">
+              <select value={colHqFilter} onChange={(e) => { setColHqFilter(e.target.value); setColChildLocFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[150px] outline-none focus:border-emerald-400 transition">
                 <option value="ALL">All HQ Hubs</option>
                 {hqLocations.filter((h: any) => colStateFilter === "ALL" || h.state === colStateFilter).map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
               </select>
+              <select value={colChildLocFilter} onChange={(e) => setColChildLocFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[150px] outline-none focus:border-emerald-400 transition">
+                <option value="ALL">All Centers</option>
+                {allLocations.filter((l: any) => !l.is_master_node && (colHqFilter === "ALL" || l.parent_master_id?.toString() === colHqFilter)).map((c: any) => <option key={c.id} value={c.id.toString()}>{c.center_name}</option>)}
+              </select>
               <input type="month" value={colMonthFilter} onChange={(e) => setColMonthFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition" />
-              <button onClick={downloadCSV} className="bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition">📥 Full CSV</button>
+              <button onClick={downloadReconciliationCSV} className="bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition">📥 Export Matrix CSV</button>
             </div>
           </div>
 
@@ -307,12 +356,31 @@ export default function CollectionModule({
         </div>
       )}
 
+      {/* ==========================================
+          CORRECTIONS HUB 
+      ========================================== */}
       {collectionMode === 'correction' && (
         <div className="bg-white rounded-xl shadow-sm border border-amber-300 overflow-hidden animate-in fade-in">
-          <div className="bg-amber-100 p-5 border-b border-amber-300 flex justify-between items-center">
+          <div className="bg-amber-100 p-5 border-b border-amber-300 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h3 className="font-black uppercase tracking-widest text-amber-900 text-sm">Collection Corrections Hub</h3>
               <p className="text-xs text-amber-700 font-bold mt-1">Audit logs are mandatory for all cash edits.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select value={corrStateFilter} onChange={(e) => { setCorrStateFilter(e.target.value); setCorrHqFilter("ALL"); setCorrChildLocFilter("ALL"); }} className="bg-white border border-amber-300 text-amber-900 text-xs font-bold p-2 rounded outline-none">
+                <option value="ALL">All States</option>
+                {uniqueStates?.map((st: string) => <option key={st} value={st}>{st}</option>)}
+              </select>
+              <select value={corrHqFilter} onChange={(e) => { setCorrHqFilter(e.target.value); setCorrChildLocFilter("ALL"); }} className="bg-white border border-amber-300 text-amber-900 text-xs font-bold p-2 rounded max-w-[150px] outline-none">
+                <option value="ALL">All HQ Hubs</option>
+                {hqLocations.filter((h: any) => corrStateFilter === "ALL" || h.state === corrStateFilter).map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
+              </select>
+              <select value={corrChildLocFilter} onChange={(e) => setCorrChildLocFilter(e.target.value)} className="bg-white border border-amber-300 text-amber-900 text-xs font-bold p-2 rounded max-w-[150px] outline-none">
+                <option value="ALL">All Centers</option>
+                {allLocations.filter((l: any) => !l.is_master_node && (corrHqFilter === "ALL" || l.parent_master_id?.toString() === corrHqFilter)).map((c: any) => <option key={c.id} value={c.id.toString()}>{c.center_name}</option>)}
+              </select>
+              <input type="month" value={corrMonthFilter} onChange={(e) => setCorrMonthFilter(e.target.value)} className="bg-white border border-amber-300 text-amber-900 text-xs font-bold p-2 rounded outline-none" />
+              <button onClick={downloadCorrectionsCSV} className="bg-amber-600 hover:bg-amber-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition">📥 Export Ledger</button>
             </div>
           </div>
           
@@ -371,7 +439,7 @@ export default function CollectionModule({
                   <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">Collected (₹)</th><th className="p-4">Remarks</th><th className="p-4 text-right">Action</th></tr>
                 </thead>
                 <tbody className="divide-y divide-amber-100">
-                  {rawCollections.map((c: any) => (
+                  {filteredCorrectionsLedger.map((c: any) => (
                     <tr key={c.id} className="hover:bg-amber-50/50 transition">
                       <td className="p-4 font-black text-slate-800">{c.reporting_month}</td>
                       <td className="p-4 font-bold text-slate-800">{c.locations?.center_name}</td>
@@ -387,7 +455,7 @@ export default function CollectionModule({
                       </td>
                     </tr>
                   ))}
-                  {rawCollections.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-slate-500 font-bold">No collections to correct.</td></tr>}
+                  {filteredCorrectionsLedger.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-slate-500 font-bold">No collections match this filter.</td></tr>}
                 </tbody>
               </table>
             </div>
