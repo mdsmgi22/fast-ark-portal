@@ -783,7 +783,9 @@ export default function PartnerDashboard() {
 
         </div>
 
-        {/* SECTION: COMPLIANCE DOCUMENTS UPLOAD ENGINE (UPGRADED FOR MULTIPLE) */}
+        {/* ========================================================================= */}
+        {/* COMPLIANCE DOCUMENTS UPLOAD ENGINE (Multi-Photo)                          */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-8">
           <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
             <div>
