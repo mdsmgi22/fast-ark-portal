@@ -4,7 +4,6 @@ import { Resend } from 'resend';
 
 export async function POST(request: Request) {
   try {
-    // ARCHITECTURAL FIX: Initialize clients inside the handler
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -96,7 +95,26 @@ export async function POST(request: Request) {
 
     if (updateError) throw updateError;
 
-    return NextResponse.json({ success: true, message: 'Application rejected, KYC wiped, and emails dispatched.' });
+    // =========================================================================
+    // 6. KILL-SWITCH: Close the Ghost Access Security Loop
+    // =========================================================================
+    
+    // Hard delete the partner profile to instantly sever dashboard access
+    await supabaseAdmin
+      .from('active_partners')
+      .delete()
+      .eq('email', applicantEmail);
+
+    // Hunt down and obliterate the Supabase Auth credentials if they exist
+    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+    if (usersData?.users) {
+      const targetUser = usersData.users.find(u => u.email === applicantEmail);
+      if (targetUser) {
+        await supabaseAdmin.auth.admin.deleteUser(targetUser.id);
+      }
+    }
+
+    return NextResponse.json({ success: true, message: 'Application rejected, KYC wiped, ghost access severed, and emails dispatched.' });
 
   } catch (error: any) {
     console.error('API Error:', error);
