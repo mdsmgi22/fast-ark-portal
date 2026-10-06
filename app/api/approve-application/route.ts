@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const resend = new Resend(process.env.RESEND_API_KEY);
 
     // =========================================================================
-    // 1. CRITICAL SECURITY GATE: Verify the user triggering this API
+    // 1. CRITICAL SECURITY GATE: Verify the admin triggering this API
     // =========================================================================
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
@@ -34,7 +34,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Missing required application data.' }, { status: 400 });
     }
 
-    // Fetch Center Metadata early to ensure the location exists
     const { data: loc, error: locError } = await supabaseAdmin
       .from('locations')
       .select('center_name')
@@ -65,18 +64,15 @@ export async function POST(request: Request) {
     });
     
     if (authError) {
-      // THE FIX: Trap both "already registered" and "already exists" errors
+      // INTERCEPT CRASH: If Ghost Auth exists, bypass the error and recover the account
       if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
         
-        // Recover the Ghost Account
         let page = 1;
         let hasMore = true;
         while (hasMore) {
-          const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 100 });
-          if (listError || !listData.users || listData.users.length === 0) {
-            hasMore = false;
-            break;
-          }
+          const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 100 });
+          if (!listData?.users || listData.users.length === 0) break;
+          
           const existingUser = listData.users.find(u => u.email?.toLowerCase() === cleanEmail);
           if (existingUser) {
             authUserId = existingUser.id;
@@ -98,10 +94,11 @@ export async function POST(request: Request) {
       authUserId = authData.user?.id;
     }
 
-    // B. Manual Fallback Insertion into active_partners
+    // B. Safely Insert or Reactivate Active Partner Profile
     const { error: insertError } = await supabaseAdmin
       .from('active_partners')
       .insert([{
+         application_id: appId, // <-- THE FIX: Maps the pending application ID securely
          auth_id: authUserId,
          partner_name: applicantName,
          email: cleanEmail,
@@ -112,26 +109,24 @@ export async function POST(request: Request) {
          tc_accepted: false
       }]);
 
-    // THE FIX: If the profile already exists (23505 constraint), update and Reactivate it.
     if (insertError) {
       if (insertError.code === '23505') {
-        const { error: forceUpdateError } = await supabaseAdmin
-          .from('active_partners')
-          .update({
+        // If profile exists, force reactivation
+        const { error: updateProfileError } = await supabaseAdmin.from('active_partners').update({
+             application_id: appId, // <-- THE FIX: Maps the ID on reactivation
              auth_id: authUserId,
              status: 'Active',
              role: role,
              center_id: locationId
-          })
-          .eq('email', cleanEmail);
-          
-        if (forceUpdateError) throw new Error(`Profile Reactivation Failed: ${forceUpdateError.message}`);
+        }).eq('email', cleanEmail);
+        
+        if (updateProfileError) throw new Error(`Profile Reactivation Failed: ${updateProfileError.message}`);
       } else {
         throw new Error(`Profile Creation Failed: ${insertError.message}`);
       }
     }
 
-    // C. Update Original Application Record to 'Approved'
+    // C. Update Original Application Record to 'Approved' so Dashboard updates
     const { error: updateError } = await supabaseAdmin
       .from('pending_applications')
       .update({ status: 'Approved' }) 
@@ -142,7 +137,7 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // 4. Communication Dispatch (Updated to .org Domain)
+    // 4. Communication Dispatch
     // =========================================================================
     await resend.emails.send({
       from: 'Fast Ark Onboarding <updates@fastark.org>',
