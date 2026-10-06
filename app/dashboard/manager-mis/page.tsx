@@ -63,7 +63,7 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 3: SALES STATE (UPGRADED WITH EDIT & CONFIRM)
+  // TAB 3: SALES STATE 
   // ==========================================
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [editingSalesId, setEditingSalesId] = useState<string | null>(null);
@@ -101,7 +101,7 @@ export default function ManagerMISDashboard() {
   // TAB 6: REPORTING ENGINE STATES
   // ==========================================
   const [repTimeFilter, setRepTimeFilter] = useState("this_month");
-  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); // NEW: Month Filter
+  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); 
   const [repMasterFilter, setRepMasterFilter] = useState("ALL");
   const [repChildFilter, setRepChildFilter] = useState("ALL");
 
@@ -317,7 +317,7 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // --- UPGRADED SALES SUBMISSION (HANDLES INSERTS & EDITS SAFELY) ---
+  // --- UPGRADED SALES SUBMISSION ---
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
@@ -360,7 +360,6 @@ export default function ManagerMISDashboard() {
       };
 
       if (editingSalesId) {
-        // EDIT MODE
         if (!salesEditRemarks || salesEditRemarks.trim().length < 5) {
           setIsSubmitting(false);
           return alert("Audit log remarks are mandatory for modifying a locked sales ledger.");
@@ -375,16 +374,13 @@ export default function ManagerMISDashboard() {
         const { error: updateError } = await supabase.from('mis_monthly_sales').update(updatePayload).eq('id', editingSalesId);
         if (updateError) throw updateError;
 
-        // Wipe and recreate child records for CM to ensure absolute sync
         if (centerType === 'CM' && cmSales.length > 0) {
           await supabase.from('mis_cm_agent_sales').delete().eq('monthly_sales_id', editingSalesId);
-          
           const childPayloads = cmSales.map(agent => ({
             monthly_sales_id: editingSalesId,
             agent_ctop_no: agent.agent_ctop_no,
             qty: parseFloat(agent.qty) || 0 
           })).filter(payload => payload.qty > 0); 
-
           if (childPayloads.length > 0) {
             const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
             if (childError) throw childError;
@@ -399,7 +395,6 @@ export default function ManagerMISDashboard() {
         alert(`✅ Center Sales successfully updated & audited.`);
 
       } else {
-        // INSERT MODE
         const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([basePayload]).select().single();
         if (parentError) throw parentError;
 
@@ -551,6 +546,12 @@ export default function ManagerMISDashboard() {
     } catch (err: any) { alert("Error: " + err.message); } finally { setIsSubmitting(false); }
   };
 
+  // --- HELPER: CALCULATE TOTAL SALES CASH ---
+  const calculateTotalSalesCash = (s: any) => {
+    return Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0) + Number(s.ctop_recharge_cash||0) + 
+           Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0);
+  };
+
   // --- CSV EXPORT ENGINE ---
   const downloadCSV = (type: string, data: any[]) => {
     if (data.length === 0) return alert("No data available to export.");
@@ -595,6 +596,25 @@ export default function ManagerMISDashboard() {
   const mappedMasterCtopsForBalance = masterCtops.filter(m => m.location_id?.toString() === balanceForm.location_id);
   const mappedMasterCtopsForComms = masterCtops.filter(m => m.location_id?.toString() === entryMasterLocId);
 
+  // --- NEW: TAB 3 DASHBOARD CALCULATIONS ---
+  const currentMonthSalesContext = rawSales.filter(s => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
+  const cumulativeSalesCash = currentMonthSalesContext.reduce((sum, s) => sum + calculateTotalSalesCash(s), 0);
+  const cumulativeCBPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
+  const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.ctop_recharge_cash||0), 0);
+  const cumulativeSIMCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
+
+  // --- NEW: TAB 4 RECONCILIATION CALCULATIONS ---
+  const currentMonthCollectionsContext = rawCollections.filter(c => c.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || c.locations?.parent_master_id?.toString() === entryMasterLocId));
+  const locationReconciliation = entryFilteredFranchises.map(loc => {
+    const s = currentMonthSalesContext.find(sale => sale.location_id === loc.id);
+    const c = currentMonthCollectionsContext.find(col => col.location_id === loc.id);
+    const salesCash = s ? calculateTotalSalesCash(s) : 0;
+    const colCash = c ? Number(c.total_cash_collected || 0) : 0;
+    const pending = salesCash - colCash;
+    if (!s && !c) return null; // Hide if no activity
+    return { id: loc.id, name: loc.center_name, type: loc.role_ocsc ? 'OCSC' : loc.role_cm ? 'CM' : 'Franchise', sales: salesCash, collection: colCash, pending };
+  }).filter(Boolean);
+
   // --- REPORTING LOGIC & EXACT MATH ENGINE ---
   const getFilteredReports = () => {
     let fPurchases = [...rawPurchases];
@@ -610,10 +630,9 @@ export default function ManagerMISDashboard() {
     if (repTimeFilter === "this_month") {
       startDate = new Date(today.getFullYear(), today.getMonth(), 1);
     } else if (repTimeFilter === "specific_month") {
-      // NEW: Specific Month Filter Logic
       const selectedMonth = new Date(`${repMonthFilter}-01`);
       startDate = selectedMonth;
-      endDate = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0); // Last day of selected month
+      endDate = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0); 
     }
 
     const startStr = startDate.toISOString().split('T')[0];
@@ -636,13 +655,6 @@ export default function ManagerMISDashboard() {
       fComms = fComms.filter(c => c.location_id === masterId);
     }
 
-    if (repChildFilter !== "ALL") {
-      const childId = parseInt(repChildFilter);
-      fPurchases = []; 
-      fSales = fSales.filter(s => s.location_id === childId);
-      fCollections = fCollections.filter(c => c.location_id === childId);
-    }
-
     // Master HQ Aggregation Engine
     const hqMap: Record<string, any> = {};
     const filteredHQs = repMasterFilter !== "ALL" ? hqLocations.filter(h => h.id.toString() === repMasterFilter) : hqLocations;
@@ -653,7 +665,6 @@ export default function ManagerMISDashboard() {
       const openBals = hqBals.filter(b => b.entry_type === 'Opening Balance');
       const closeBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
       
-      // UPGRADED: Summing both Landline and GSM for CBP Quantities
       const openCBP = openBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
       const closeCBP = closeBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
       const openCTOP = openBals.reduce((sum, b) => sum + Number(b.ctop_qty||0), 0);
@@ -678,7 +689,7 @@ export default function ManagerMISDashboard() {
       const cInst = hqComms.reduce((sum, c) => sum + Number(c.instant_commission||0), 0);
       const cPend = hqComms.reduce((sum, c) => sum + Number(c.pending_commission||0), 0);
 
-      // 5. Variance Math: (Open - Close) + Purchase + Comm(Inst) + Comm(Pend) - Sales = Variance
+      // 5. Variance Math
       const vCBP = (openCBP - closeCBP) + pCBP - sCBP;
       const vCTOP = (openCTOP - closeCTOP) + pCTOP + cInst + cPend - sCTOP;
       const vSIM = (openSIM - closeSIM) + pSIM - sSIM;
@@ -691,16 +702,10 @@ export default function ManagerMISDashboard() {
       };
     });
 
-    const totalPurchasedValue = fPurchases.reduce((sum, p) => sum + Number(p.amount), 0);
-    const totalSalesCash = fSales.reduce((sum, s) => sum + 
-      Number(s.cbp_landline_cash || 0) + Number(s.cbp_gsm_cash || 0) + Number(s.ctop_recharge_cash || 0) +
-      Number(s.sim_replace_cash || 0) + Number(s.sim_fancy_cash || 0) + Number(s.sim_other_cash || 0), 0);
-    const totalCollected = fCollections.reduce((sum, c) => sum + Number(c.total_cash_collected), 0);
-
-    return { fPurchases, fSales, fCollections, fBalances, fComms, totalPurchasedValue, totalSalesCash, totalCollected, hqMap };
+    return { hqMap };
   };
 
-  const { fPurchases, fSales, fCollections, fBalances, fComms, totalPurchasedValue, totalSalesCash, totalCollected, hqMap } = getFilteredReports();
+  const { hqMap } = getFilteredReports();
   const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   if (loading) return (
@@ -1057,6 +1062,27 @@ export default function ManagerMISDashboard() {
           {/* TAB 3: MONTHLY SALES ENGINE */}
           {activeTab === 'sales' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+              
+              {/* NEW: CUMULATIVE SALES DASHBOARD */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+                <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
+                  <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumulativeSalesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CBP Cash</p>
+                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCBPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CTOP Cash</p>
+                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCTOPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SIM Cash</p>
+                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeSIMCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+                </div>
+              </div>
+
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
                   <div className="flex gap-4 items-center">
@@ -1182,7 +1208,7 @@ export default function ManagerMISDashboard() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b">
-                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Qty (New)</th><th className="p-4 text-right">Action</th></tr>
+                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Cash</th><th className="p-4 text-right">Action</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {rawSales.slice(0, 50).map(s => (
@@ -1192,9 +1218,9 @@ export default function ManagerMISDashboard() {
                             {s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span>
                             {s.is_edited_by_staff && <span className="block text-[9px] text-red-500 font-bold uppercase mt-1">Edited: {s.staff_edit_remarks}</span>}
                           </td>
-                          <td className="p-4 text-right font-black">₹{Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)}</td>
-                          <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0)}</td>
-                          <td className="p-4 text-right font-black">{s.sim_new_qty||0}</td>
+                          <td className="p-4 text-right font-black">₹{Number(Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                          <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                          <td className="p-4 text-right font-black">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                           <td className="p-4 text-right">
                             <button onClick={() => handleEditSales(s)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
                               Edit
@@ -1211,6 +1237,51 @@ export default function ManagerMISDashboard() {
 
           {activeTab === 'collection' && (
             <div className="space-y-6 animate-in fade-in">
+              
+              {/* NEW: FINANCIAL RECONCILIATION MATRIX */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+                <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
+                  <h3 className="font-black uppercase text-xs">Financial Reconciliation Matrix ({reportingMonth})</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm whitespace-nowrap">
+                    <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b">
+                      <tr>
+                        <th className="p-4">Center</th>
+                        <th className="p-4 text-right text-indigo-600">Total Sales (₹)</th>
+                        <th className="p-4 text-right text-emerald-600">Total Collected (₹)</th>
+                        <th className="p-4 text-right text-red-500">Pending Balance (₹)</th>
+                        <th className="p-4 text-right">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {locationReconciliation.length === 0 ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">No sales or collection activity found for the selected month/HQ context.</td></tr>
+                      ) : (
+                        locationReconciliation.map((rec) => (
+                          <tr key={rec.id} className="hover:bg-slate-50 transition">
+                            <td className="p-4">
+                              <p className="font-black text-slate-800">{rec.name}</p>
+                              <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest">{rec.type}</span>
+                            </td>
+                            <td className="p-4 text-right font-black text-indigo-700">₹{rec.sales.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                            <td className="p-4 text-right font-black text-emerald-600">₹{rec.collection.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                            <td className="p-4 text-right font-black text-red-600">₹{rec.pending.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                            <td className="p-4 text-right">
+                              {rec.pending <= 0 ? (
+                                <span className="bg-emerald-50 text-emerald-600 border border-emerald-200 px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest">Settled</span>
+                              ) : (
+                                <span className="bg-red-50 text-red-600 border border-red-200 px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest">Pending</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               <div className="bg-white rounded-xl shadow-sm border p-6 max-w-2xl mx-auto">
                 <div className="flex justify-between items-center mb-6 border-b pb-4">
                   <h2 className="font-black uppercase text-lg">Declare Collection</h2>
