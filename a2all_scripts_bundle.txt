@@ -793,7 +793,6 @@ export default function PartnerDepositPage() {
     if (!file) return;
 
     setSlipImage(file);
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
     setImagePreview(URL.createObjectURL(file));
     
     // Auto-switch right panel to the High-Res Viewer
@@ -2017,7 +2016,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 // --- Date Normalizers (IST Safe) ---
 const getLocalDateString = (date: Date) => {
@@ -2084,48 +2082,6 @@ export default function PartnerDashboard() {
     qNew: 0, qUp: 0, qRep: 0, qFan: 0, qPost: 0
   });
 
-  // --- Compliance Document Upload State ---
-  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
-  const [isUploadingDocs, setIsUploadingDocs] = useState(false);
-  const [hasUploadedDocs, setHasUploadedDocs] = useState(false);
-  const [docUploadMessage, setDocUploadMessage] = useState("");
-
-  const getRequiredDocuments = (role: string) => {
-    const r = (role || "").toUpperCase();
-    if (r.includes("OCSC")) {
-      return [
-        "Marks Card",
-        "Photo with Location GPS Tagged (5 Nos)",
-        "HOTO Letter Copy",
-        "Police Verification Certificate",
-        "Bank Passbook / Cancel Cheque"
-      ];
-    } else if (r.includes("AADHAAR")) {
-      return [
-        "Marks Card (12th Pass)",
-        "Photo with Location GPS Tagged (5 Nos)",
-        "HOTO Letter Copy",
-        "Police Verification Certificate",
-        "NSEIT Certificate",
-        "LMS Certificate",
-        "Annexure A & B",
-        "L1 Readiness Document",
-        "100 Rs BSNL Stamp Undertaking",
-        "100 Rs Company Stamp Undertaking",
-        "EA Request Form",
-        "Bank Passbook / Cancel Cheque"
-      ];
-    } else {
-      return [
-        "GST Certificate",
-        "Bank Mapping",
-        "Other Document 1",
-        "Other Document 2",
-        "Other Document 3"
-      ];
-    }
-  };
-
   useEffect(() => {
     initializeDashboard();
   }, [router]);
@@ -2135,7 +2091,7 @@ export default function PartnerDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/partner/login");
 
-      // 1. Fetch Partner Profile
+      // 1. Fetch Partner Profile (Note: locations(*) automatically fetches the qr_asset_url)
       const { data: partnerData, error: partnerError } = await supabase
         .from("active_partners")
         .select("*, locations(*)")
@@ -2153,12 +2109,6 @@ export default function PartnerDashboard() {
       if (partnerData.tc_accepted === false) return router.push("/partner/terms");
 
       setPartner(partnerData);
-      
-      // 1b. Check if Compliance Documents are already uploaded
-      const { data: fileList } = await supabase.storage.from('application_documents').list('', { search: `COMPLIANCE_${partnerData.id}` });
-      if (fileList && fileList.length > 0) {
-        setHasUploadedDocs(true);
-      }
       
       // 2. Fetch Treasury Channels
       const { data: banks } = await supabase.from("company_bank_accounts").select("*").eq("is_active", true);
@@ -2339,115 +2289,7 @@ export default function PartnerDashboard() {
     }
   };
 
-  // --- SECURE COMPLIANCE DOCUMENT UPLOAD ENGINE ---
-  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>, docName: string) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > 5 * 1024 * 1024) { 
-        alert(`File size for ${docName} must be under 5MB.`);
-        e.target.value = ''; 
-        return;
-      }
-      setDocFiles(prev => ({ ...prev, [docName]: file }));
-    }
-  };
-
-  const handleDocUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const requiredDocs = getRequiredDocuments(partner?.role);
-    
-    // Strict Validation
-    for (const doc of requiredDocs) {
-      if (!docFiles[doc]) {
-        return alert(`Please upload the mandatory document: ${doc}`);
-      }
-    }
-
-    setIsUploadingDocs(true);
-    setDocUploadMessage("Fetching network details...");
-
-    try {
-      let userIp = "Unknown";
-      try {
-        const ipRes = await fetch("https://api.ipify.org?format=json");
-        userIp = (await ipRes.json()).ip;
-      } catch (err) { }
-
-      setDocUploadMessage("Merging documents into a secure PDF...");
-
-      const pdfDoc = await PDFDocument.create();
-      const trackingFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const timestamp = new Date().toLocaleString('en-IN');
-      const stampText = `USER: ${partner.email} | LOC: ${partner.locations?.center_name || 'N/A'} | IP: ${userIp} | TIME: ${timestamp}`;
-
-      for (const docName of requiredDocs) {
-        const file = docFiles[docName];
-        if (!file) continue;
-
-        const arrayBuffer = await file.arrayBuffer();
-        const mimeType = file.type.toLowerCase();
-
-        setDocUploadMessage(`Processing ${docName}...`);
-
-        if (mimeType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
-          const loadedPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-          const copiedPages = await pdfDoc.copyPages(loadedPdf, loadedPdf.getPageIndices());
-          
-          copiedPages.forEach((page) => {
-            pdfDoc.addPage(page);
-            const { width } = page.getSize();
-            page.drawRectangle({ x: 0, y: 0, width: width, height: 20, color: rgb(0, 0, 0) });
-            page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 6, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
-          });
-        } else if (mimeType.includes('jpeg') || mimeType.includes('jpg') || mimeType.includes('png') || file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg')) {
-          let image = (mimeType.includes('png') || file.name.toLowerCase().endsWith('.png'))
-            ? await pdfDoc.embedPng(arrayBuffer) 
-            : await pdfDoc.embedJpg(arrayBuffer);
-          
-          let { width, height } = image;
-          const maxWidth = 595.28; 
-          if (width > maxWidth) {
-            const ratio = maxWidth / width;
-            width = maxWidth;
-            height = height * ratio;
-          }
-
-          const page = pdfDoc.addPage([width, height + 25]);
-          page.drawImage(image, { x: 0, y: 25, width: width, height: height });
-          page.drawRectangle({ x: 0, y: 0, width: width, height: 25, color: rgb(0, 0, 0) });
-          page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 8, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
-        }
-      }
-
-      setDocUploadMessage("Uploading secure Compliance PDF to Vault...");
-      const mergedPdfBytes = await pdfDoc.save();
-      const pdfFileName = `COMPLIANCE_${partner.id}_${Date.now()}.pdf`;
-
-      const { error: uploadError, data } = await supabase.storage
-        .from('application_documents')
-        .upload(pdfFileName, mergedPdfBytes, { contentType: 'application/pdf' });
-
-      if (uploadError) throw uploadError;
-
-      // Update active_partners to store the link so Admin Dashboard can easily reference it
-      await supabase.from('active_partners').update({ compliance_docs_url: data.path }).eq('id', partner.id);
-
-      setHasUploadedDocs(true);
-      setDocUploadMessage("✅ Documents successfully locked and stored.");
-      setTimeout(() => setDocUploadMessage(""), 5000);
-
-    } catch (error: any) {
-      console.error(error);
-      alert("Upload Failed: " + error.message);
-      setDocUploadMessage("");
-    } finally {
-      setIsUploadingDocs(false);
-    }
-  };
-
   // --- CSV EXPORT ENGINE ---
-  const sanitize = (str: any) => `"${String(str || '').replace(/"/g, '""')}"`;
-
   const downloadCSV = () => {
     const startStr = timeFilter === "all" ? "2000-01-01" : 
                      timeFilter === "monthly" ? getLocalDateString(new Date(new Date().setDate(1))) :
@@ -2466,11 +2308,11 @@ export default function PartnerDashboard() {
     const csvContent = [
       headers.join(","),
       ...exportData.map(s => [
-        sanitize(formatToDDMMYYYY(s.report_date)),
+        formatToDDMMYYYY(s.report_date),
         s.cbp_landline_amt || 0, s.cbp_gsm_amt || 0, s.ctop_recharge_amt || 0,
         s.sim_new_qty || 0, s.sim_upgrade_qty || 0, s.sim_replacement_qty || 0, s.sim_replacement_amt || 0,
         s.sim_fancy_qty || 0, s.sim_fancy_amt || 0, s.sim_postpaid_qty || 0, s.sim_postpaid_amt || 0,
-        s.cheque_amt || 0, s.other_amt || 0, sanitize(s.is_edited_by_staff ? "Audited" : "Original")
+        s.cheque_amt || 0, s.other_amt || 0, s.is_edited_by_staff ? "Audited" : "Original"
       ].join(","))
     ].join("\n");
 
@@ -2515,7 +2357,6 @@ export default function PartnerDashboard() {
 
   const visibleSales = rawSales.filter(s => normalizeToYYYYMMDD(s.report_date) >= startStr);
   const visibleDeposits = rawDeposits.filter(d => normalizeToYYYYMMDD(d.created_at) >= startStr);
-  const requiredDocs = getRequiredDocuments(partner?.role);
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
@@ -2722,7 +2563,7 @@ export default function PartnerDashboard() {
             </div>
           </div>
 
-          {/* Card 6: Store Marketing Assets & QR */}
+          {/* Card 6: [INJECTED] Store Marketing Assets & QR */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-full flex flex-col border-t-4 border-t-pink-500">
             <div className="bg-pink-50 px-5 py-3 border-b border-pink-100 flex justify-between items-center">
               <h3 className="text-xs font-black text-pink-900 uppercase tracking-widest">Store Assets & QR</h3>
@@ -2754,58 +2595,6 @@ export default function PartnerDashboard() {
             </div>
           </div>
 
-        </div>
-
-        {/* SECTION: COMPLIANCE DOCUMENTS UPLOAD ENGINE */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-8">
-          <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
-            <div>
-              <h2 className="font-black text-lg tracking-wide flex items-center gap-2"><span>📂</span> Mandatory Compliance Documents</h2>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Upload required operational documents for your role ({partner?.role})</p>
-            </div>
-            {hasUploadedDocs && (
-              <span className="bg-green-100 text-green-800 border border-green-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">✅ Uploaded & Locked</span>
-            )}
-          </div>
-          
-          <div className="p-6">
-             {hasUploadedDocs ? (
-                <div className="text-center p-8 bg-green-50 border border-green-200 rounded-xl">
-                   <span className="text-4xl mb-3 block">🔒</span>
-                   <h3 className="font-black text-green-800 text-lg">Documents Successfully Submitted</h3>
-                   <p className="text-sm font-bold text-green-700 mt-2">Your compliance documents have been securely merged, watermarked, and locked. They are now visible to the Corporate Command Center.</p>
-                </div>
-             ) : (
-                <form onSubmit={handleDocUploadSubmit} className="space-y-6">
-                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {requiredDocs.map((docName, idx) => (
-                         <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-lg flex flex-col justify-between">
-                            <label className="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">{idx + 1}. {docName} *</label>
-                            <input 
-                               type="file" 
-                               accept=".pdf, .jpg, .jpeg, .png" 
-                               required 
-                               onChange={(e) => handleDocFileChange(e, docName)}
-                               className="w-full text-xs font-medium text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                            />
-                         </div>
-                      ))}
-                   </div>
-                   {docUploadMessage && (
-                      <div className="p-3 bg-blue-50 text-blue-800 text-sm font-bold rounded border border-blue-200 text-center animate-pulse">
-                         {docUploadMessage}
-                      </div>
-                   )}
-                   <button 
-                      type="submit" 
-                      disabled={isUploadingDocs}
-                      className="w-full py-4 bg-slate-900 text-white font-black rounded-xl shadow-md uppercase tracking-widest hover:bg-blue-600 transition disabled:opacity-50"
-                   >
-                      {isUploadingDocs ? "Processing & Watermarking Securely..." : "Submit & Permanently Lock Documents"}
-                   </button>
-                </form>
-             )}
-          </div>
         </div>
 
         {/* SECTION: LIVE FINANCIAL LEDGER */}
@@ -2989,7 +2778,7 @@ export default function PartnerDashboard() {
                                   </div>
                                 ) : (
                                   <button onClick={() => setRequestingEditId(sale.id)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition border border-slate-600 flex justify-center items-center gap-2">
-                                    <span>⚠️️</span> Request Permission to Edit this Report
+                                    <span>⚠️</span> Request Permission to Edit this Report
                                   </button>
                                 )
                               )}
@@ -3516,7 +3305,7 @@ export default function PartnerLogin() {
     try {
       // 1. Authenticate with Supabase
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
+        email,
         password,
       });
 
@@ -3526,8 +3315,8 @@ export default function PartnerLogin() {
       // 2. Verify they are an Active Partner in the database
       const { data: partnerData, error: partnerError } = await supabase
         .from('active_partners')
-        .select('id, status, tc_accepted')
-        .eq('email', email.trim().toLowerCase())
+        .select('status, tc_accepted')
+        .eq('email', email)
         .single();
 
       if (partnerError || !partnerData) {
@@ -3540,23 +3329,7 @@ export default function PartnerLogin() {
         throw new Error("Account Suspended: Please contact your Fast Ark manager.");
       }
 
-      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      // Tracks the exact timestamp and user ID of the login to prevent false claims.
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: authData.user.id,
-        staff_email: email.trim().toLowerCase(),
-        action_type: 'SECURITY_AUDIT',
-        module: 'AUTHENTICATION',
-        target_id: partnerData.id,
-        details: `Partner successfully authenticated and established a secure session.`
-      }]);
-
-      // 4. Intelligent Routing (First-time password change -> T&C -> Dashboard)
-      if (authData.user.user_metadata?.must_change_password) {
-        router.push("/update-password");
-        return;
-      }
-
+      // 3. Intelligent Routing (The T&C Wall)
       if (!partnerData.tc_accepted) {
         router.push("/partner/terms");
       } else {
@@ -3584,7 +3357,7 @@ export default function PartnerLogin() {
 
         <div className="p-8">
           {errorMsg && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 font-bold text-sm rounded-lg shadow-sm leading-relaxed">
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 font-bold text-sm rounded-lg shadow-sm">
               {errorMsg}
             </div>
           )}
@@ -3599,17 +3372,11 @@ export default function PartnerLogin() {
                 placeholder="Enter your registered email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
               />
             </div>
 
             <div>
-              <div className="flex justify-between items-center mb-1.5">
-                <label className="text-[10px] uppercase tracking-widest font-black text-slate-500">Password</label>
-                <Link href="/forgot-password" className="text-[10px] font-bold text-blue-600 hover:underline">
-                  Forgot Password?
-                </Link>
-              </div>
+              <label className="block text-[10px] uppercase tracking-widest font-black text-slate-500 mb-1.5">Password</label>
               <input 
                 type="password" 
                 required 
@@ -3617,7 +3384,6 @@ export default function PartnerLogin() {
                 placeholder="Enter the password sent to your email"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
               />
             </div>
 
@@ -3626,7 +3392,7 @@ export default function PartnerLogin() {
               disabled={loading}
               className="w-full bg-slate-900 text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg hover:bg-blue-600 transition transform hover:-translate-y-0.5 disabled:bg-slate-300 disabled:text-slate-500 disabled:transform-none mt-2"
             >
-              {loading ? "Authenticating Clearance & Logging..." : "Secure Login"}
+              {loading ? "Authenticating..." : "Secure Login"}
             </button>
           </form>
 
@@ -5900,52 +5666,45 @@ export default function InfrastructureCommandCenter() {
   };
   const [formData, setFormData] = useState(initialForm);
 
-  // TRIPLE-AXIS CASCADING FILTERS
+  // Filters
   const [filterRole, setFilterRole] = useState("ALL");
-  const [filterState, setFilterState] = useState("ALL");
-  const [filterMasterHQ, setFilterMasterHQ] = useState("ALL");
 
   useEffect(() => {
     fetchLocations();
   }, []);
 
-  // Smart UX: Reset Master HQ filter when the State filter changes
-  useEffect(() => {
-    setFilterMasterHQ("ALL");
-  }, [filterState]);
-
   // AUTO-FETCH ENGINE: PIN -> Taluk, Dist, State
   useEffect(() => {
-    if (formData.pin_code.length !== 6) {
-      setPinError("");
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsFetchingPin(true);
-      setPinError("");
-      try {
-        const res = await fetch(`https://api.postalpincode.in/pincode/${formData.pin_code}`);
-        const data = await res.json();
-        if (data && data[0] && data[0].Status === "Success") {
-          const postOffice = data[0].PostOffice[0];
-          setFormData(prev => ({
-            ...prev,
-            taluk: postOffice.Block || postOffice.Name || "",
-            dist: postOffice.District || "",
-            state: postOffice.State || "" 
-          }));
-        } else {
-          setPinError("Invalid PIN Code. Please verify.");
+    const fetchLocationData = async () => {
+      if (formData.pin_code.length === 6) {
+        setIsFetchingPin(true);
+        setPinError("");
+        try {
+          const res = await fetch(`https://api.postalpincode.in/pincode/${formData.pin_code}`);
+          const data = await res.json();
+          
+          if (data && data[0] && data[0].Status === "Success") {
+            const postOffice = data[0].PostOffice[0];
+            setFormData(prev => ({
+              ...prev,
+              taluk: postOffice.Block || postOffice.Name || "",
+              dist: postOffice.District || "",
+              state: postOffice.State || "" 
+            }));
+          } else {
+            setPinError("Invalid PIN Code. Please verify.");
+          }
+        } catch (err) {
+          setPinError("Network error. Please enter details manually.");
+        } finally {
+          setIsFetchingPin(false);
         }
-      } catch (err) {
-        setPinError("Network error. Please enter details manually.");
-      } finally {
-        setIsFetchingPin(false);
+      } else {
+        setPinError("");
       }
-    }, 500); // 500ms debounce
+    };
 
-    return () => clearTimeout(timer);
+    fetchLocationData();
   }, [formData.pin_code]);
 
   const fetchLocations = async () => {
@@ -6053,37 +5812,19 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
-  // DYNAMIC DATA EXTRACTION
-  const uniqueStates = Array.from(new Set(locations.map(loc => loc.state).filter(Boolean))).sort();
-  const masterHQs = locations.filter(loc => loc.is_master_node);
-  
-  // Dynamically populate the Master HQ filter dropdown based on the selected State
-  const masterHQsForFilter = masterHQs
-    .filter(hq => filterState === "ALL" || hq.state === filterState)
-    .sort((a, b) => a.center_name.localeCompare(b.center_name));
-
-  // TRIPLE-AXIS STRICT FILTER ENGINE
+  // Strict Filter Engine
   const filteredLocations = locations.filter(loc => {
-    // 1. Role Verification
-    let roleMatch = true;
-    if (filterRole === "HQ") roleMatch = loc.is_master_node;
-    else if (filterRole === "CM") roleMatch = loc.role_cm;
-    else if (filterRole === "OCSC") roleMatch = loc.role_ocsc;
-    else if (filterRole === "AADHAAR") roleMatch = loc.role_aadhaar;
-    else if (filterRole === "PARTNER") roleMatch = loc.role_partner;
-
-    // 2. Geography Verification (State)
-    let stateMatch = filterState === "ALL" || loc.state === filterState;
-
-    // 3. Network Topology Verification (Master HQ)
-    let hqMatch = true;
-    if (filterMasterHQ !== "ALL") {
-      // If a Master HQ is selected, only show spokes tethered to it, OR show the HQ itself.
-      hqMatch = loc.parent_master_id?.toString() === filterMasterHQ || loc.id.toString() === filterMasterHQ;
-    }
-
-    return roleMatch && stateMatch && hqMatch;
+    if (filterRole === "ALL") return true;
+    if (filterRole === "HQ") return loc.is_master_node;
+    if (filterRole === "CM") return loc.role_cm;
+    if (filterRole === "OCSC") return loc.role_ocsc;
+    if (filterRole === "AADHAAR") return loc.role_aadhaar;
+    if (filterRole === "PARTNER") return loc.role_partner;
+    return true;
   });
+
+  // Extract master locations to populate the tethering dropdown
+  const masterHQs = locations.filter(loc => loc.is_master_node);
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -6110,65 +5851,23 @@ export default function InfrastructureCommandCenter() {
         </div>
       </div>
 
-      {/* TRIPLE-AXIS FILTER CONSOLE */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        
-        {/* AXIS 1: ROLE */}
-        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-            All Roles
-          </button>
-          <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-            Master HQs
-          </button>
-          <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-            Franchises
-          </button>
-          <button onClick={() => setFilterRole('OCSC')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'OCSC' ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-            OCSC
-          </button>
-          <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-            CM
-          </button>
-        </div>
-
-        {/* AXIS 2 & 3: GEOGRAPHY & TOPOLOGY */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full xl:w-auto pt-4 xl:pt-0 border-t xl:border-t-0 border-slate-100">
-          
-          <div className="flex flex-col w-full sm:w-auto">
-            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">State Level Filter:</label>
-            <select 
-              value={filterState} 
-              onChange={(e) => setFilterState(e.target.value)} 
-              className="w-full sm:w-48 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:bg-white transition"
-            >
-              <option value="ALL">All States</option>
-              {uniqueStates.map(state => (
-                <option key={state} value={state}>{state}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col w-full sm:w-auto">
-            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Hub Level Filter:</label>
-            <select 
-              value={filterMasterHQ} 
-              onChange={(e) => setFilterMasterHQ(e.target.value)} 
-              disabled={filterRole === 'HQ' || masterHQsForFilter.length === 0}
-              className="w-full sm:w-56 border-2 border-slate-200 bg-slate-50 p-2 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition disabled:opacity-50 disabled:bg-slate-100"
-            >
-              <option value="ALL">All Master HQs</option>
-              {masterHQsForFilter.map(hq => (
-                <option key={hq.id} value={hq.id}>{hq.center_name}</option>
-              ))}
-            </select>
-          </div>
-
-        </div>
-      </div>
-
-      <div className="mb-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
-        Showing {filteredLocations.length} Results
+      {/* FILTER RIBBON */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          All Grid ({locations.length})
+        </button>
+        <button onClick={() => setFilterRole('HQ')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'HQ' ? 'bg-indigo-600 text-white border-indigo-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          Master HQs ({locations.filter(l => l.is_master_node).length})
+        </button>
+        <button onClick={() => setFilterRole('PARTNER')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'PARTNER' ? 'bg-purple-600 text-white border-purple-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          Franchises ({locations.filter(l => l.role_partner).length})
+        </button>
+        <button onClick={() => setFilterRole('OCSC')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'OCSC' ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          OCSC ({locations.filter(l => l.role_ocsc).length})
+        </button>
+        <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          CM ({locations.filter(l => l.role_cm).length})
+        </button>
       </div>
 
       {/* LOCATIONS GRID */}
@@ -6176,7 +5875,7 @@ export default function InfrastructureCommandCenter() {
         <div className="bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
           <div className="text-5xl mb-4">🌍</div>
           <h2 className="text-xl font-black text-slate-700">No Locations Found</h2>
-          <p className="text-slate-500 font-medium mt-2">No physical centers match the selected role and geographic filters.</p>
+          <p className="text-slate-500 font-medium mt-2">No physical centers match this operational role.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
@@ -7136,8 +6835,7 @@ export default function ManagerMISDashboard() {
     location_id: "",
     master_ctop_id: "",
     entry_type: "Opening Balance",
-    cbp_landline_qty: "", 
-    cbp_gsm_qty: "",
+    cbp_qty: "", 
     ctop_qty: "",
     sim_qty: ""
   });
@@ -7157,13 +6855,9 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 3: SALES STATE (UPGRADED WITH EDIT & CONFIRM)
+  // TAB 3: SALES STATE
   // ==========================================
   const [rawSales, setRawSales] = useState<any[]>([]);
-  const [editingSalesId, setEditingSalesId] = useState<string | null>(null);
-  const [confirmSalesLock, setConfirmSalesLock] = useState(false);
-  const [salesEditRemarks, setSalesEditRemarks] = useState("");
-
   const [ocscSales, setOcscSales] = useState({
     cbp_landline_qty: "", cbp_landline_cash: "", cbp_gsm_qty: "", cbp_gsm_cash: "", 
     ctop_recharge_qty: "", ctop_recharge_cash: "",
@@ -7184,7 +6878,7 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 5: COMMISSIONS STATE
+  // TAB 5: COMMISSIONS STATE (NEW)
   // ==========================================
   const [rawCommissions, setRawCommissions] = useState<any[]>([]);
   const [commissionForm, setCommissionForm] = useState({
@@ -7195,7 +6889,6 @@ export default function ManagerMISDashboard() {
   // TAB 6: REPORTING ENGINE STATES
   // ==========================================
   const [repTimeFilter, setRepTimeFilter] = useState("this_month");
-  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); 
   const [repMasterFilter, setRepMasterFilter] = useState("ALL");
   const [repChildFilter, setRepChildFilter] = useState("ALL");
 
@@ -7245,27 +6938,14 @@ export default function ManagerMISDashboard() {
   };
 
   useEffect(() => {
-    const loadCmSales = async () => {
-      if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
-        const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
-        const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
-        
-        let existingChildSales: any[] = [];
-        if (editingSalesId) {
-           const { data } = await supabase.from('mis_cm_agent_sales').select('*').eq('monthly_sales_id', editingSalesId);
-           existingChildSales = data || [];
-        }
-        
-        setCmSales(filteredAgents.map(a => {
-          const existing = existingChildSales.find(e => e.agent_ctop_no === a.agent_ctop_no);
-          return { agent_ctop_no: a.agent_ctop_no, qty: existing ? existing.qty.toString() : "" };
-        }));
-      } else {
-        setCmSales([]);
-      }
-    };
-    loadCmSales();
-  }, [selectedChildLocKey, agentMappings, editingSalesId]);
+    if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
+      const locIdInt = parseInt(selectedChildLocKey.split('-')[0]); 
+      const filteredAgents = agentMappings.filter(a => a.active_partners?.locations?.id === locIdInt);
+      setCmSales(filteredAgents.map(a => ({ agent_ctop_no: a.agent_ctop_no, qty: "" })));
+    } else {
+      setCmSales([]);
+    }
+  }, [selectedChildLocKey, agentMappings]);
 
   useEffect(() => {
     if (purchaseForm.manual_qty_override) return; 
@@ -7314,8 +6994,7 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_landline_qty: parseFloat(balanceForm.cbp_landline_qty) || 0,
-        cbp_gsm_qty: parseFloat(balanceForm.cbp_gsm_qty) || 0,
+        cbp_qty: parseFloat(balanceForm.cbp_qty) || 0,
         ctop_qty: parseFloat(balanceForm.ctop_qty) || 0,
         sim_qty: parseFloat(balanceForm.sim_qty) || 0,
         logged_by: user.id
@@ -7339,7 +7018,7 @@ export default function ManagerMISDashboard() {
         alert("✅ Balance Record Successfully Saved.");
       }
 
-      setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""});
+      setBalanceForm({...balanceForm, cbp_qty: "", ctop_qty: "", sim_qty: ""});
       setEditingBalanceId(null);
       fetchArchitectureAndReports();
     } catch (err: any) {
@@ -7356,8 +7035,7 @@ export default function ManagerMISDashboard() {
       location_id: bal.location_id.toString(),
       master_ctop_id: bal.master_ctop_id,
       entry_type: bal.entry_type,
-      cbp_landline_qty: bal.cbp_landline_qty?.toString() || "", 
-      cbp_gsm_qty: bal.cbp_gsm_qty?.toString() || "",
+      cbp_qty: bal.cbp_qty?.toString() || "", 
       ctop_qty: bal.ctop_qty?.toString() || "",
       sim_qty: bal.sim_qty?.toString() || ""
     });
@@ -7413,7 +7091,6 @@ export default function ManagerMISDashboard() {
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
-    if (!confirmSalesLock) return alert("You must check the confirmation box to proceed.");
     setIsSubmitting(true);
 
     try {
@@ -7443,7 +7120,7 @@ export default function ManagerMISDashboard() {
         sim_other_cash: parseFloat(ocscSales.sim_other_cash) || 0,
       };
 
-      const basePayload = {
+      const parentPayload = {
         reporting_month: dbReportingMonth,
         location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         center_type: centerType,
@@ -7451,69 +7128,28 @@ export default function ManagerMISDashboard() {
         ...(centerType === 'OCSC' ? cleanOcscSales : {}) 
       };
 
-      if (editingSalesId) {
-        if (!salesEditRemarks || salesEditRemarks.trim().length < 5) {
-          setIsSubmitting(false);
-          return alert("Audit log remarks are mandatory for modifying a locked sales ledger.");
+      const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([parentPayload]).select().single();
+      if (parentError) throw parentError;
+
+      if (centerType === 'CM' && cmSales.length > 0) {
+        const childPayloads = cmSales.map(agent => ({
+          monthly_sales_id: parentRecord.id,
+          agent_ctop_no: agent.agent_ctop_no,
+          qty: parseFloat(agent.qty) || 0 
+        })).filter(payload => payload.qty > 0); 
+
+        if (childPayloads.length > 0) {
+          const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
+          if (childError) throw childError;
         }
-
-        const updatePayload = {
-          ...basePayload,
-          is_edited_by_staff: true,
-          staff_edit_remarks: salesEditRemarks
-        };
-
-        const { error: updateError } = await supabase.from('mis_monthly_sales').update(updatePayload).eq('id', editingSalesId);
-        if (updateError) throw updateError;
-
-        if (centerType === 'CM' && cmSales.length > 0) {
-          await supabase.from('mis_cm_agent_sales').delete().eq('monthly_sales_id', editingSalesId);
-          const childPayloads = cmSales.map(agent => ({
-            monthly_sales_id: editingSalesId,
-            agent_ctop_no: agent.agent_ctop_no,
-            qty: parseFloat(agent.qty) || 0 
-          })).filter(payload => payload.qty > 0); 
-          if (childPayloads.length > 0) {
-            const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
-            if (childError) throw childError;
-          }
-        }
-
-        await supabase.from('staff_activity_logs').insert([{
-          staff_id: user.id, staff_email: user.email, action_type: 'MIS_EDIT', module: 'MANAGER_MIS',
-          target_id: editingSalesId, details: `Modified Sales Ledger for ${centerType}. Remarks: ${salesEditRemarks}`
-        }]);
-
-        alert(`✅ Center Sales successfully updated & audited.`);
-
-      } else {
-        const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([basePayload]).select().single();
-        if (parentError) throw parentError;
-
-        if (centerType === 'CM' && cmSales.length > 0) {
-          const childPayloads = cmSales.map(agent => ({
-            monthly_sales_id: parentRecord.id,
-            agent_ctop_no: agent.agent_ctop_no,
-            qty: parseFloat(agent.qty) || 0 
-          })).filter(payload => payload.qty > 0); 
-
-          if (childPayloads.length > 0) {
-            const { error: childError } = await supabase.from('mis_cm_agent_sales').insert(childPayloads);
-            if (childError) throw childError;
-          }
-        }
-
-        await supabase.from('staff_activity_logs').insert([{
-          staff_id: user.id, staff_email: user.email, action_type: 'MIS_CLOSURE', module: 'MANAGER_MIS',
-          target_id: parentRecord.id, details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
-        }]);
-
-        alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
       }
 
-      setEditingSalesId(null);
-      setConfirmSalesLock(false);
-      setSalesEditRemarks("");
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: user.id, staff_email: user.email, action_type: 'MIS_CLOSURE', module: 'MANAGER_MIS',
+        target_id: parentRecord.id, details: `Locked Center Sales for ${centerType} location. Month: ${reportingMonth}`
+      }]);
+
+      alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
       fetchArchitectureAndReports(); 
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
@@ -7521,44 +7157,6 @@ export default function ManagerMISDashboard() {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleEditSales = (sale: any) => {
-    setEditingSalesId(sale.id);
-    setReportingMonth(sale.reporting_month.substring(0, 7));
-    setEntryMasterLocId(sale.locations?.parent_master_id?.toString() || "");
-    setSelectedChildLocKey(`${sale.location_id}-${sale.center_type}`);
-    setConfirmSalesLock(false);
-    setSalesEditRemarks("");
-    
-    if (sale.center_type === 'OCSC') {
-      setOcscSales({
-        cbp_landline_qty: sale.cbp_landline_qty?.toString() || "",
-        cbp_landline_cash: sale.cbp_landline_cash?.toString() || "",
-        cbp_gsm_qty: sale.cbp_gsm_qty?.toString() || "",
-        cbp_gsm_cash: sale.cbp_gsm_cash?.toString() || "",
-        ctop_recharge_qty: sale.ctop_recharge_qty?.toString() || "",
-        ctop_recharge_cash: sale.ctop_recharge_cash?.toString() || "",
-        sim_new_qty: sale.sim_new_qty?.toString() || "",
-        sim_upgrade_qty: sale.sim_upgrade_qty?.toString() || "",
-        sim_postpaid_qty: sale.sim_postpaid_qty?.toString() || "",
-        sim_postpaid_amt: sale.sim_postpaid_amt?.toString() || "",
-        sim_replace_qty: sale.sim_replace_qty?.toString() || "",
-        sim_replace_cash: sale.sim_replace_cash?.toString() || "",
-        sim_fancy_qty: sale.sim_fancy_qty?.toString() || "",
-        sim_fancy_cash: sale.sim_fancy_cash?.toString() || "",
-        sim_other_qty: sale.sim_other_qty?.toString() || "",
-        sim_other_cash: sale.sim_other_cash?.toString() || "",
-      });
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const cancelSalesEdit = () => {
-    setEditingSalesId(null);
-    setConfirmSalesLock(false);
-    setSalesEditRemarks("");
-    setSelectedChildLocKey("");
   };
 
   const handleCollectionSubmit = async (e: React.FormEvent) => {
@@ -7638,28 +7236,22 @@ export default function ManagerMISDashboard() {
     } catch (err: any) { alert("Error: " + err.message); } finally { setIsSubmitting(false); }
   };
 
-  // --- HELPER: CALCULATE TOTAL SALES CASH ---
-  const calculateTotalSalesCash = (s: any) => {
-    return Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0) + Number(s.ctop_recharge_cash||0) + 
-           Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0);
-  };
-
   // --- CSV EXPORT ENGINE ---
   const downloadCSV = (type: string, data: any[]) => {
     if (data.length === 0) return alert("No data available to export.");
     let csvContent = "";
     
     if (type === 'balances') {
-      csvContent = "Date,Type,Location,CTOP,CBP_Landline_Qty,CBP_GSM_Qty,CTOP_Qty,SIM_Qty\n" + data.map(r => 
-        `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_landline_qty},${r.cbp_gsm_qty},${r.ctop_qty},${r.sim_qty}`
+      csvContent = "Date,Type,Location,CTOP,CBP_Qty,CTOP_Qty,SIM_Qty\n" + data.map(r => 
+        `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_qty},${r.ctop_qty},${r.sim_qty}`
       ).join("\n");
     } else if (type === 'purchases') {
       csvContent = "Date,Location,CTOP,Product,Qty,Amount_INR\n" + data.map(r => 
         `${r.purchase_date},${sanitizeCSV(r.locations?.center_name || 'N/A')},${r.master_ctop_accounts?.master_ctop_no},${r.product_category},${r.qty},${r.amount}`
       ).join("\n");
     } else if (type === 'sales') {
-      csvContent = "Month,Location,Type,CBP_Landline_Cash,CBP_GSM_Cash,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,Edited,Audit_Remarks\n" + data.map(r => 
-        `${r.reporting_month},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_cash||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
+      csvContent = "Month,Location,Type,CBP_Landline_Cash,CBP_GSM_Cash,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty\n" + data.map(r => 
+        `${r.reporting_month},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_cash||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0}`
       ).join("\n");
     } else if (type === 'collections') {
       csvContent = "Month,Location,Collected_INR,Remarks,Edited,Audit_Remarks\n" + data.map(r => 
@@ -7678,6 +7270,8 @@ export default function ManagerMISDashboard() {
     link.click();
   };
 
+
+  // 🔴 CRITICAL FIX: To prevent Temporal Dead Zone ReferenceError during Vercel Build
   const locType = getActiveLocationType();
   const liveAmt = parseFloat(purchaseForm.amount) || 0;
   const livePct = parseFloat(purchaseForm.commission_percent) || 0;
@@ -7687,37 +7281,6 @@ export default function ManagerMISDashboard() {
   const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
   const mappedMasterCtopsForBalance = masterCtops.filter(m => m.location_id?.toString() === balanceForm.location_id);
   const mappedMasterCtopsForComms = masterCtops.filter(m => m.location_id?.toString() === entryMasterLocId);
-
-  // --- TAB 3 DASHBOARD CALCULATIONS ---
-  const currentMonthSalesContext = rawSales.filter(s => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
-  const cumulativeSalesCash = currentMonthSalesContext.reduce((sum, s) => sum + calculateTotalSalesCash(s), 0);
-  const cumulativeCBPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
-  const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.ctop_recharge_cash||0), 0);
-  const cumulativeSIMCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
-
-  // --- TYPE-SAFE TAB 4 RECONCILIATION CALCULATIONS ---
-  const currentMonthCollectionsContext = rawCollections.filter(c => c.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || c.locations?.parent_master_id?.toString() === entryMasterLocId));
-  
-  // FIX: Using flatMap to guarantee a 100% type-safe array without 'null' evaluation
-  const locationReconciliation = entryFilteredFranchises.flatMap(loc => {
-    const s = currentMonthSalesContext.find(sale => sale.location_id === loc.id);
-    const c = currentMonthCollectionsContext.find(col => col.location_id === loc.id);
-    
-    if (!s && !c) return []; // Completely ignores empty rows
-
-    const salesCash = s ? calculateTotalSalesCash(s) : 0;
-    const colCash = c ? Number(c.total_cash_collected || 0) : 0;
-    const pending = salesCash - colCash;
-    
-    return [{ 
-      id: loc.id, 
-      name: loc.center_name, 
-      type: loc.role_ocsc ? 'OCSC' : loc.role_cm ? 'CM' : 'Franchise', 
-      sales: salesCash, 
-      collection: colCash, 
-      pending 
-    }];
-  });
 
   // --- REPORTING LOGIC & EXACT MATH ENGINE ---
   const getFilteredReports = () => {
@@ -7729,25 +7292,23 @@ export default function ManagerMISDashboard() {
 
     const today = new Date();
     let startDate = new Date("2000-01-01");
-    let endDate = new Date("2100-01-01");
 
-    if (repTimeFilter === "this_month") {
+    if (repTimeFilter === "today") {
+      startDate = new Date(today.setHours(0,0,0,0));
+    } else if (repTimeFilter === "this_week") {
+      startDate = new Date(today.setDate(today.getDate() - today.getDay()));
+    } else if (repTimeFilter === "this_month") {
       startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else if (repTimeFilter === "specific_month") {
-      const selectedMonth = new Date(`${repMonthFilter}-01`);
-      startDate = selectedMonth;
-      endDate = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0); 
     }
 
     const startStr = startDate.toISOString().split('T')[0];
-    const endStr = endDate.toISOString().split('T')[0];
 
     if (repTimeFilter !== "all") {
-      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr && p.purchase_date <= endStr);
-      fSales = fSales.filter(s => s.reporting_month >= startStr && s.reporting_month <= endStr);
-      fCollections = fCollections.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
-      fBalances = fBalances.filter(b => b.report_date >= startStr && b.report_date <= endStr);
-      fComms = fComms.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
+      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr);
+      fSales = fSales.filter(s => s.reporting_month >= startStr);
+      fCollections = fCollections.filter(c => c.reporting_month >= startStr);
+      fBalances = fBalances.filter(b => b.report_date >= startStr);
+      fComms = fComms.filter(c => c.reporting_month >= startStr);
     }
 
     if (repMasterFilter !== "ALL") {
@@ -7757,6 +7318,13 @@ export default function ManagerMISDashboard() {
       fCollections = fCollections.filter(c => c.locations?.parent_master_id === masterId);
       fBalances = fBalances.filter(b => b.location_id === masterId);
       fComms = fComms.filter(c => c.location_id === masterId);
+    }
+
+    if (repChildFilter !== "ALL") {
+      const childId = parseInt(repChildFilter);
+      fPurchases = []; 
+      fSales = fSales.filter(s => s.location_id === childId);
+      fCollections = fCollections.filter(c => c.location_id === childId);
     }
 
     // Master HQ Aggregation Engine
@@ -7769,8 +7337,8 @@ export default function ManagerMISDashboard() {
       const openBals = hqBals.filter(b => b.entry_type === 'Opening Balance');
       const closeBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
       
-      const openCBP = openBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
-      const closeCBP = closeBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
+      const openCBP = openBals.reduce((sum, b) => sum + Number(b.cbp_qty||0), 0);
+      const closeCBP = closeBals.reduce((sum, b) => sum + Number(b.cbp_qty||0), 0);
       const openCTOP = openBals.reduce((sum, b) => sum + Number(b.ctop_qty||0), 0);
       const closeCTOP = closeBals.reduce((sum, b) => sum + Number(b.ctop_qty||0), 0);
       const openSIM = openBals.reduce((sum, b) => sum + Number(b.sim_qty||0), 0);
@@ -7793,7 +7361,7 @@ export default function ManagerMISDashboard() {
       const cInst = hqComms.reduce((sum, c) => sum + Number(c.instant_commission||0), 0);
       const cPend = hqComms.reduce((sum, c) => sum + Number(c.pending_commission||0), 0);
 
-      // 5. Variance Math
+      // 5. Variance Math: (Open - Close) + Purchase + Comm(Inst) + Comm(Pend) - Sales = Variance
       const vCBP = (openCBP - closeCBP) + pCBP - sCBP;
       const vCTOP = (openCTOP - closeCTOP) + pCTOP + cInst + cPend - sCTOP;
       const vSIM = (openSIM - closeSIM) + pSIM - sSIM;
@@ -7806,10 +7374,16 @@ export default function ManagerMISDashboard() {
       };
     });
 
-    return { hqMap };
+    const totalPurchasedValue = fPurchases.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalSalesCash = fSales.reduce((sum, s) => sum + 
+      Number(s.cbp_landline_cash || 0) + Number(s.cbp_gsm_cash || 0) + Number(s.ctop_recharge_cash || 0) +
+      Number(s.sim_replace_cash || 0) + Number(s.sim_fancy_cash || 0) + Number(s.sim_other_cash || 0), 0);
+    const totalCollected = fCollections.reduce((sum, c) => sum + Number(c.total_cash_collected), 0);
+
+    return { fPurchases, fSales, fCollections, fBalances, fComms, totalPurchasedValue, totalSalesCash, totalCollected, hqMap };
   };
 
-  const { hqMap } = getFilteredReports();
+  const { fPurchases, fSales, fCollections, fBalances, fComms, totalPurchasedValue, totalSalesCash, totalCollected, hqMap } = getFilteredReports();
   const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   if (loading) return (
@@ -7866,7 +7440,7 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
               {editingBalanceId && (
-                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_qty: "", ctop_qty: "", sim_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
                   Cancel Edit
                 </button>
               )}
@@ -7905,14 +7479,10 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Landline (Qty) *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_landline_qty} onChange={e => setBalanceForm({...balanceForm, cbp_landline_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP GSM (Qty) *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_gsm_qty} onChange={e => setBalanceForm({...balanceForm, cbp_gsm_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Quantity *</label>
+                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Quantity *</label>
@@ -7920,7 +7490,7 @@ export default function ManagerMISDashboard() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">SIM Quantity *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.sim_qty} onChange={e => setBalanceForm({...balanceForm, sim_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
+                  <input required type="number" step="0.01" min="0" value={balanceForm.sim_qty} onChange={e => setBalanceForm({...balanceForm, sim_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
                 </div>
               </div>
               
@@ -7943,8 +7513,7 @@ export default function ManagerMISDashboard() {
                   <tr>
                     <th className="p-4 font-black">Date & Type</th>
                     <th className="p-4 font-black">Master Location & CTOP</th>
-                    <th className="p-4 font-black text-right">CBP Landline (Qty)</th>
-                    <th className="p-4 font-black text-right">CBP GSM (Qty)</th>
+                    <th className="p-4 font-black text-right">CBP (Qty)</th>
                     <th className="p-4 font-black text-right">CTOP (Qty)</th>
                     <th className="p-4 font-black text-right">SIM (Qty)</th>
                     <th className="p-4 font-black text-right">Action</th>
@@ -7952,7 +7521,7 @@ export default function ManagerMISDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {rawBalances.length === 0 ? (
-                    <tr><td colSpan={7} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
+                    <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
                   ) : (
                     rawBalances.slice(0, 50).map(bal => (
                       <tr key={bal.id} className={`transition ${editingBalanceId === bal.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
@@ -7966,9 +7535,8 @@ export default function ManagerMISDashboard() {
                           <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
                           <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
                         </td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_landline_qty || 0).toLocaleString('en-IN')}</td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_gsm_qty || 0).toLocaleString('en-IN')}</td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                         <td className="p-4 text-right font-black text-slate-800">{Number(bal.sim_qty || 0).toLocaleString('en-IN')}</td>
                         <td className="p-4 text-right">
                           <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
@@ -8166,42 +7734,9 @@ export default function ManagerMISDashboard() {
           {/* TAB 3: MONTHLY SALES ENGINE */}
           {activeTab === 'sales' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-              
-              {/* CUMULATIVE SALES DASHBOARD */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
-                <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
-                  <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumulativeSalesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CBP Cash</p>
-                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCBPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CTOP Cash</p>
-                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCTOPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SIM Cash</p>
-                  <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeSIMCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-                </div>
-              </div>
-
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
-                  <div className="flex gap-4 items-center">
-                    <span className="text-3xl">📝</span>
-                    <div>
-                      <h2 className={`font-black uppercase tracking-widest ${editingSalesId ? 'text-amber-900' : 'text-white'}`}>
-                        {editingSalesId ? `Editing Sales Ledger (${reportingMonth})` : `Sales Entry (${reportingMonth})`}
-                      </h2>
-                    </div>
-                  </div>
-                  {editingSalesId && (
-                    <button onClick={cancelSalesEdit} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
-                      Cancel Edit
-                    </button>
-                  )}
+                <div className="flex justify-between items-center mb-6 border-b pb-4">
+                  <h2 className="text-lg font-black text-slate-800">Sales Entry ({reportingMonth})</h2>
                 </div>
 
                 {!locType ? (
@@ -8275,30 +7810,8 @@ export default function ManagerMISDashboard() {
                         )}
                       </div>
                     )}
-
-                    {/* TWO-FACTOR VERIFICATION ENGINE */}
-                    {editingSalesId && (
-                      <div className="bg-red-50 p-4 border border-red-200 rounded-lg animate-in fade-in">
-                        <label className="block text-[10px] text-red-600 font-black uppercase tracking-widest mb-1.5">Audit Remarks (Mandatory for Modifying Locked Sales) *</label>
-                        <input required type="text" value={salesEditRemarks} onChange={e => setSalesEditRemarks(e.target.value)} className={numInputClass} placeholder="Reason for editing this locked entry..." />
-                      </div>
-                    )}
-
-                    <div className="bg-amber-50 p-4 border border-amber-200 rounded-lg flex items-center gap-3 animate-in fade-in">
-                      <input 
-                        type="checkbox" 
-                        id="confirmSales"
-                        checked={confirmSalesLock} 
-                        onChange={(e) => setConfirmSalesLock(e.target.checked)}
-                        className="w-5 h-5 accent-amber-600 cursor-pointer" 
-                      />
-                      <label htmlFor="confirmSales" className="text-xs font-black text-amber-800 uppercase tracking-widest cursor-pointer flex-1">
-                        I confirm these sales figures are accurate and verified. {editingSalesId && "(Audit action will be logged)"}
-                      </label>
-                    </div>
-
-                    <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0) || !confirmSalesLock} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
-                      {isSubmitting ? "Locking Ledger..." : editingSalesId ? "Update & Save Ledger" : "Finalize & Lock Center Sales"}
+                    <button type="submit" disabled={isSubmitting || (locType === 'CM' && cmSales.length === 0)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+                      {isSubmitting ? "Locking Ledger..." : "Finalize & Lock Center Sales"}
                     </button>
                   </form>
                 )}
@@ -8307,29 +7820,21 @@ export default function ManagerMISDashboard() {
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
                   <h3 className="font-black uppercase text-xs">Sales Ledger</h3>
-                  <button onClick={() => downloadCSV('sales', rawSales)} className="bg-slate-700 px-3 py-1 rounded text-[10px] font-bold shadow transition">📥 CSV</button>
+                  <button onClick={() => downloadCSV('sales', rawSales)} className="bg-slate-700 px-3 py-1 rounded text-[10px] font-bold">📥 CSV</button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm whitespace-nowrap">
-                    <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b">
-                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Cash</th><th className="p-4 text-right">Action</th></tr>
+                    <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 border-b">
+                      <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Qty (New)</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {rawSales.slice(0, 50).map(s => (
-                        <tr key={s.id} className={`transition ${editingSalesId === s.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
+                        <tr key={s.id} className="hover:bg-slate-50">
                           <td className="p-4 font-black">{s.reporting_month}</td>
-                          <td className="p-4 font-bold text-slate-800">
-                            {s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span>
-                            {s.is_edited_by_staff && <span className="block text-[9px] text-red-500 font-bold uppercase mt-1">Edited: {s.staff_edit_remarks}</span>}
-                          </td>
-                          <td className="p-4 text-right font-black">₹{Number(Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                          <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                          <td className="p-4 text-right font-black">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                          <td className="p-4 text-right">
-                            <button onClick={() => handleEditSales(s)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
-                              Edit
-                            </button>
-                          </td>
+                          <td className="p-4 font-bold text-slate-800">{s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span></td>
+                          <td className="p-4 text-right font-black">₹{Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)}</td>
+                          <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0)}</td>
+                          <td className="p-4 text-right font-black">{s.sim_new_qty||0}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -8341,51 +7846,6 @@ export default function ManagerMISDashboard() {
 
           {activeTab === 'collection' && (
             <div className="space-y-6 animate-in fade-in">
-              
-              {/* FINANCIAL RECONCILIATION MATRIX */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
-                <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
-                  <h3 className="font-black uppercase text-xs">Financial Reconciliation Matrix ({reportingMonth})</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm whitespace-nowrap">
-                    <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b">
-                      <tr>
-                        <th className="p-4">Center</th>
-                        <th className="p-4 text-right text-indigo-600">Total Sales (₹)</th>
-                        <th className="p-4 text-right text-emerald-600">Total Collected (₹)</th>
-                        <th className="p-4 text-right text-red-500">Pending Balance (₹)</th>
-                        <th className="p-4 text-right">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {locationReconciliation.length === 0 ? (
-                        <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">No sales or collection activity found for the selected month/HQ context.</td></tr>
-                      ) : (
-                        locationReconciliation.map((rec) => (
-                          <tr key={rec.id} className="hover:bg-slate-50 transition">
-                            <td className="p-4">
-                              <p className="font-black text-slate-800">{rec.name}</p>
-                              <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest">{rec.type}</span>
-                            </td>
-                            <td className="p-4 text-right font-black text-indigo-700">₹{rec.sales.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                            <td className="p-4 text-right font-black text-emerald-600">₹{rec.collection.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                            <td className="p-4 text-right font-black text-red-600">₹{rec.pending.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                            <td className="p-4 text-right">
-                              {rec.pending <= 0 ? (
-                                <span className="bg-emerald-50 text-emerald-600 border border-emerald-200 px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest">Settled</span>
-                              ) : (
-                                <span className="bg-red-50 text-red-600 border border-red-200 px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest">Pending</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
               <div className="bg-white rounded-xl shadow-sm border p-6 max-w-2xl mx-auto">
                 <div className="flex justify-between items-center mb-6 border-b pb-4">
                   <h2 className="font-black uppercase text-lg">Declare Collection</h2>
@@ -8506,29 +7966,13 @@ export default function ManagerMISDashboard() {
 
           {activeTab === 'report' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="bg-slate-900 p-5 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-slate-900 p-5 rounded-xl grid grid-cols-3 gap-6">
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Time Context</label>
                   <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold p-2.5 rounded-lg">
-                    <option value="this_month">This Month</option>
-                    <option value="specific_month">Select Specific Month</option>
-                    <option value="all">All Time</option>
+                    <option value="this_month">This Month</option><option value="all">All Time</option>
                   </select>
                 </div>
-
-                {/* Specific Month Selector */}
-                {repTimeFilter === "specific_month" && (
-                  <div className="animate-in fade-in">
-                    <label className="text-[10px] font-black text-emerald-400 uppercase block mb-1">Select Month</label>
-                    <input 
-                      type="month" 
-                      value={repMonthFilter} 
-                      onChange={(e) => setRepMonthFilter(e.target.value)}
-                      className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold p-2.5 rounded-lg outline-none focus:border-emerald-400 transition"
-                    />
-                  </div>
-                )}
-
                 <div>
                   <label className="text-[10px] font-black text-indigo-400 uppercase block mb-1">Master HQ (Hub)</label>
                   <select value={repMasterFilter} onChange={(e) => setRepMasterFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold p-2.5 rounded-lg">
@@ -8654,7 +8098,6 @@ export default function OcscDataCommand() {
   // Modals & Forms
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [editingMasterId, setEditingMasterId] = useState<string | null>(null);
 
   // UPGRADED: Added location_id to the Master Form
   const initialMasterForm = { location_id: "", master_ctop_no: "", master_ocsc_user_id: "", sanchar_soft_user_id: "", mpin: "" };
@@ -8692,25 +8135,6 @@ export default function OcscDataCommand() {
     }
   };
 
-  const openEditMasterModal = (m: any) => {
-    setEditingMasterId(m.id);
-    setMasterForm({
-      location_id: m.location_id ? m.location_id.toString() : "",
-      master_ctop_no: m.master_ctop_no || "",
-      master_ocsc_user_id: m.master_ocsc_user_id || "",
-      sanchar_soft_user_id: m.sanchar_soft_user_id || "",
-      mpin: m.mpin || ""
-    });
-    setIsModalOpen(true);
-  };
-
-  const openNewModal = () => {
-    setEditingMasterId(null);
-    setMasterForm(initialMasterForm);
-    setAgentForm(initialAgentForm);
-    setIsModalOpen(true);
-  };
-
   const handleMasterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -8721,39 +8145,16 @@ export default function OcscDataCommand() {
     
     setIsSubmitting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-
       // Cast the location_id to a BIGINT for the database relation
       const payload = {
         ...masterForm,
         location_id: parseInt(masterForm.location_id)
       };
 
-      if (editingMasterId) {
-        // UPDATE EXISTING RECORD
-        const { error } = await supabase.from("master_ctop_accounts").update(payload).eq("id", editingMasterId);
-        if (error) throw error;
-        
-        // Audit Telemetry
-        if (session?.user) {
-          await supabase.from('staff_activity_logs').insert([{
-            staff_id: session.user.id,
-            staff_email: session.user.email,
-            action_type: 'UPDATE',
-            module: 'TELECOM_OCSC',
-            target_id: editingMasterId,
-            details: `Updated and Re-Assigned Master CTOP: ${payload.master_ctop_no}`
-          }]);
-        }
-      } else {
-        // INSERT NEW RECORD
-        const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
-        if (error) throw error;
-      }
-      
+      const { error } = await supabase.from("master_ctop_accounts").insert([payload]);
+      if (error) throw error;
       setIsModalOpen(false);
       setMasterForm(initialMasterForm);
-      setEditingMasterId(null);
       fetchArchitecture();
     } catch (err: any) {
       if (err.message.includes("unique constraint")) {
@@ -8809,7 +8210,7 @@ export default function OcscDataCommand() {
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200">
             &larr; Admin
           </Link>
-          <button onClick={openNewModal} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
+          <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
             <span>+</span> {activeTab === 'masters' ? "Add Master CTOP" : "Map Agent CTOP"}
           </button>
         </div>
@@ -8829,15 +8230,7 @@ export default function OcscDataCommand() {
               <div key={m.id} className="bg-white rounded-xl shadow-sm border-2 border-slate-200 overflow-hidden">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
                   <h3 className="font-black text-lg">Master: {m.master_ctop_no}</h3>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => openEditMasterModal(m)} 
-                      className="text-[10px] px-3 py-1 font-black uppercase tracking-widest rounded bg-blue-600 hover:bg-blue-500 transition shadow-sm border border-blue-400"
-                    >
-                      Edit / Re-Assign
-                    </button>
-                    <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
-                  </div>
+                  <button onClick={() => toggleStatus('master_ctop_accounts', m.id, m.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${m.is_active ? 'bg-green-500' : 'bg-red-500'}`}>{m.is_active ? "Live" : "Off"}</button>
                 </div>
                 <div className="p-5 space-y-4 text-sm font-bold text-slate-700">
                   <div className="flex justify-between items-center border-b pb-2">
@@ -8898,9 +8291,7 @@ export default function OcscDataCommand() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-2xl border w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95">
             <div className={`p-5 flex justify-between items-center text-white ${activeTab === 'masters' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-              <h3 className="font-black text-lg">
-                {activeTab === 'masters' ? (editingMasterId ? "Edit / Re-Assign Master" : "New Master Credentials") : "Map Agent to Partner"}
-              </h3>
+              <h3 className="font-black text-lg">{activeTab === 'masters' ? "New Master Credentials" : "Map Agent to Partner"}</h3>
               <button onClick={() => setIsModalOpen(false)} className="hover:opacity-70 text-2xl">&times;</button>
             </div>
             
@@ -8909,7 +8300,7 @@ export default function OcscDataCommand() {
               {activeTab === 'masters' ? (
                 <>
                   <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-2">
-                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1 tracking-widest">Anchor to Master HQ (Hub) *</label>
+                    <label className="text-[10px] font-black text-blue-800 uppercase block mb-1">Anchor to Master HQ (Hub) *</label>
                     <select required value={masterForm.location_id} onChange={e => setMasterForm({...masterForm, location_id: e.target.value})} className="w-full border-2 border-blue-300 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600 bg-white">
                       <option value="" disabled>-- Select Physical HQ --</option>
                       {masterLocations.length === 0 ? (
@@ -8920,37 +8311,35 @@ export default function OcscDataCommand() {
                     </select>
                   </div>
 
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">MPIN (6 Digits) *</label><input required type="text" maxLength={6} placeholder="6-digit numeric" value={masterForm.mpin} onChange={e => setMasterForm({...masterForm, mpin: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-black text-blue-600 tracking-widest outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={masterForm.master_ctop_no} onChange={e => setMasterForm({...masterForm, master_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Master OCSC User ID *</label><input required type="text" value={masterForm.master_ocsc_user_id} onChange={e => setMasterForm({...masterForm, master_ocsc_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Sanchar Soft User ID *</label><input required type="text" value={masterForm.sanchar_soft_user_id} onChange={e => setMasterForm({...masterForm, sanchar_soft_user_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-blue-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">MPIN (6 Digits) *</label><input required type="text" maxLength={6} placeholder="6-digit numeric" value={masterForm.mpin} onChange={e => setMasterForm({...masterForm, mpin: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-black text-blue-600 tracking-widest outline-none focus:border-blue-600" /></div>
                 </>
               ) : (
                 <>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Select Partner *</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Partner *</label>
                     <select required value={agentForm.partner_id} onChange={e => setAgentForm({...agentForm, partner_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Select Franchise Partner --</option>
                       {partners.map(p => <option key={p.id} value={p.id}>{p.partner_name} ({p.locations?.center_name})</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Select Parent Master CTOP *</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Select Parent Master CTOP *</label>
                     <select required value={agentForm.master_ctop_id} onChange={e => setAgentForm({...agentForm, master_ctop_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600">
                       <option value="" disabled>-- Anchor to Master Account --</option>
                       {masters.map(m => <option key={m.id} value={m.id}>{m.master_ctop_no} {m.locations?.center_name ? `(${m.locations.center_name})` : ''}</option>)}
                     </select>
                   </div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
-                  <div><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent CTOP No (10 Digits) *</label><input required type="text" maxLength={10} placeholder="10-digit numeric" value={agentForm.agent_ctop_no} onChange={e => setAgentForm({...agentForm, agent_ctop_no: e.target.value.replace(/\D/g, '')})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
+                  <div><label className="text-[10px] font-black text-slate-500 uppercase block mb-1">Agent OCSC Login ID *</label><input required type="text" value={agentForm.agent_ocsc_login_id} onChange={e => setAgentForm({...agentForm, agent_ocsc_login_id: e.target.value})} className="w-full border-2 p-2.5 rounded-lg text-sm font-bold outline-none focus:border-emerald-600" /></div>
                 </>
               )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded">Cancel</button>
-                <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">
-                  {isSubmitting ? "Processing..." : (activeTab === 'masters' && editingMasterId ? "Update Configuration" : "Save Securely")}
-                </button>
+                <button type="submit" disabled={isSubmitting} className="px-6 py-2 bg-slate-900 text-white font-black rounded shadow disabled:bg-slate-400">Save Securely</button>
               </div>
             </form>
           </div>
@@ -11125,13 +10514,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
 export default function StaffManagementEngine() {
-  const router = useRouter(); 
+  const router = useRouter(); // Added router injection
   const [staffList, setStaffList] = useState<any[]>([]);
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
-  const [isRouting, setIsRouting] = useState(false);
   
-  // UPGRADED: Manager limit expanded to 5
-  const LIMITS = { Manager: 5, Accountant: 3, Staff: 11 };
+  // [FIX]: Added routing state for smooth transition
+  const [isRouting, setIsRouting] = useState(false);
+  const LIMITS = { Manager: 3, Accountant: 3, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
     name: "",
@@ -11159,32 +10548,12 @@ export default function StaffManagementEngine() {
     setIsSubmittingStaff(true);
 
     try {
-      // 1. Retrieve the current super-admin's secure session token
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Authentication missing or expired.");
+      const { error } = await supabase.from("back_office_staff").insert([staffForm]);
+      if (error) throw error;
 
-      // 2. Route the payload through the secure provisioning API
-      const response = await fetch('/api/create-staff', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify(staffForm)
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to provision staff account.");
-      }
-
-      // 3. UI Success Confirmation
-      alert(`✅ New ${staffForm.role} account created for ${staffForm.name}. Credentials have been emailed securely.`);
-      
+      alert(`✅ New ${staffForm.role} account created for ${staffForm.name}. They can now be assigned credentials.`);
       setStaffForm({ name: "", email: "", mobile: "", role: "Staff" });
       fetchStaffList();
-      
     } catch (err: any) {
       alert("Error creating staff: " + err.message);
     } finally {
@@ -11209,7 +10578,7 @@ export default function StaffManagementEngine() {
   const routeToMatrix = () => {
     setIsRouting(true);
     router.push("/dashboard/staff-reports");
-    setTimeout(() => setIsRouting(false), 8000); 
+    setTimeout(() => setIsRouting(false), 8000); // 8-second safety release
   };
 
   const getRoleCount = (roleName: string) => staffList.filter(s => s.role === roleName).length;
@@ -11275,6 +10644,7 @@ export default function StaffManagementEngine() {
             </button>
           </form>
 
+          {/* UPGRADED ROUTER BUTTON */}
           <div className="mt-6 pt-4 border-t border-slate-100">
             <button 
               onClick={routeToMatrix}
@@ -11357,280 +10727,6 @@ export default function StaffManagementEngine() {
 }
 
 ================================================================================
-FILE PATH: ./app/components/mis/BalanceModule.tsx
-================================================================================
-
-
-================================================================================
-FILE PATH: ./app/update-password/page.tsx
-================================================================================
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase";
-
-export default function UpdatePasswordPage() {
-  const router = useRouter();
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [successMsg, setSuccessMsg] = useState("");
-
-  const handlePasswordUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    if (password.length < 8) {
-      return setErrorMsg("Password must be at least 8 characters long.");
-    }
-
-    if (password !== confirmPassword) {
-      return setErrorMsg("Passwords do not match.");
-    }
-
-    setLoading(true);
-
-    try {
-      // 1. Verify active session
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error("No active recovery session found. Please request a new reset link.");
-      }
-
-      // 2. Update password and wipe the must_change_password flag
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password,
-        data: { must_change_password: false }
-      });
-
-      if (updateError) throw updateError;
-
-      const userEmail = session.user.email || "Unknown";
-
-      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: session.user.id,
-        staff_email: userEmail.trim().toLowerCase(),
-        action_type: 'SECURITY_AUDIT',
-        module: 'AUTHENTICATION',
-        target_id: session.user.id,
-        details: `Credentials updated successfully. Password change locked.`
-      }]);
-
-      setSuccessMsg("✅ Password updated securely! Routing to your designated command center...");
-
-      // 4. BULLETPROOF ROUTING FIX: Direct Database Query
-      // Because auth_id is now mapped, RLS allows this query to succeed securely.
-      const { data: staff } = await supabase
-        .from("back_office_staff")
-        .select("role")
-        .ilike("email", userEmail.trim())
-        .maybeSingle();
-
-      setTimeout(() => {
-        if (staff) {
-          // It is a verified Staff member -> Route to Corporate Admin Hub
-          router.push("/dashboard");
-        } else {
-          // It is a Franchise Partner -> Route to Partner Portal
-          router.push("/partner/dashboard");
-        }
-      }, 2000);
-
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to update password.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 font-sans">
-      <div className="max-w-md w-full bg-slate-950 p-8 rounded-2xl shadow-2xl border border-slate-800">
-        
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white font-black text-2xl mx-auto mb-3 shadow-md">
-            🔒
-          </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-wider">Set New Password</h1>
-          <p className="text-slate-400 text-xs font-bold mt-1">
-            Please choose a strong password to secure your Fast Ark portal access.
-          </p>
-        </div>
-
-        {errorMsg && (
-          <div className="mb-4 p-3 bg-red-950/60 border border-red-800 text-red-300 text-xs font-bold rounded-lg leading-relaxed">
-            ❌ {errorMsg}
-          </div>
-        )}
-
-        {successMsg && (
-          <div className="mb-4 p-3 bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs font-bold rounded-lg leading-relaxed">
-            {successMsg}
-          </div>
-        )}
-
-        <form onSubmit={handlePasswordUpdate} className="space-y-4">
-          <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-              New Password (Min 8 Characters) *
-            </label>
-            <input
-              type="password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
-              className="w-full p-3 bg-slate-900 border border-slate-700 rounded-lg text-sm font-bold text-white outline-none focus:border-blue-500 transition"
-              disabled={loading}
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-              Confirm New Password *
-            </label>
-            <input
-              type="password"
-              required
-              minLength={8}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="••••••••••••"
-              className="w-full p-3 bg-slate-900 border border-slate-700 rounded-lg text-sm font-bold text-white outline-none focus:border-blue-500 transition"
-              disabled={loading}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition shadow-lg disabled:opacity-50 mt-2"
-          >
-            {loading ? "Updating Credentials & Routing..." : "Save & Continue"}
-          </button>
-        </form>
-
-      </div>
-    </div>
-  );
-}
-
-================================================================================
-FILE PATH: ./app/forgot-password/page.tsx
-================================================================================
-"use client";
-
-import { useState } from "react";
-import Link from "next/link";
-
-export default function ForgotPasswordPage() {
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [statusMsg, setStatusMsg] = useState("");
-  const [isError, setIsError] = useState(false);
-
-  const handleResetRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setStatusMsg("");
-    setIsError(false);
-
-    const targetEmail = email.trim().toLowerCase();
-
-    try {
-      // 1. Route the request through the secure backend API to bypass RLS blocks
-      const response = await fetch('/api/forgot-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: targetEmail })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to dispatch reset link.");
-      }
-
-      // 2. Handle Success
-      setIsError(false);
-      setStatusMsg(data.message);
-      setEmail("");
-      
-    } catch (err: any) {
-      // 3. Handle Rejection
-      setIsError(true);
-      setStatusMsg("❌ " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-      <div className="max-w-md w-full bg-slate-950 p-8 rounded-2xl shadow-2xl border border-slate-800">
-        
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-slate-800 border border-slate-700 rounded-xl flex items-center justify-center text-white font-black text-2xl mx-auto mb-3 shadow-md">
-            🔑
-          </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-wider">Reset Password</h1>
-          <p className="text-slate-400 text-xs font-bold mt-1">
-            Enter your official registered email to receive an authorized recovery link.
-          </p>
-        </div>
-
-        {statusMsg && (
-          <div className={`mb-4 p-4 text-xs font-bold rounded-lg border leading-relaxed ${
-            isError ? "bg-red-950/60 border-red-800 text-red-300" : "bg-emerald-950/60 border-emerald-800 text-emerald-300"
-          }`}>
-            {statusMsg}
-          </div>
-        )}
-
-        <form onSubmit={handleResetRequest} className="space-y-4">
-          <div>
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-              Registered Email Address *
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@fastark.in"
-              className="w-full p-3 bg-slate-900 border border-slate-700 rounded-lg text-sm font-bold text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition placeholder:text-slate-600"
-              disabled={loading}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition shadow-lg disabled:opacity-50 mt-2"
-          >
-            {loading ? "Verifying & Dispatching..." : "Send Password Reset Link"}
-          </button>
-        </form>
-
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <Link href="/login" className="text-xs font-bold text-slate-400 hover:text-white transition">
-            &larr; Back to Login
-          </Link>
-        </div>
-
-      </div>
-    </div>
-  );
-}
-
-================================================================================
 FILE PATH: ./app/layout.tsx
 ================================================================================
 // FILE PATH: ./app/layout.tsx
@@ -11687,8 +10783,8 @@ const customCookieStorage = {
   },
   setItem: (key: string, value: string) => {
     if (typeof document === 'undefined') return;
-    const isSecure = window.location.protocol === 'https:' ? 'secure;' : '';
-    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax; ${isSecure}`;
+    // Set cookie to expire in 1 year, accessible across the whole app
+    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax; secure`;
   },
   removeItem: (key: string) => {
     if (typeof document === 'undefined') return;
@@ -11766,9 +10862,9 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 
-// Define strict enterprise limits (Upgraded Manager to 5)
+// Define strict enterprise limits to prevent over-provisioning
 const ROLE_LIMITS: Record<string, number> = {
-  'Manager': 5,
+  'Manager': 3,
   'Accountant': 3,
   'Staff': 11,
   'Admin': 2 
@@ -11776,6 +10872,7 @@ const ROLE_LIMITS: Record<string, number> = {
 
 export async function POST(request: Request) {
   try {
+    // ARCHITECTURAL FIX: Initialize clients inside the handler
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -11783,7 +10880,7 @@ export async function POST(request: Request) {
     const resend = new Resend(process.env.RESEND_API_KEY);
 
     // =========================================================================
-    // 1. CRITICAL SECURITY GATE
+    // 1. CRITICAL SECURITY GATE: Verify the user triggering this API
     // =========================================================================
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
@@ -11831,52 +10928,29 @@ export async function POST(request: Request) {
       }
     }
 
-    const tempPassword = `FastArk@${Math.floor(100000 + Math.random() * 900000)}`;
-
     // =========================================================================
-    // 3. ARCHITECTURAL FIX: 2-STEP BYPASS WITH AUTH_ID BINDING
+    // 3. Automated IT Provisioning (Auth Creation + Postgres Trigger)
     // =========================================================================
     
-    // STEP A: Create the Auth User WITHOUT metadata to bypass the legacy trigger.
+    const tempPassword = `FastArk@${Math.floor(100000 + Math.random() * 900000)}`;
+
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: email.trim().toLowerCase(),
+      email: email,
       password: tempPassword,
-      email_confirm: true
+      email_confirm: true, 
+      user_metadata: { 
+        name: name, 
+        role: role,
+        mobile: mobile || null
+      }
     });
 
     if (authError) throw new Error(`Auth Creation Failed: ${authError.message}`);
-    const newUserId = authData.user.id;
-
-    // STEP B: Manually inject the user into the database WITH their auth_id.
-    // This CRITICAL step ensures Row Level Security (RLS) allows them to log in.
-    const { error: dbError } = await supabaseAdmin.from('back_office_staff').insert([{
-      auth_id: newUserId, 
-      email: email.trim().toLowerCase(),
-      name: name,
-      role: role,
-      mobile: mobile || null,
-      status: 'Active'
-    }]);
-
-    if (dbError) {
-      // Rollback Auth if DB insertion fails to prevent orphaned ghost accounts
-      await supabaseAdmin.auth.admin.deleteUser(newUserId);
-      throw new Error(`Database record creation failed: ${dbError.message}`);
-    }
-
-    // STEP C: Safely update user_metadata now that the database is mapped.
-    await supabaseAdmin.auth.admin.updateUserById(newUserId, {
-      user_metadata: {
-        name: name,
-        role: role,
-        mobile: mobile || null,
-        must_change_password: true
-      }
-    });
 
     // =========================================================================
     // 4. Secure Credential Dispatch via Resend
     // =========================================================================
+    
     const senderEmail = 'updates@fastark.in';
 
     await resend.emails.send({
@@ -12002,82 +11076,6 @@ export async function POST(request: Request) {
     
   } catch (error: any) {
     console.error('API Error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-  }
-}
-
-================================================================================
-FILE PATH: ./app/api/forgot-password/route.ts
-================================================================================
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-export async function POST(request: Request) {
-  try {
-    const { email } = await request.json();
-    if (!email) return NextResponse.json({ success: false, error: 'Email is required' }, { status: 400 });
-
-    const targetEmail = email.trim().toLowerCase();
-
-    // 1. Initialize Admin Client to safely bypass RLS for this specific check
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // 2. STRICT DATABASE VERIFICATION
-    const [staffRes, partnerRes] = await Promise.all([
-      supabaseAdmin.from("back_office_staff").select("status").eq("email", targetEmail).maybeSingle(),
-      supabaseAdmin.from("active_partners").select("status").eq("email", targetEmail).maybeSingle()
-    ]);
-
-    const staffData = staffRes.data;
-    const partnerData = partnerRes.data;
-
-    // Rule A: Identity must exist in our corporate directories
-    if (!staffData && !partnerData) {
-      return NextResponse.json({ 
-        success: false, 
-        error: "Access Denied: This email is not registered in the corporate or partner directory." 
-      }, { status: 403 });
-    }
-
-    // Rule B: Identity must be currently Active (No suspensions)
-    if ((staffData && staffData.status !== "Active") || (partnerData && partnerData.status !== "Active")) {
-      return NextResponse.json({ 
-        success: false, 
-        error: "Account Deactivated: Your clearance has been revoked. Password recovery is disabled." 
-      }, { status: 403 });
-    }
-
-    // 3. DISPATCH RECOVERY EMAIL
-    // Dynamically grab the origin URL to construct the reset link
-    const origin = request.headers.get('origin') || 'https://fastark.in';
-    const redirectUrl = `${origin}/update-password`;
-
-    const { error: authError } = await supabaseAdmin.auth.resetPasswordForEmail(targetEmail, {
-      redirectTo: redirectUrl,
-    });
-
-    if (authError) throw authError;
-
-    // 4. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-    await supabaseAdmin.from('staff_activity_logs').insert([{
-      staff_id: 'SYSTEM',
-      staff_email: targetEmail,
-      action_type: 'SECURITY_AUDIT',
-      module: 'AUTHENTICATION',
-      target_id: 'PASSWORD_RESET_REQUEST',
-      details: `Verified account status and dispatched password recovery link to ${targetEmail}.`
-    }]);
-
-    return NextResponse.json({ 
-      success: true, 
-      message: "✅ Password reset link has been securely dispatched to your email address." 
-    });
-
-  } catch (error: any) {
-    console.error("Forgot Password API Error:", error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
@@ -12367,12 +11365,6 @@ export default function BackOfficeLoginPage() {
       if (authError) throw new Error(authError.message);
       if (!authData.user) throw new Error("Authentication failed.");
 
-      // Insert right after authData is returned and verified:
-      if (authData.user.user_metadata?.must_change_password) {
-        router.push("/update-password");
-        return;
-      }
-
       // 2. Strict Verification against back_office_staff Table
       const { data: staffData, error: staffError } = await supabase
         .from("back_office_staff")
@@ -12455,14 +11447,9 @@ export default function BackOfficeLoginPage() {
           </div>
 
           <div>
-            <div className="flex justify-between items-center mb-1.5">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Secure Password
-              </label>
-              <Link href="/forgot-password" className="text-[10px] font-bold text-blue-400 hover:underline">
-                Forgot Password?
-              </Link>
-            </div>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
+              Secure Password
+            </label>
             <input 
               type="password" 
               required 
@@ -12544,11 +11531,8 @@ export function proxy(request: NextRequest) {
 
       const base64Url = accessToken.split('.')[1];
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      
-      // Add padding calculation before atob():
-      const paddedBase64 = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
       const jsonPayload = decodeURIComponent(
-        atob(paddedBase64).split('').map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+        atob(base64).split('').map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
       );
       
       const payload = JSON.parse(jsonPayload);
