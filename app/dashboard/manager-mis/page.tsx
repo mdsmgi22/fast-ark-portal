@@ -42,7 +42,8 @@ export default function ManagerMISDashboard() {
     location_id: "",
     master_ctop_id: "",
     entry_type: "Opening Balance",
-    cbp_qty: "", 
+    cbp_landline_qty: "", 
+    cbp_gsm_qty: "",
     ctop_qty: "",
     sim_qty: ""
   });
@@ -100,6 +101,7 @@ export default function ManagerMISDashboard() {
   // TAB 6: REPORTING ENGINE STATES
   // ==========================================
   const [repTimeFilter, setRepTimeFilter] = useState("this_month");
+  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); // NEW: Month Filter
   const [repMasterFilter, setRepMasterFilter] = useState("ALL");
   const [repChildFilter, setRepChildFilter] = useState("ALL");
 
@@ -219,7 +221,8 @@ export default function ManagerMISDashboard() {
         location_id: parseInt(balanceForm.location_id),
         master_ctop_id: balanceForm.master_ctop_id,
         entry_type: balanceForm.entry_type,
-        cbp_qty: parseFloat(balanceForm.cbp_qty) || 0,
+        cbp_landline_qty: parseFloat(balanceForm.cbp_landline_qty) || 0,
+        cbp_gsm_qty: parseFloat(balanceForm.cbp_gsm_qty) || 0,
         ctop_qty: parseFloat(balanceForm.ctop_qty) || 0,
         sim_qty: parseFloat(balanceForm.sim_qty) || 0,
         logged_by: user.id
@@ -243,7 +246,7 @@ export default function ManagerMISDashboard() {
         alert("✅ Balance Record Successfully Saved.");
       }
 
-      setBalanceForm({...balanceForm, cbp_qty: "", ctop_qty: "", sim_qty: ""});
+      setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""});
       setEditingBalanceId(null);
       fetchArchitectureAndReports();
     } catch (err: any) {
@@ -260,7 +263,8 @@ export default function ManagerMISDashboard() {
       location_id: bal.location_id.toString(),
       master_ctop_id: bal.master_ctop_id,
       entry_type: bal.entry_type,
-      cbp_qty: bal.cbp_qty?.toString() || "", 
+      cbp_landline_qty: bal.cbp_landline_qty?.toString() || "", 
+      cbp_gsm_qty: bal.cbp_gsm_qty?.toString() || "",
       ctop_qty: bal.ctop_qty?.toString() || "",
       sim_qty: bal.sim_qty?.toString() || ""
     });
@@ -553,8 +557,8 @@ export default function ManagerMISDashboard() {
     let csvContent = "";
     
     if (type === 'balances') {
-      csvContent = "Date,Type,Location,CTOP,CBP_Qty,CTOP_Qty,SIM_Qty\n" + data.map(r => 
-        `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_qty},${r.ctop_qty},${r.sim_qty}`
+      csvContent = "Date,Type,Location,CTOP,CBP_Landline_Qty,CBP_GSM_Qty,CTOP_Qty,SIM_Qty\n" + data.map(r => 
+        `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_landline_qty},${r.cbp_gsm_qty},${r.ctop_qty},${r.sim_qty}`
       ).join("\n");
     } else if (type === 'purchases') {
       csvContent = "Date,Location,CTOP,Product,Qty,Amount_INR\n" + data.map(r => 
@@ -601,23 +605,26 @@ export default function ManagerMISDashboard() {
 
     const today = new Date();
     let startDate = new Date("2000-01-01");
+    let endDate = new Date("2100-01-01");
 
-    if (repTimeFilter === "today") {
-      startDate = new Date(today.setHours(0,0,0,0));
-    } else if (repTimeFilter === "this_week") {
-      startDate = new Date(today.setDate(today.getDate() - today.getDay()));
-    } else if (repTimeFilter === "this_month") {
+    if (repTimeFilter === "this_month") {
       startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (repTimeFilter === "specific_month") {
+      // NEW: Specific Month Filter Logic
+      const selectedMonth = new Date(`${repMonthFilter}-01`);
+      startDate = selectedMonth;
+      endDate = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0); // Last day of selected month
     }
 
     const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
 
     if (repTimeFilter !== "all") {
-      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr);
-      fSales = fSales.filter(s => s.reporting_month >= startStr);
-      fCollections = fCollections.filter(c => c.reporting_month >= startStr);
-      fBalances = fBalances.filter(b => b.report_date >= startStr);
-      fComms = fComms.filter(c => c.reporting_month >= startStr);
+      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr && p.purchase_date <= endStr);
+      fSales = fSales.filter(s => s.reporting_month >= startStr && s.reporting_month <= endStr);
+      fCollections = fCollections.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
+      fBalances = fBalances.filter(b => b.report_date >= startStr && b.report_date <= endStr);
+      fComms = fComms.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
     }
 
     if (repMasterFilter !== "ALL") {
@@ -646,8 +653,9 @@ export default function ManagerMISDashboard() {
       const openBals = hqBals.filter(b => b.entry_type === 'Opening Balance');
       const closeBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
       
-      const openCBP = openBals.reduce((sum, b) => sum + Number(b.cbp_qty||0), 0);
-      const closeCBP = closeBals.reduce((sum, b) => sum + Number(b.cbp_qty||0), 0);
+      // UPGRADED: Summing both Landline and GSM for CBP Quantities
+      const openCBP = openBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
+      const closeCBP = closeBals.reduce((sum, b) => sum + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
       const openCTOP = openBals.reduce((sum, b) => sum + Number(b.ctop_qty||0), 0);
       const closeCTOP = closeBals.reduce((sum, b) => sum + Number(b.ctop_qty||0), 0);
       const openSIM = openBals.reduce((sum, b) => sum + Number(b.sim_qty||0), 0);
@@ -749,7 +757,7 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
               {editingBalanceId && (
-                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_qty: "", ctop_qty: "", sim_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
+                <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
                   Cancel Edit
                 </button>
               )}
@@ -788,10 +796,14 @@ export default function ManagerMISDashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Quantity *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_qty} onChange={e => setBalanceForm({...balanceForm, cbp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Landline (Qty) *</label>
+                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_landline_qty} onChange={e => setBalanceForm({...balanceForm, cbp_landline_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP GSM (Qty) *</label>
+                  <input required type="number" step="0.01" min="0" value={balanceForm.cbp_gsm_qty} onChange={e => setBalanceForm({...balanceForm, cbp_gsm_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Quantity *</label>
@@ -799,7 +811,7 @@ export default function ManagerMISDashboard() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">SIM Quantity *</label>
-                  <input required type="number" step="0.01" min="0" value={balanceForm.sim_qty} onChange={e => setBalanceForm({...balanceForm, sim_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
+                  <input required type="number" step="0.01" min="0" value={balanceForm.sim_qty} onChange={e => setBalanceForm({...balanceForm, sim_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
                 </div>
               </div>
               
@@ -822,7 +834,8 @@ export default function ManagerMISDashboard() {
                   <tr>
                     <th className="p-4 font-black">Date & Type</th>
                     <th className="p-4 font-black">Master Location & CTOP</th>
-                    <th className="p-4 font-black text-right">CBP (Qty)</th>
+                    <th className="p-4 font-black text-right">CBP Landline (Qty)</th>
+                    <th className="p-4 font-black text-right">CBP GSM (Qty)</th>
                     <th className="p-4 font-black text-right">CTOP (Qty)</th>
                     <th className="p-4 font-black text-right">SIM (Qty)</th>
                     <th className="p-4 font-black text-right">Action</th>
@@ -830,7 +843,7 @@ export default function ManagerMISDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {rawBalances.length === 0 ? (
-                    <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
+                    <tr><td colSpan={7} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
                   ) : (
                     rawBalances.slice(0, 50).map(bal => (
                       <tr key={bal.id} className={`transition ${editingBalanceId === bal.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
@@ -844,8 +857,9 @@ export default function ManagerMISDashboard() {
                           <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
                           <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
                         </td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_landline_qty || 0).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_gsm_qty || 0).toLocaleString('en-IN')}</td>
+                        <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                         <td className="p-4 text-right font-black text-slate-800">{Number(bal.sim_qty || 0).toLocaleString('en-IN')}</td>
                         <td className="p-4 text-right">
                           <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
@@ -1317,13 +1331,29 @@ export default function ManagerMISDashboard() {
 
           {activeTab === 'report' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="bg-slate-900 p-5 rounded-xl grid grid-cols-3 gap-6">
+              <div className="bg-slate-900 p-5 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Time Context</label>
                   <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold p-2.5 rounded-lg">
-                    <option value="this_month">This Month</option><option value="all">All Time</option>
+                    <option value="this_month">This Month</option>
+                    <option value="specific_month">Select Specific Month</option>
+                    <option value="all">All Time</option>
                   </select>
                 </div>
+
+                {/* NEW: Specific Month Selector (Only visible when requested) */}
+                {repTimeFilter === "specific_month" && (
+                  <div className="animate-in fade-in">
+                    <label className="text-[10px] font-black text-emerald-400 uppercase block mb-1">Select Month</label>
+                    <input 
+                      type="month" 
+                      value={repMonthFilter} 
+                      onChange={(e) => setRepMonthFilter(e.target.value)}
+                      className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold p-2.5 rounded-lg outline-none focus:border-emerald-400 transition"
+                    />
+                  </div>
+                )}
+
                 <div>
                   <label className="text-[10px] font-black text-indigo-400 uppercase block mb-1">Master HQ (Hub)</label>
                   <select value={repMasterFilter} onChange={(e) => setRepMasterFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold p-2.5 rounded-lg">
