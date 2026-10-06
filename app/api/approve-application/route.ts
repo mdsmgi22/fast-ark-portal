@@ -4,7 +4,6 @@ import { Resend } from 'resend';
 
 export async function POST(request: Request) {
   try {
-    // ARCHITECTURAL FIX: Initialize clients inside the handler to prevent static build crashes
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!, 
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -44,14 +43,16 @@ export async function POST(request: Request) {
       
     if (locError) throw new Error("Invalid Location ID assigned.");
 
+    const cleanEmail = applicantEmail.trim().toLowerCase();
+
     // =========================================================================
     // 3. Automated User Provisioning (Atomic Database Transaction)
     // =========================================================================
     const tempPassword = `FA@${Math.random().toString(36).slice(-6)}${new Date().getFullYear()}`;
 
-    // The Supabase Postgres Trigger (on_auth_user_created) handles the table injection automatically.
+    // A. Generate Auth Credentials
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: applicantEmail,
+      email: cleanEmail,
       password: tempPassword,
       email_confirm: true,
       user_metadata: { 
@@ -62,27 +63,52 @@ export async function POST(request: Request) {
       }
     });
     
-    if (authError) throw authError;
+    // Ignore error if user already exists due to a previous partial success
+    if (authError && !authError.message.includes('already exists')) {
+      throw new Error(`Auth Creation Failed: ${authError.message}`);
+    }
 
-    // Update Original Application Record
-    await supabaseAdmin.from('pending_applications').update({ 
-      status: 'Approved', mapped_center_id: locationId 
-    }).eq('id', appId);
+    // B. Manual Fallback Insertion into active_partners (Bypasses Trigger Unreliability)
+    const { error: insertError } = await supabaseAdmin
+      .from('active_partners')
+      .insert([{
+         partner_name: applicantName,
+         email: cleanEmail,
+         mobile: mobile,
+         role: role,
+         center_id: locationId,
+         status: 'Active',
+         tc_accepted: false
+      }]);
+
+    // Ignore unique constraint error (23505) if the Postgres trigger already did its job
+    if (insertError && insertError.code !== '23505') {
+      throw new Error(`Profile Creation Failed: ${insertError.message}`);
+    }
+
+    // C. THE FIX: Update Original Application Record & Trap Schema Errors
+    const { error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Approved' }) 
+      .eq('id', appId);
+
+    if (updateError) {
+      throw new Error(`Failed to update pending queue: ${updateError.message}`);
+    }
 
     // =========================================================================
     // 4. Communication Dispatch
     // =========================================================================
-    
     await resend.emails.send({
       from: 'Fast Ark Onboarding <updates@fastark.in>',
-      to: applicantEmail,
+      to: cleanEmail,
       subject: 'Fast Ark Account Created - Credentials Enclosed 🚀',
       html: `
         <h2>Welcome to Fast Ark, ${applicantName}!</h2>
         <p>Your application for the <b>${role}</b> role at <b>${loc?.center_name}</b> has been approved.</p>
         <div style="background: #f1f5f9; padding: 15px; border-radius: 5px;">
           <p><b>Login Portal:</b> <a href="https://fastark.in/partner/login">https://fastark.in/partner/login</a></p>
-          <p><b>Email:</b> ${applicantEmail}</p>
+          <p><b>Email:</b> ${cleanEmail}</p>
           <p><b>Temporary Password:</b> ${tempPassword}</p>
         </div>
         <p>You will be required to accept the mandatory commercial terms upon your first login.</p>
@@ -96,7 +122,7 @@ export async function POST(request: Request) {
       text: `The application for ${applicantName} has been APPROVED for the role of ${role} and mapped to ${loc?.center_name}. The welcome email has been dispatched.`,
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, message: 'Partner provisioned and queue updated successfully.' });
     
   } catch (error: any) {
     console.error('API Error:', error);
