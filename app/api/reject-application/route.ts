@@ -10,9 +10,7 @@ export async function POST(request: Request) {
     );
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // =========================================================================
-    // 1. CRITICAL SECURITY GATE: Verify the user triggering this API
-    // =========================================================================
+    // 1. CRITICAL SECURITY GATE
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Missing token' }, { status: 401 });
@@ -25,9 +23,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized: Invalid session' }, { status: 401 });
     }
 
-    // =========================================================================
-    // 2. Data Extraction & File Searching
-    // =========================================================================
+    // 2. Data Extraction
     const { appId, applicantName, applicantEmail, rejectReason } = await request.json();
 
     if (!appId || !applicantName || !applicantEmail || !rejectReason) {
@@ -41,9 +37,7 @@ export async function POST(request: Request) {
 
     if (searchError) throw searchError;
 
-    // =========================================================================
-    // 3. Download KYC Files to Server Memory for Secure Email Attachment
-    // =========================================================================
+    // 3. Download KYC Files to Server Memory
     const attachments = [];
     const filesToDelete = [];
     
@@ -57,14 +51,12 @@ export async function POST(request: Request) {
     }
 
     const senderEmail = 'updates@fastark.in';
+    const cleanEmail = applicantEmail.trim().toLowerCase();
 
-    // =========================================================================
     // 4. Communication Dispatch
-    // =========================================================================
-    
     await resend.emails.send({
       from: `Fast Ark Updates <${senderEmail}>`,
-      to: applicantEmail,
+      to: cleanEmail,
       subject: 'Update on your Fast Ark Partner Application',
       text: `Dear ${applicantName},\n\nThank you for applying to Fast Ark.\n\nUnfortunately, we are unable to proceed with your application at this time.\n\nReason for decline:\n${rejectReason}\n\nBest Regards,\nFast Ark Back Office`,
     });
@@ -77,44 +69,46 @@ export async function POST(request: Request) {
       attachments: attachments,
     });
 
-    // =========================================================================
-    // 5. Data Privacy Wipe & Database Status Update
-    // =========================================================================
-    
+    // 5. Data Privacy Wipe & App Status Update
     if (filesToDelete.length > 0) {
       await supabaseAdmin.storage.from('application_documents').remove(filesToDelete);
     }
 
-    const { error: updateError } = await supabaseAdmin
+    await supabaseAdmin
       .from('pending_applications')
-      .update({ 
-        status: 'Rejected',
-        reject_reason: rejectReason 
-      })
+      .update({ status: 'Rejected', reject_reason: rejectReason })
       .eq('id', appId);
 
-    if (updateError) throw updateError;
-
     // =========================================================================
-    // 6. KILL-SWITCH: Close the Ghost Access Security Loop
+    // 6. THE KILL-SWITCH: Sever Ghost Access
     // =========================================================================
     
-    // Hard delete the partner profile to instantly sever dashboard access
+    // Suspend the database profile aggressively
     await supabaseAdmin
       .from('active_partners')
-      .delete()
-      .eq('email', applicantEmail);
+      .update({ status: 'Suspended' })
+      .ilike('email', `%${cleanEmail}%`);
 
-    // Hunt down and obliterate the Supabase Auth credentials if they exist
-    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
-    if (usersData?.users) {
-      const targetUser = usersData.users.find(u => u.email === applicantEmail);
+    // Obliterate the Auth User by paginating past the 50-user limit
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 100 });
+      if (authError || !authData.users || authData.users.length === 0) {
+        hasMore = false;
+        break;
+      }
+      
+      const targetUser = authData.users.find(u => u.email?.toLowerCase() === cleanEmail);
       if (targetUser) {
         await supabaseAdmin.auth.admin.deleteUser(targetUser.id);
+        hasMore = false; 
+      } else {
+        page++;
       }
     }
 
-    return NextResponse.json({ success: true, message: 'Application rejected, KYC wiped, ghost access severed, and emails dispatched.' });
+    return NextResponse.json({ success: true, message: 'Application rejected, ghost access severed, and emails dispatched.' });
 
   } catch (error: any) {
     console.error('API Error:', error);
