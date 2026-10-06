@@ -8,6 +8,9 @@ export default function PartnersDirectory() {
   const [partners, setPartners] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  
+  // --- NEW: Compliance Vault State ---
+  const [loadingDocId, setLoadingDocId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPartners();
@@ -56,6 +59,37 @@ export default function PartnersDirectory() {
     }
   };
 
+  // --- NEW: SECURE COMPLIANCE VIEWER ENGINE ---
+  const handleViewCompliance = async (partnerId: string, path: string | null) => {
+    if (!path) {
+      return alert("No compliance documents have been submitted by this partner yet.");
+    }
+
+    setLoadingDocId(partnerId);
+    try {
+      // Fallback for older public URLs
+      if (path.startsWith("http")) {
+        window.open(path, "_blank");
+        return;
+      }
+
+      // Generate a temporary 1-hour authenticated token to view the private bucket file
+      const { data, error } = await supabase.storage
+        .from("application_documents")
+        .createSignedUrl(path, 3600);
+
+      if (error || !data?.signedUrl) {
+        throw error || new Error("Failed to generate cryptographic signed URL.");
+      }
+
+      window.open(data.signedUrl, "_blank");
+    } catch (err: any) {
+      alert("Error loading compliance document: " + err.message);
+    } finally {
+      setLoadingDocId(null);
+    }
+  };
+
   const filteredPartners = partners.filter(p => 
     p.partner_name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
     p.mobile?.includes(searchTerm) ||
@@ -72,7 +106,7 @@ export default function PartnersDirectory() {
               &larr; Back to Command Center
             </Link>
             <h1 className="text-3xl font-black text-slate-900">Active Partners Directory</h1>
-            <p className="text-slate-500 mt-1 font-medium">Manage operational status and details for all official Fast Ark personnel.</p>
+            <p className="text-slate-500 mt-1 font-medium">Manage operational status, details, and audit compliance files for all official Fast Ark personnel.</p>
           </div>
           
           <button onClick={fetchPartners} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md font-bold hover:bg-gray-50 shadow-sm transition">
@@ -102,6 +136,7 @@ export default function PartnersDirectory() {
                   <th className="p-4 font-bold">Contact</th>
                   <th className="p-4 font-bold">Role</th>
                   <th className="p-4 font-bold">Mapped Center</th>
+                  <th className="p-4 font-bold text-center">Compliance Vault</th>
                   <th className="p-4 font-bold text-right">Operational Status</th>
                 </tr>
               </thead>
@@ -109,7 +144,7 @@ export default function PartnersDirectory() {
                 
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="p-16">
+                    <td colSpan={6} className="p-16">
                       <div className="flex justify-center items-center">
                         <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
                       </div>
@@ -117,7 +152,7 @@ export default function PartnersDirectory() {
                   </tr>
                 ) : filteredPartners.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-12 text-center text-gray-500 font-bold text-lg bg-slate-50">
+                    <td colSpan={6} className="p-12 text-center text-gray-500 font-bold text-lg bg-slate-50">
                       No active partners found.
                     </td>
                   </tr>
@@ -137,6 +172,25 @@ export default function PartnersDirectory() {
                         <div className="font-bold text-slate-700">{partner.locations?.center_name || "Unassigned"}</div>
                         <div className="text-xs text-gray-500">{partner.locations?.taluk}, {partner.locations?.dist}</div>
                       </td>
+                      
+                      {/* --- COMPLIANCE VAULT BUTTON --- */}
+                      <td className="p-4 text-center">
+                        {partner.compliance_docs_url ? (
+                          <button
+                            onClick={() => handleViewCompliance(partner.id, partner.compliance_docs_url)}
+                            disabled={loadingDocId === partner.id}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-black text-xs px-3 py-1.5 rounded-lg shadow-sm transition inline-flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            <span>📑</span>
+                            {loadingDocId === partner.id ? "Opening..." : "View PDF"}
+                          </button>
+                        ) : (
+                          <span className="text-[10px] uppercase tracking-widest font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                            Pending
+                          </span>
+                        )}
+                      </td>
+
                       <td className="p-4 text-right">
                         <button 
                           onClick={() => togglePartnerStatus(partner.id, partner.status)}
