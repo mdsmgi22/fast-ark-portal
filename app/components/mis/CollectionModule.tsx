@@ -16,7 +16,7 @@ const calculateTotalSalesCash = (s: any) => {
 const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
 export default function CollectionModule({ 
-  hqLocations, entryFilteredFranchises, allLocations,
+  hqLocations, uniqueStates, entryFilteredFranchises, allLocations,
   rawCollections, rawSales, fetchArchitectureAndReports,
   reportingMonth, setReportingMonth, entryMasterLocId, setEntryMasterLocId, selectedChildLocKey, setSelectedChildLocKey 
 }: any) {
@@ -25,9 +25,10 @@ export default function CollectionModule({
   const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null);
   
   const [collectionForm, setCollectionForm] = useState({ 
-    total_cash_collected: "", remarks: "", edit_remarks: "" 
+    total_cash_collected: "", remark_option: "", remarks: "", edit_remarks: "" 
   });
   
+  const [colStateFilter, setColStateFilter] = useState("ALL");
   const [colMonthFilter, setColMonthFilter] = useState(new Date().toISOString().substring(0, 7));
   const [colHqFilter, setColHqFilter] = useState("ALL");
 
@@ -42,6 +43,8 @@ export default function CollectionModule({
   const handleCollectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
+    if (collectionForm.remark_option === "Other reason" && !collectionForm.remarks.trim()) return alert("Please specify the other reason.");
+    
     setIsSubmitting(true);
 
     try {
@@ -50,11 +53,15 @@ export default function CollectionModule({
       if (!user) throw new Error("Auth drop.");
 
       const dbReportingMonth = `${reportingMonth}-01`;
+      
+      // Determine final remarks based on dropdown selection
+      const finalRemarks = collectionForm.remark_option === 'Other reason' ? collectionForm.remarks : collectionForm.remark_option;
+
       const payload = {
         reporting_month: dbReportingMonth,
         location_id: parseInt(selectedChildLocKey.split('-')[0]), 
         total_cash_collected: parseFloat(collectionForm.total_cash_collected) || 0,
-        remarks: collectionForm.remarks,
+        remarks: finalRemarks,
         logged_by: user.id
       };
 
@@ -88,7 +95,7 @@ export default function CollectionModule({
         alert("✅ Collection Logged Successfully.");
       }
 
-      setCollectionForm({ total_cash_collected: "", remarks: "", edit_remarks: "" });
+      setCollectionForm({ total_cash_collected: "", remark_option: "", remarks: "", edit_remarks: "" });
       setEditingCollectionId(null);
       setCollectionMode('ledger');
       fetchArchitectureAndReports(); 
@@ -104,22 +111,38 @@ export default function CollectionModule({
     setEditingCollectionId(col.id);
     setSelectedChildLocKey(`${col.location_id}-${col.locations?.role_ocsc ? 'OCSC' : 'CM'}`);
     setReportingMonth(col.reporting_month.substring(0, 7));
+    
+    // Smart Hydration: Map existing database text back to the proper dropdown option
+    let existingRemark = col.remarks || "";
+    let mappedOption = "";
+    let mappedText = "";
+    
+    if (existingRemark === "Pending with the Operator" || existingRemark === "Deposited in next month") {
+      mappedOption = existingRemark;
+    } else if (existingRemark) {
+      mappedOption = "Other reason";
+      mappedText = existingRemark;
+    }
+
     setCollectionForm({
       total_cash_collected: col.total_cash_collected?.toString() || "", 
-      remarks: col.remarks || "", 
+      remark_option: mappedOption,
+      remarks: mappedText, 
       edit_remarks: ""
     });
     setCollectionMode('correction');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Upgraded Ledger Filters including State
   const filteredCollectionsLedger = rawCollections.filter((c: any) => {
     let mMatch = colMonthFilter === "ALL" || c.reporting_month === `${colMonthFilter}-01`;
+    let sMatch = colStateFilter === "ALL" || c.locations?.state === colStateFilter;
     let hMatch = colHqFilter === "ALL" || c.locations?.parent_master_id?.toString() === colHqFilter;
-    return mMatch && hMatch;
+    return mMatch && sMatch && hMatch;
   });
 
-  const locationReconciliation = allLocations.filter((l: any) => !l.is_master_node && (colHqFilter === "ALL" || l.parent_master_id?.toString() === colHqFilter)).flatMap((loc: any) => {
+  const locationReconciliation = allLocations.filter((l: any) => !l.is_master_node && (colStateFilter === "ALL" || l.state === colStateFilter) && (colHqFilter === "ALL" || l.parent_master_id?.toString() === colHqFilter)).flatMap((loc: any) => {
     const s = rawSales.find((sale: any) => sale.location_id === loc.id && sale.reporting_month === `${colMonthFilter}-01`);
     const c = rawCollections.find((col: any) => col.location_id === loc.id && col.reporting_month === `${colMonthFilter}-01`);
     
@@ -197,10 +220,36 @@ export default function CollectionModule({
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Collected (₹) *</label>
                 <input required type="number" step="0.01" min="0" value={collectionForm.total_cash_collected} onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} />
               </div>
+              
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Remarks</label>
-                <textarea rows={3} value={collectionForm.remarks} onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} className={numInputClass} />
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Remarks / Status *</label>
+                <select 
+                  required
+                  value={collectionForm.remark_option} 
+                  onChange={e => setCollectionForm({...collectionForm, remark_option: e.target.value, remarks: ""})} 
+                  className={numInputClass}
+                >
+                  <option value="" disabled>-- Select Remark Option --</option>
+                  <option value="Pending with the Operator">Pending with the Operator</option>
+                  <option value="Deposited in next month">Deposited in next month</option>
+                  <option value="Other reason">Other reason</option>
+                </select>
               </div>
+
+              {collectionForm.remark_option === 'Other reason' && (
+                <div className="animate-in fade-in pt-2">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Specify Other Reason *</label>
+                  <input 
+                    required 
+                    type="text" 
+                    value={collectionForm.remarks} 
+                    onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value.toUpperCase()})} 
+                    className={`${numInputClass} uppercase`} 
+                    placeholder="ENTER REASON HERE..." 
+                  />
+                </div>
+              )}
+
               <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-xl uppercase tracking-widest mt-6 transition shadow-md">
                 Commit Collection
               </button>
@@ -213,10 +262,14 @@ export default function CollectionModule({
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
           <div className="bg-slate-900 p-5 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h3 className="font-black uppercase tracking-widest text-white text-sm">Collection Ledger & Reconciliation</h3>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
+              <select value={colStateFilter} onChange={(e) => { setColStateFilter(e.target.value); setColHqFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition">
+                <option value="ALL">All States</option>
+                {uniqueStates?.map((st: string) => <option key={st} value={st}>{st}</option>)}
+              </select>
               <select value={colHqFilter} onChange={(e) => setColHqFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[200px] outline-none focus:border-emerald-400 transition">
                 <option value="ALL">All HQ Hubs</option>
-                {hqLocations.map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
+                {hqLocations.filter((h: any) => colStateFilter === "ALL" || h.state === colStateFilter).map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
               </select>
               <input type="month" value={colMonthFilter} onChange={(e) => setColMonthFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-emerald-400 transition" />
               <button onClick={downloadCSV} className="bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition">📥 Full CSV</button>
@@ -271,11 +324,37 @@ export default function CollectionModule({
                   <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1.5">Collected (₹) *</label>
                   <input required type="number" step="0.01" min="0" value={collectionForm.total_cash_collected} onChange={e => setCollectionForm({...collectionForm, total_cash_collected: e.target.value})} className={numInputClass} />
                 </div>
+
                 <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1.5">Standard Remarks</label>
-                  <textarea rows={2} value={collectionForm.remarks} onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value})} className={numInputClass} />
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Remarks / Status *</label>
+                  <select 
+                    required
+                    value={collectionForm.remark_option} 
+                    onChange={e => setCollectionForm({...collectionForm, remark_option: e.target.value, remarks: ""})} 
+                    className={numInputClass}
+                  >
+                    <option value="" disabled>-- Select Remark Option --</option>
+                    <option value="Pending with the Operator">Pending with the Operator</option>
+                    <option value="Deposited in next month">Deposited in next month</option>
+                    <option value="Other reason">Other reason</option>
+                  </select>
                 </div>
-                <div className="bg-red-50 p-4 border border-red-200 rounded-lg">
+
+                {collectionForm.remark_option === 'Other reason' && (
+                  <div className="animate-in fade-in pt-2">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Specify Other Reason *</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={collectionForm.remarks} 
+                      onChange={e => setCollectionForm({...collectionForm, remarks: e.target.value.toUpperCase()})} 
+                      className={`${numInputClass} uppercase`} 
+                      placeholder="ENTER REASON HERE..." 
+                    />
+                  </div>
+                )}
+
+                <div className="bg-red-50 p-4 border border-red-200 rounded-lg mt-4">
                   <label className="block text-[10px] text-red-600 font-black uppercase tracking-widest mb-1.5">Audit Remarks (Mandatory) *</label>
                   <input required type="text" value={collectionForm.edit_remarks} onChange={e => setCollectionForm({...collectionForm, edit_remarks: e.target.value})} className={numInputClass} placeholder="Reason for this financial edit..." />
                 </div>
