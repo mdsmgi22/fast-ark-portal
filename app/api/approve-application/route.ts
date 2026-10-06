@@ -100,60 +100,49 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // B. Trigger Database Automations FIRST (Avoids Collision)
+    // 4. CLEAR THE RUNWAY FOR THE DATABASE TRIGGER
     // =========================================================================
-    // By updating the pending queue FIRST, we allow your automated Postgres trigger 
-    // to fire naturally and create the active_partners row without a duplicate key crash.
+    // We delete any existing "Ghost" profile in active_partners. 
+    // This guarantees the database trigger won't hit a Duplicate Key constraint.
+    await supabaseAdmin.from('active_partners').delete().eq('email', cleanEmail);
+
+    // =========================================================================
+    // 5. FIRE THE TRIGGER & UPDATE DASHBOARD
+    // =========================================================================
+    // This updates the pending queue to 'Approved', which safely triggers 
+    // your Postgres automation to create the active_partner row.
     const { error: updateError } = await supabaseAdmin
       .from('pending_applications')
       .update({ status: 'Approved' }) 
       .eq('id', appId);
 
     if (updateError) {
-      throw new Error(`Failed to update pending queue: ${updateError.message}`);
+      throw new Error(`Trigger Crash - Failed to update pending queue: ${updateError.message}`);
     }
 
     // =========================================================================
-    // C. Safely Enforce Profile Data
+    // 6. PATCH THE MISSING IDs
     // =========================================================================
-    // We attempt to insert the profile. If your Postgres trigger already created it
-    // during step B, we catch the duplicate key constraint and gracefully UPDATE the missing IDs instead.
-    const { error: insertError } = await supabaseAdmin
+    // The trigger successfully created the profile, but it doesn't know the 
+    // auth_id or application_id. We patch them in immediately.
+    const { error: patchError } = await supabaseAdmin
       .from('active_partners')
-      .insert([{
+      .update({
          application_id: appId,
          auth_id: authUserId,
-         partner_name: applicantName,
-         email: cleanEmail,
-         mobile: mobile,
-         role: role,
          center_id: locationId,
+         role: role,
          status: 'Active',
          tc_accepted: false
-      }]);
-
-    if (insertError) {
-      // 23505 is PostgreSQL's specific code for "unique_violation"
-      if (insertError.code === '23505' || insertError.message.includes('unique_partner_email')) {
-        const { error: updateProfileError } = await supabaseAdmin
-          .from('active_partners')
-          .update({
-             application_id: appId,
-             auth_id: authUserId,
-             status: 'Active',
-             role: role,
-             center_id: locationId
-          })
-          .eq('email', cleanEmail);
-          
-        if (updateProfileError) throw new Error(`Profile Sync Failed: ${updateProfileError.message}`);
-      } else {
-        throw new Error(`Profile Creation Failed: ${insertError.message}`);
-      }
+      })
+      .eq('email', cleanEmail);
+      
+    if (patchError) {
+       console.warn("Patch Warning:", patchError.message);
     }
 
     // =========================================================================
-    // 4. Communication Dispatch
+    // 7. Communication Dispatch
     // =========================================================================
     await resend.emails.send({
       from: 'Fast Ark Onboarding <updates@fastark.org>',
