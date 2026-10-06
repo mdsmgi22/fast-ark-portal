@@ -63,7 +63,7 @@ export default function ManagerMISDashboard() {
   });
 
   // ==========================================
-  // TAB 3: SALES STATE 
+  // TAB 3: SALES STATE (UPGRADED WITH EDIT & CONFIRM)
   // ==========================================
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [editingSalesId, setEditingSalesId] = useState<string | null>(null);
@@ -150,7 +150,6 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // Upgraded CM Agent Auto-Fetcher to support hydration during Editing
   useEffect(() => {
     const loadCmSales = async () => {
       if (selectedChildLocKey && selectedChildLocKey.includes('-CM')) {
@@ -317,7 +316,6 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // --- UPGRADED SALES SUBMISSION ---
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
@@ -596,24 +594,36 @@ export default function ManagerMISDashboard() {
   const mappedMasterCtopsForBalance = masterCtops.filter(m => m.location_id?.toString() === balanceForm.location_id);
   const mappedMasterCtopsForComms = masterCtops.filter(m => m.location_id?.toString() === entryMasterLocId);
 
-  // --- NEW: TAB 3 DASHBOARD CALCULATIONS ---
+  // --- TAB 3 DASHBOARD CALCULATIONS ---
   const currentMonthSalesContext = rawSales.filter(s => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
   const cumulativeSalesCash = currentMonthSalesContext.reduce((sum, s) => sum + calculateTotalSalesCash(s), 0);
   const cumulativeCBPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
   const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.ctop_recharge_cash||0), 0);
   const cumulativeSIMCash = currentMonthSalesContext.reduce((sum, s) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
 
-  // --- NEW: TAB 4 RECONCILIATION CALCULATIONS ---
+  // --- TYPE-SAFE TAB 4 RECONCILIATION CALCULATIONS ---
   const currentMonthCollectionsContext = rawCollections.filter(c => c.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || c.locations?.parent_master_id?.toString() === entryMasterLocId));
-  const locationReconciliation = entryFilteredFranchises.map(loc => {
+  
+  // FIX: Using flatMap to guarantee a 100% type-safe array without 'null' evaluation
+  const locationReconciliation = entryFilteredFranchises.flatMap(loc => {
     const s = currentMonthSalesContext.find(sale => sale.location_id === loc.id);
     const c = currentMonthCollectionsContext.find(col => col.location_id === loc.id);
+    
+    if (!s && !c) return []; // Completely ignores empty rows
+
     const salesCash = s ? calculateTotalSalesCash(s) : 0;
     const colCash = c ? Number(c.total_cash_collected || 0) : 0;
     const pending = salesCash - colCash;
-    if (!s && !c) return null; // Hide if no activity
-    return { id: loc.id, name: loc.center_name, type: loc.role_ocsc ? 'OCSC' : loc.role_cm ? 'CM' : 'Franchise', sales: salesCash, collection: colCash, pending };
-  }).filter(Boolean);
+    
+    return [{ 
+      id: loc.id, 
+      name: loc.center_name, 
+      type: loc.role_ocsc ? 'OCSC' : loc.role_cm ? 'CM' : 'Franchise', 
+      sales: salesCash, 
+      collection: colCash, 
+      pending 
+    }];
+  });
 
   // --- REPORTING LOGIC & EXACT MATH ENGINE ---
   const getFilteredReports = () => {
@@ -1063,7 +1073,7 @@ export default function ManagerMISDashboard() {
           {activeTab === 'sales' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
               
-              {/* NEW: CUMULATIVE SALES DASHBOARD */}
+              {/* CUMULATIVE SALES DASHBOARD */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
                 <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
@@ -1238,7 +1248,7 @@ export default function ManagerMISDashboard() {
           {activeTab === 'collection' && (
             <div className="space-y-6 animate-in fade-in">
               
-              {/* NEW: FINANCIAL RECONCILIATION MATRIX */}
+              {/* FINANCIAL RECONCILIATION MATRIX */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
                 <div className="p-4 bg-slate-900 flex justify-between items-center text-white">
                   <h3 className="font-black uppercase text-xs">Financial Reconciliation Matrix ({reportingMonth})</h3>
@@ -1412,7 +1422,7 @@ export default function ManagerMISDashboard() {
                   </select>
                 </div>
 
-                {/* NEW: Specific Month Selector (Only visible when requested) */}
+                {/* Specific Month Selector */}
                 {repTimeFilter === "specific_month" && (
                   <div className="animate-in fade-in">
                     <label className="text-[10px] font-black text-emerald-400 uppercase block mb-1">Select Month</label>
