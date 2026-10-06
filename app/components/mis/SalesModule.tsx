@@ -17,7 +17,7 @@ const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold
 
 export default function SalesModule({ 
   hqLocations, uniqueStates, entryFilteredFranchises, allLocations,
-  agentMappings, rawSales, fetchArchitectureAndReports,
+  agentMappings, rawSales, rawCollections = [], fetchArchitectureAndReports,
   reportingMonth, setReportingMonth, entryMasterLocId, setEntryMasterLocId, selectedChildLocKey, setSelectedChildLocKey
 }: any) {
   const [salesMode, setSalesMode] = useState<'entry' | 'ledger'>('entry');
@@ -34,6 +34,10 @@ export default function SalesModule({
   });
   const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
 
+  // ENTRY FILTERS
+  const [salesEntryStateFilter, setSalesEntryStateFilter] = useState("ALL");
+
+  // LEDGER FILTERS
   const [salesStateFilter, setSalesStateFilter] = useState("ALL");
   const [salesHqFilter, setSalesHqFilter] = useState("ALL");
   const [salesChildLocFilter, setSalesChildLocFilter] = useState("ALL");
@@ -75,6 +79,18 @@ export default function SalesModule({
     (e.target as HTMLInputElement).blur();
   };
 
+  // --- DUPLICATE ENTRY PROTECTION & RECONCILIATION DATA ---
+  const currentCenterId = selectedChildLocKey ? parseInt(selectedChildLocKey.split('-')[0]) : null;
+  const dbReportingMonth = `${reportingMonth}-01`;
+  
+  const existingSaleRecord = rawSales.find((s: any) => s.location_id === currentCenterId && s.reporting_month === dbReportingMonth);
+  const existingCollectionRecord = rawCollections.find((c: any) => c.location_id === currentCenterId && c.reporting_month === dbReportingMonth);
+  
+  const hasExistingEntry = !!existingSaleRecord;
+  const currentSalesVal = existingSaleRecord ? calculateTotalSalesCash(existingSaleRecord) : 0;
+  const currentColVal = existingCollectionRecord ? Number(existingCollectionRecord.total_cash_collected) : 0;
+  const currentPendingVal = currentSalesVal - currentColVal;
+
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChildLocKey || !reportingMonth) return alert("Select child center and month.");
@@ -87,7 +103,6 @@ export default function SalesModule({
       if (!user) throw new Error("Auth drop.");
 
       const centerType = getActiveLocationType();
-      const dbReportingMonth = `${reportingMonth}-01`;
 
       const cleanOcscSales = {
         cbp_landline_qty: parseInt(ocscSales.cbp_landline_qty) || 0,
@@ -110,7 +125,7 @@ export default function SalesModule({
 
       const basePayload = {
         reporting_month: dbReportingMonth,
-        location_id: parseInt(selectedChildLocKey.split('-')[0]), 
+        location_id: currentCenterId, 
         center_type: centerType,
         logged_by: user.id,
         ...(centerType === 'OCSC' ? cleanOcscSales : {}) 
@@ -151,6 +166,7 @@ export default function SalesModule({
         }]);
 
         alert(`✅ Center Sales successfully updated & audited.`);
+        setSalesMode('ledger'); // After editing, return to ledger view
       } else {
         const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([basePayload]).select().single();
         if (parentError) throw parentError;
@@ -176,10 +192,19 @@ export default function SalesModule({
         alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
       }
 
+      // --- COMPLETE FORM RESET FOR CONTINUOUS ENTRY ---
       setEditingSalesId(null);
       setConfirmSalesLock(false);
       setSalesEditRemarks("");
-      setSalesMode('ledger');
+      setSelectedChildLocKey(""); 
+      setOcscSales({
+        cbp_landline_qty: "", cbp_landline_cash: "", cbp_gsm_qty: "", cbp_gsm_cash: "", 
+        ctop_recharge_qty: "", ctop_recharge_cash: "", sim_new_qty: "", sim_upgrade_qty: "", 
+        sim_postpaid_qty: "", sim_postpaid_amt: "", sim_replace_qty: "", sim_replace_cash: "", 
+        sim_fancy_qty: "", sim_fancy_cash: "", sim_other_qty: "", sim_other_cash: "",
+      });
+      setCmSales(cmSales.map(a => ({ ...a, qty: "" })));
+      
       fetchArchitectureAndReports(); 
     } catch (err: any) {
       if (err.message.includes('unique constraint')) alert("❌ Blocked: Sales for this Center Type and Month are already locked.");
@@ -192,6 +217,11 @@ export default function SalesModule({
   const handleEditSales = (sale: any) => {
     setEditingSalesId(sale.id);
     setReportingMonth(sale.reporting_month.substring(0, 7));
+    
+    // Reverse lookup state to hydrate the entry filter
+    const parentHq = hqLocations.find((h: any) => h.id === sale.locations?.parent_master_id);
+    if (parentHq) setSalesEntryStateFilter(parentHq.state || "ALL");
+    
     setEntryMasterLocId(sale.locations?.parent_master_id?.toString() || "");
     setSelectedChildLocKey(`${sale.location_id}-${sale.center_type}`);
     setConfirmSalesLock(false);
@@ -226,8 +256,10 @@ export default function SalesModule({
     setConfirmSalesLock(false);
     setSalesEditRemarks("");
     setSelectedChildLocKey("");
+    setSalesMode('ledger');
   };
 
+  // --- LEDGER FILTERS & MATH ENGINE ---
   const filteredSalesLedger = rawSales.filter((s: any) => {
     let mMatch = salesMonthFilter === "ALL" || s.reporting_month === `${salesMonthFilter}-01`;
     let sMatch = salesStateFilter === "ALL" || s.locations?.state === salesStateFilter;
@@ -236,20 +268,29 @@ export default function SalesModule({
     return mMatch && sMatch && hMatch && cMatch;
   });
 
-  const cumSalesLedgerCash = filteredSalesLedger.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
+  const filteredCollectionsLedger = rawCollections.filter((c: any) => {
+    let mMatch = salesMonthFilter === "ALL" || c.reporting_month === `${salesMonthFilter}-01`;
+    let sMatch = salesStateFilter === "ALL" || c.locations?.state === salesStateFilter;
+    let hMatch = salesHqFilter === "ALL" || c.locations?.parent_master_id?.toString() === salesHqFilter;
+    let cMatch = salesChildLocFilter === "ALL" || c.location_id?.toString() === salesChildLocFilter;
+    return mMatch && sMatch && hMatch && cMatch;
+  });
 
-  const currentMonthSalesContext = rawSales.filter((s: any) => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
-  const cumulativeSalesCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
-  const cumulativeCBPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
-  const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.ctop_recharge_cash||0), 0);
-  const cumulativeSIMCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
+  const cumSalesLedgerCash = filteredSalesLedger.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
+  const cumColLedgerCash = filteredCollectionsLedger.reduce((sum: number, c: any) => sum + Number(c.total_cash_collected || 0), 0);
+  const cumPendingLedgerCash = cumSalesLedgerCash - cumColLedgerCash;
 
   const downloadCSV = () => {
     if (filteredSalesLedger.length === 0) return alert("No data available to export.");
-    const csvContent = "Month,State,Location,Type,CBP_Landline_Qty,CBP_Landline_Cash,CBP_GSM_Qty,CBP_GSM_Cash,CTOP_Qty,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,SIM_Postpaid_Qty,SIM_Postpaid_Cash,SIM_Replace_Qty,SIM_Replace_Cash,SIM_Fancy_Qty,SIM_Fancy_Cash,SIM_Other_Qty,SIM_Other_Cash,Total_Cash,Edited,Audit_Remarks\n" + 
-      filteredSalesLedger.map((r: any) => 
-      `${r.reporting_month},${sanitizeCSV(r.locations?.state)},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_qty||0},${r.cbp_landline_cash||0},${r.cbp_gsm_qty||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_qty||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.sim_postpaid_qty||0},${r.sim_postpaid_amt||0},${r.sim_replace_qty||0},${r.sim_replace_cash||0},${r.sim_fancy_qty||0},${r.sim_fancy_cash||0},${r.sim_other_qty||0},${r.sim_other_cash||0},${calculateTotalSalesCash(r)},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
-    ).join("\n");
+    const csvContent = "Month,State,Location,Type,CBP_Landline_Qty,CBP_Landline_Cash,CBP_GSM_Qty,CBP_GSM_Cash,CTOP_Qty,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,SIM_Postpaid_Qty,SIM_Postpaid_Cash,SIM_Replace_Qty,SIM_Replace_Cash,SIM_Fancy_Qty,SIM_Fancy_Cash,SIM_Other_Qty,SIM_Other_Cash,Total_Sales_INR,Total_Collected_INR,Pending_Balance_INR,Edited,Audit_Remarks\n" + 
+      filteredSalesLedger.map((r: any) => {
+        const salesCash = calculateTotalSalesCash(r);
+        const col = rawCollections.find((c: any) => c.location_id === r.location_id && c.reporting_month === r.reporting_month);
+        const colCash = col ? Number(col.total_cash_collected || 0) : 0;
+        const pending = salesCash - colCash;
+
+        return `${r.reporting_month},${sanitizeCSV(r.locations?.state)},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_qty||0},${r.cbp_landline_cash||0},${r.cbp_gsm_qty||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_qty||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.sim_postpaid_qty||0},${r.sim_postpaid_amt||0},${r.sim_replace_qty||0},${r.sim_replace_cash||0},${r.sim_fancy_qty||0},${r.sim_fancy_cash||0},${r.sim_other_qty||0},${r.sim_other_cash||0},${salesCash},${colCash},${pending},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
+      }).join("\n");
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
@@ -268,19 +309,27 @@ export default function SalesModule({
       {salesMode === 'entry' ? (
         <div className="space-y-6 animate-in fade-in">
           
-          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800 grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="col-span-1">
-              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. Filter by Master HQ</label>
-              <select value={entryMasterLocId} onChange={(e) => { setEntryMasterLocId(e.target.value); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition">
-                <option value="">-- All Master HQs --</option>
-                {hqLocations.map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">1. State Scope</label>
+              <select value={salesEntryStateFilter} onChange={(e) => { setSalesEntryStateFilter(e.target.value); setEntryMasterLocId(""); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition">
+                <option value="ALL">-- All States --</option>
+                {uniqueStates.map((st: string) => <option key={st} value={st}>{st}</option>)}
               </select>
             </div>
 
             <div className="col-span-1">
-              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">2. Target Child Center *</label>
+              <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">2. Master HQ</label>
+              <select value={entryMasterLocId} onChange={(e) => { setEntryMasterLocId(e.target.value); setSelectedChildLocKey(""); }} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-400 transition">
+                <option value="">-- All Master HQs --</option>
+                {hqLocations.filter((h: any) => salesEntryStateFilter === "ALL" || h.state === salesEntryStateFilter).map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+              </select>
+            </div>
+
+            <div className="col-span-1">
+              <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1.5">3. Target Center *</label>
               <select value={selectedChildLocKey} onChange={(e) => setSelectedChildLocKey(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-emerald-400 transition">
-                <option value="" disabled>-- Select Franchise Center --</option>
+                <option value="" disabled>-- Select Franchise --</option>
                 {entryFilteredFranchises.flatMap((l: any) => {
                   const options = [];
                   if (l.role_ocsc) options.push(<option key={`${l.id}-OCSC`} value={`${l.id}-OCSC`}>{l.center_name} (OCSC)</option>);
@@ -291,40 +340,41 @@ export default function SalesModule({
             </div>
 
             <div className="col-span-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month Context</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Reporting Month</label>
               <input type="month" value={reportingMonth} onChange={(e) => setReportingMonth(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold text-sm rounded-lg p-2.5 outline-none focus:border-indigo-500 transition"/>
             </div>
 
             <div className="col-span-1 flex flex-col justify-end">
               <div className="bg-slate-800 px-4 py-2.5 rounded-lg border border-slate-700 text-center h-full flex flex-col justify-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
-                <p className={`font-black tracking-widest uppercase ${getActiveLocationType() === 'OCSC' ? 'text-blue-400' : getActiveLocationType() === 'CM' ? 'text-emerald-400' : 'text-slate-600'}`}>
-                  {getActiveLocationType() || 'NONE'}
-                </p>
+                {selectedChildLocKey ? (
+                  <>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Pending Balance</p>
+                    <p className={`font-black uppercase ${currentPendingVal > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                      ₹{currentPendingVal.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Center Mode</p>
+                    <p className="font-black uppercase text-slate-600">NONE</p>
+                  </>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
-            <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
-              <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumulativeSalesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+          {/* DUPLICATE ENTRY PROTECTION BLOCK */}
+          {hasExistingEntry && !editingSalesId && (
+            <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-4 animate-in fade-in">
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <h3 className="font-black text-red-800 text-sm uppercase tracking-widest">Sales Already Locked</h3>
+                <p className="text-xs text-red-600 font-bold mt-1">Data for {reportingMonth} has already been submitted for this center. To modify, please use the Ledger & Reports tab.</p>
+              </div>
             </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CBP Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCBPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CTOP Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCTOPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SIM Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeSIMCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-          </div>
+          )}
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className={`bg-white rounded-xl shadow-sm border p-6 ${hasExistingEntry && !editingSalesId ? 'opacity-50 pointer-events-none border-red-200' : 'border-slate-200'}`}>
             <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
               <div className="flex gap-4 items-center">
                 <span className="text-3xl">📝</span>
@@ -347,6 +397,7 @@ export default function SalesModule({
               </div>
             ) : (
               <form onSubmit={handleSalesSubmit} className="space-y-6">
+                {/* OCSC DYNAMIC GRID */}
                 {getActiveLocationType() === 'OCSC' && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div className="space-y-4">
@@ -381,6 +432,8 @@ export default function SalesModule({
                     </div>
                   </div>
                 )}
+
+                {/* CM DYNAMIC AGENT GRID */}
                 {getActiveLocationType() === 'CM' && (
                   <div className="space-y-3">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
@@ -409,6 +462,7 @@ export default function SalesModule({
                   </div>
                 )}
 
+                {/* TWO-FACTOR VERIFICATION ENGINE */}
                 {editingSalesId && (
                   <div className="bg-red-50 p-4 border border-red-200 rounded-lg animate-in fade-in">
                     <label className="block text-[10px] text-red-600 font-black uppercase tracking-widest mb-1.5">Audit Remarks (Mandatory for Modifying Locked Sales) *</label>
@@ -429,7 +483,7 @@ export default function SalesModule({
                   </label>
                 </div>
 
-                <button type="submit" disabled={isSubmitting || (getActiveLocationType() === 'CM' && cmSales.length === 0) || !confirmSalesLock} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
+                <button type="submit" disabled={isSubmitting || (getActiveLocationType() === 'CM' && cmSales.length === 0) || !confirmSalesLock || (hasExistingEntry && !editingSalesId)} className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6">
                   {isSubmitting ? "Locking Ledger..." : editingSalesId ? "Update & Save Ledger" : "Finalize & Lock Center Sales"}
                 </button>
               </form>
@@ -445,13 +499,13 @@ export default function SalesModule({
                 <option value="ALL">All States</option>
                 {uniqueStates.map((st: string) => <option key={st} value={st}>{st}</option>)}
               </select>
-              <select value={salesHqFilter} onChange={(e) => { setSalesHqFilter(e.target.value); setSalesChildLocFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[200px] outline-none focus:border-indigo-400">
+              <select value={salesHqFilter} onChange={(e) => { setSalesHqFilter(e.target.value); setSalesChildLocFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[150px] outline-none focus:border-indigo-400">
                 <option value="ALL">All HQ Hubs</option>
                 {hqLocations.filter((h: any) => salesStateFilter === "ALL" || h.state === salesStateFilter).map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
               </select>
-              <select value={salesChildLocFilter} onChange={(e) => setSalesChildLocFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[200px] outline-none focus:border-indigo-400">
+              <select value={salesChildLocFilter} onChange={(e) => setSalesChildLocFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[150px] outline-none focus:border-indigo-400">
                 <option value="ALL">All Child Centers</option>
-                {allLocations.filter((l: any) => !l.is_master_node && (salesHqFilter === "ALL" || l.parent_master_id?.toString() === salesHqFilter)).map((c: any) => <option key={c.id} value={c.id.toString()}>{c.center_name}</option>)}
+                {allLocations.filter((l: any) => !l.is_master_node && (salesStateFilter === "ALL" || l.state === salesStateFilter) && (salesHqFilter === "ALL" || l.parent_master_id?.toString() === salesHqFilter)).map((c: any) => <option key={c.id} value={c.id.toString()}>{c.center_name}</option>)}
               </select>
               <input type="month" value={salesMonthFilter} onChange={(e) => setSalesMonthFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-indigo-400" />
               <button onClick={downloadCSV} className="bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition">📥 Export Full CSV</button>
@@ -464,44 +518,55 @@ export default function SalesModule({
               <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumSalesLedgerCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
             </div>
             <div className="bg-white p-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase">CBP Cash</p>
+              <p className="text-[10px] font-black text-slate-500 uppercase">Total Collected</p>
+              <p className="text-xl font-black text-emerald-600 mt-1">₹{cumColLedgerCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-[10px] font-black text-slate-500 uppercase">Total Pending</p>
+              <p className={`text-xl font-black mt-1 ${cumPendingLedgerCash > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                ₹{cumPendingLedgerCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+              </p>
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-[10px] font-black text-slate-500 uppercase">CBP Component</p>
               <p className="text-xl font-black text-slate-800 mt-1">₹{filteredSalesLedger.reduce((sum: number, s: any) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase">CTOP Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{filteredSalesLedger.reduce((sum: number, s: any) => sum + Number(s.ctop_recharge_cash||0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase">SIM Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{filteredSalesLedger.reduce((sum: number, s: any) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
             </div>
           </div>
 
           <div className="overflow-x-auto max-h-[600px]">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 sticky top-0 border-b border-slate-200 shadow-sm z-10">
-                <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">CBP Cash</th><th className="p-4 text-right">CTOP Cash</th><th className="p-4 text-right">SIM Cash</th><th className="p-4 text-right">Total Cash</th><th className="p-4 text-right">Action</th></tr>
+                <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">Total Sales</th><th className="p-4 text-right">Collected</th><th className="p-4 text-right">Pending</th><th className="p-4 text-right">CBP</th><th className="p-4 text-right">CTOP</th><th className="p-4 text-right">SIM</th><th className="p-4 text-right">Action</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredSalesLedger.map((s: any) => (
-                  <tr key={s.id} className="hover:bg-slate-50 transition">
-                    <td className="p-4 font-black text-slate-800">{s.reporting_month}</td>
-                    <td className="p-4 font-bold text-slate-800">
-                      {s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span>
-                      {s.is_edited_by_staff && <span className="block text-[9px] text-red-500 font-bold uppercase mt-1">Edited: {s.staff_edit_remarks}</span>}
-                    </td>
-                    <td className="p-4 text-right font-black">₹{Number(Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                    <td className="p-4 text-right font-black">₹{Number(s.ctop_recharge_cash||0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                    <td className="p-4 text-right font-black">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                    <td className="p-4 text-right font-black text-indigo-700">₹{calculateTotalSalesCash(s).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                    <td className="p-4 text-right">
-                      <button onClick={() => handleEditSales(s)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {filteredSalesLedger.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500 font-bold">No sales records found for this criteria.</td></tr>}
+                {filteredSalesLedger.map((s: any) => {
+                  const salesCash = calculateTotalSalesCash(s);
+                  const col = rawCollections.find((c: any) => c.location_id === s.location_id && c.reporting_month === s.reporting_month);
+                  const colCash = col ? Number(col.total_cash_collected || 0) : 0;
+                  const pending = salesCash - colCash;
+
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50 transition">
+                      <td className="p-4 font-black text-slate-800">{s.reporting_month}</td>
+                      <td className="p-4 font-bold text-slate-800">
+                        {s.locations?.center_name} <span className="text-[10px] text-blue-600 border px-1 rounded ml-2">{s.center_type}</span>
+                        {s.is_edited_by_staff && <span className="block text-[9px] text-red-500 font-bold uppercase mt-1">Edited: {s.staff_edit_remarks}</span>}
+                      </td>
+                      <td className="p-4 text-right font-black text-indigo-700">₹{salesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-black text-emerald-600">₹{colCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className={`p-4 text-right font-black ${pending > 0 ? 'text-red-600' : 'text-slate-800'}`}>₹{pending.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)).toLocaleString('en-IN')}</td>
+                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(s.ctop_recharge_cash||0).toLocaleString('en-IN')}</td>
+                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0)).toLocaleString('en-IN')}</td>
+                      <td className="p-4 text-right">
+                        <button onClick={() => handleEditSales(s)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {filteredSalesLedger.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-slate-500 font-bold">No sales records found for this criteria.</td></tr>}
               </tbody>
             </table>
           </div>
