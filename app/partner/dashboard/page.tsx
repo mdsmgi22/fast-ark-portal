@@ -72,7 +72,8 @@ export default function PartnerDashboard() {
   });
 
   // --- Compliance Document Upload State ---
-  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
+  // ARCHITECTURAL UPGRADE: Support array of files for GPS tags
+  const [docFiles, setDocFiles] = useState<Record<string, File | File[] | null>>({});
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
   const [hasUploadedDocs, setHasUploadedDocs] = useState(false);
   const [docUploadMessage, setDocUploadMessage] = useState("");
@@ -283,7 +284,6 @@ export default function PartnerDashboard() {
     setTimeFilter(mode);
   };
 
-  // --- READ RECEIPT ENGINE (Alerts) ---
   const handleReadMessage = async (msg: any) => {
     if (expandedMsgId === msg.id) {
       setExpandedMsgId(null);
@@ -302,7 +302,6 @@ export default function PartnerDashboard() {
     }
   };
 
-  // --- EDIT REQUEST ENGINE ---
   const handleRequestEdit = async (saleId: string) => {
     if (editReason.trim().length < 5) {
       return alert("Please provide a detailed reason (minimum 5 characters) for requesting this edit.");
@@ -326,16 +325,31 @@ export default function PartnerDashboard() {
     }
   };
 
-  // --- SECURE COMPLIANCE DOCUMENT UPLOAD ENGINE ---
-  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>, docName: string) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > 5 * 1024 * 1024) { 
-        alert(`File size for ${docName} must be under 5MB.`);
-        e.target.value = ''; 
-        return;
+  // --- UPGRADED: SECURE COMPLIANCE DOCUMENT UPLOAD ENGINE (Multi-Photo Support) ---
+  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>, docName: string, isMulti: boolean) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const selectedFiles = Array.from(e.target.files);
+      
+      // Enforce 5MB limit on each file
+      for (const file of selectedFiles) {
+        if (file.size > 5 * 1024 * 1024) { 
+          alert(`File size for ${file.name} must be under 5MB.`);
+          e.target.value = ''; 
+          return;
+        }
       }
-      setDocFiles(prev => ({ ...prev, [docName]: file }));
+
+      if (isMulti) {
+        if (selectedFiles.length !== 5) {
+          alert(`Requirement Error: You must select exactly 5 photos for '${docName}'.`);
+          e.target.value = '';
+          setDocFiles(prev => ({ ...prev, [docName]: null }));
+          return;
+        }
+        setDocFiles(prev => ({ ...prev, [docName]: selectedFiles }));
+      } else {
+        setDocFiles(prev => ({ ...prev, [docName]: selectedFiles[0] }));
+      }
     }
   };
 
@@ -346,7 +360,12 @@ export default function PartnerDashboard() {
     // Strict Validation
     for (const doc of requiredDocs) {
       if (!docFiles[doc]) {
-        return alert(`Please upload the mandatory document: ${doc}`);
+        return alert(`Validation Error: Please upload the mandatory document: ${doc}`);
+      }
+      if (doc.includes("(5 Nos)") && Array.isArray(docFiles[doc])) {
+        if ((docFiles[doc] as File[]).length !== 5) {
+          return alert(`Validation Error: Please select exactly 5 photos for: ${doc}`);
+        }
       }
     }
 
@@ -368,41 +387,47 @@ export default function PartnerDashboard() {
       const stampText = `USER: ${partner.email} | LOC: ${partner.locations?.center_name || 'N/A'} | IP: ${userIp} | TIME: ${timestamp}`;
 
       for (const docName of requiredDocs) {
-        const file = docFiles[docName];
-        if (!file) continue;
+        const fileOrFiles = docFiles[docName];
+        if (!fileOrFiles) continue;
 
-        const arrayBuffer = await file.arrayBuffer();
-        const mimeType = file.type.toLowerCase();
+        const filesToProcess = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
 
-        setDocUploadMessage(`Processing ${docName}...`);
-
-        if (mimeType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
-          const loadedPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-          const copiedPages = await pdfDoc.copyPages(loadedPdf, loadedPdf.getPageIndices());
+        for (let i = 0; i < filesToProcess.length; i++) {
+          const file = filesToProcess[i];
+          const arrayBuffer = await file.arrayBuffer();
+          const mimeType = file.type.toLowerCase();
           
-          copiedPages.forEach((page) => {
-            pdfDoc.addPage(page);
-            const { width } = page.getSize();
-            page.drawRectangle({ x: 0, y: 0, width: width, height: 20, color: rgb(0, 0, 0) });
-            page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 6, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
-          });
-        } else if (mimeType.includes('jpeg') || mimeType.includes('jpg') || mimeType.includes('png') || file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg')) {
-          let image = (mimeType.includes('png') || file.name.toLowerCase().endsWith('.png'))
-            ? await pdfDoc.embedPng(arrayBuffer) 
-            : await pdfDoc.embedJpg(arrayBuffer);
-          
-          let { width, height } = image;
-          const maxWidth = 595.28; 
-          if (width > maxWidth) {
-            const ratio = maxWidth / width;
-            width = maxWidth;
-            height = height * ratio;
+          const label = Array.isArray(fileOrFiles) ? `${docName} (Part ${i + 1}/5)` : docName;
+          setDocUploadMessage(`Processing ${label}...`);
+
+          if (mimeType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
+            const loadedPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+            const copiedPages = await pdfDoc.copyPages(loadedPdf, loadedPdf.getPageIndices());
+            
+            copiedPages.forEach((page) => {
+              pdfDoc.addPage(page);
+              const { width } = page.getSize();
+              page.drawRectangle({ x: 0, y: 0, width: width, height: 20, color: rgb(0, 0, 0) });
+              page.drawText(`${label.toUpperCase()} | ${stampText}`, { x: 10, y: 6, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
+            });
+          } else if (mimeType.includes('jpeg') || mimeType.includes('jpg') || mimeType.includes('png') || file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg')) {
+            let image = (mimeType.includes('png') || file.name.toLowerCase().endsWith('.png'))
+              ? await pdfDoc.embedPng(arrayBuffer) 
+              : await pdfDoc.embedJpg(arrayBuffer);
+            
+            let { width, height } = image;
+            const maxWidth = 595.28; 
+            if (width > maxWidth) {
+              const ratio = maxWidth / width;
+              width = maxWidth;
+              height = height * ratio;
+            }
+
+            const page = pdfDoc.addPage([width, height + 25]);
+            page.drawImage(image, { x: 0, y: 25, width: width, height: height });
+            page.drawRectangle({ x: 0, y: 0, width: width, height: 25, color: rgb(0, 0, 0) });
+            page.drawText(`${label.toUpperCase()} | ${stampText}`, { x: 10, y: 8, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
           }
-
-          const page = pdfDoc.addPage([width, height + 25]);
-          page.drawImage(image, { x: 0, y: 25, width: width, height: height });
-          page.drawRectangle({ x: 0, y: 0, width: width, height: 25, color: rgb(0, 0, 0) });
-          page.drawText(`${docName.toUpperCase()} | ${stampText}`, { x: 10, y: 8, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
         }
       }
 
@@ -410,14 +435,30 @@ export default function PartnerDashboard() {
       const mergedPdfBytes = await pdfDoc.save();
       const pdfFileName = `COMPLIANCE_${partner.id}_${Date.now()}.pdf`;
 
+      // RLS CAPTURE POINT 1: Storage Bucket Insert
       const { error: uploadError, data } = await supabase.storage
         .from('application_documents')
         .upload(pdfFileName, mergedPdfBytes, { contentType: 'application/pdf' });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        if (uploadError.message.includes('row level security')) {
+          throw new Error("STORAGE RLS BLOCK: Your database prevents authenticated users from uploading. Please run the SQL fix.");
+        }
+        throw uploadError;
+      }
 
-      // Update active_partners to store the link so Admin Dashboard can easily reference it
-      await supabase.from('active_partners').update({ compliance_docs_url: data.path }).eq('id', partner.id);
+      // RLS CAPTURE POINT 2: Database Table Update
+      const { error: dbError } = await supabase
+        .from('active_partners')
+        .update({ compliance_docs_url: data.path })
+        .eq('id', partner.id);
+        
+      if (dbError) {
+        if (dbError.message.includes('row level security')) {
+          throw new Error("DATABASE RLS BLOCK: Your database prevents partners from updating their own record. Please run the SQL fix.");
+        }
+        throw dbError;
+      }
 
       setHasUploadedDocs(true);
       setDocUploadMessage("✅ Documents successfully locked and stored.");
@@ -432,7 +473,6 @@ export default function PartnerDashboard() {
     }
   };
 
-  // --- CSV EXPORT ENGINE ---
   const sanitize = (str: any) => `"${String(str || '').replace(/"/g, '""')}"`;
 
   const downloadCSV = () => {
@@ -743,7 +783,7 @@ export default function PartnerDashboard() {
 
         </div>
 
-        {/* SECTION: COMPLIANCE DOCUMENTS UPLOAD ENGINE */}
+        {/* SECTION: COMPLIANCE DOCUMENTS UPLOAD ENGINE (UPGRADED FOR MULTIPLE) */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-8">
           <div className="p-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
             <div>
@@ -765,18 +805,33 @@ export default function PartnerDashboard() {
              ) : (
                 <form onSubmit={handleDocUploadSubmit} className="space-y-6">
                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {requiredDocs.map((docName, idx) => (
-                         <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-lg flex flex-col justify-between">
-                            <label className="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">{idx + 1}. {docName} *</label>
-                            <input 
-                               type="file" 
-                               accept=".pdf, .jpg, .jpeg, .png" 
-                               required 
-                               onChange={(e) => handleDocFileChange(e, docName)}
-                               className="w-full text-xs font-medium text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                            />
-                         </div>
-                      ))}
+                      {requiredDocs.map((docName, idx) => {
+                         const isMulti = docName.includes("(5 Nos)");
+                         const fileData = docFiles[docName];
+                         const fileCount = Array.isArray(fileData) ? fileData.length : (fileData ? 1 : 0);
+
+                         return (
+                           <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-lg flex flex-col justify-between">
+                              <label className="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">
+                                {idx + 1}. {docName} *
+                                {isMulti && <span className="block text-[9px] text-blue-600 mt-1">Please select exactly 5 images at once.</span>}
+                              </label>
+                              <input 
+                                 type="file" 
+                                 accept=".pdf, .jpg, .jpeg, .png" 
+                                 required={!docFiles[docName]}
+                                 multiple={isMulti}
+                                 onChange={(e) => handleDocFileChange(e, docName, isMulti)}
+                                 className="w-full text-xs font-medium text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                              />
+                              {isMulti && fileCount > 0 && (
+                                <p className={`text-[10px] font-bold mt-2 ${fileCount === 5 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {fileCount} / 5 files selected
+                                </p>
+                              )}
+                           </div>
+                         );
+                      })}
                    </div>
                    {docUploadMessage && (
                       <div className="p-3 bg-blue-50 text-blue-800 text-sm font-bold rounded border border-blue-200 text-center animate-pulse">
@@ -976,7 +1031,7 @@ export default function PartnerDashboard() {
                                   </div>
                                 ) : (
                                   <button onClick={() => setRequestingEditId(sale.id)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition border border-slate-600 flex justify-center items-center gap-2">
-                                    <span>⚠️️</span> Request Permission to Edit this Report
+                                    <span>⚠</span> Request Permission to Edit this Report
                                   </button>
                                 )
                               )}
