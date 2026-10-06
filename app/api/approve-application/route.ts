@@ -64,8 +64,9 @@ export async function POST(request: Request) {
     });
     
     if (authError) {
-      // INTERCEPT CRASH: If Ghost Auth exists, bypass the error and recover the account
-      if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
+      const errStr = authError.message.toLowerCase();
+      // INTERCEPT CRASH: Broad catch for any variation of existing users
+      if (errStr.includes('already') || errStr.includes('registered') || errStr.includes('exists')) {
         
         let page = 1;
         let hasMore = true;
@@ -87,7 +88,11 @@ export async function POST(request: Request) {
             page++;
           }
         }
-        if (!authUserId) throw new Error(`Auth Recovery Failed: Could not locate ghost user for ${cleanEmail}`);
+
+        // If the loop finished but we still don't have an ID, throw a specific trace error
+        if (!authUserId) {
+          throw new Error(`Ghost Auth Recovery Failed: Could not locate the hidden user for ${cleanEmail}`);
+        }
       } else {
         throw new Error(`Auth Creation Failed: ${authError.message}`);
       }
@@ -99,7 +104,7 @@ export async function POST(request: Request) {
     const { error: insertError } = await supabaseAdmin
       .from('active_partners')
       .insert([{
-         application_id: appId,
+         application_id: appId, // <-- ARCHITECTURAL FIX: Maps to dashboard
          auth_id: authUserId,
          partner_name: applicantName,
          email: cleanEmail,
@@ -114,7 +119,7 @@ export async function POST(request: Request) {
       if (insertError.code === '23505') {
         // If profile exists, force reactivation
         const { error: updateProfileError } = await supabaseAdmin.from('active_partners').update({
-             application_id: appId,
+             application_id: appId, // <-- ARCHITECTURAL FIX: Re-maps ID on reactivation
              auth_id: authUserId,
              status: 'Active',
              role: role,
