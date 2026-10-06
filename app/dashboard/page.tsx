@@ -253,10 +253,6 @@ export default function AdminCommandCenter() {
     setTimeout(() => setIsRouting(false), 8000);
   };
 
-  // =======================================================
-  // [CRITICAL COMPILER FIX]: Explicit RBAC Variable Definitions
-  // Guarantees TS2304 is resolved and deployment succeeds
-  // =======================================================
   const rawRole = adminUser?.role || '';
   const safeRole = rawRole.trim().toLowerCase();
   
@@ -276,7 +272,6 @@ export default function AdminCommandCenter() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
       
-      {/* Z-Index UI Overlay */}
       {isRouting && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
@@ -314,7 +309,7 @@ export default function AdminCommandCenter() {
           </div>
         </div>
 
-        {/* --- SECTION 1: LIVE FINANCIAL ENGINE (Finance Team Only) --- */}
+        {/* --- SECTION 1: LIVE FINANCIAL ENGINE --- */}
         {isFinanceTeam && (
           <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden animate-in fade-in">
             
@@ -334,7 +329,6 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* Geo Filters */}
             <div className="p-4 bg-slate-800 border-b border-slate-700 grid grid-cols-2 md:grid-cols-4 gap-4">
               {(Object.keys(geoFilter) as Array<keyof typeof geoFilter>).map((field) => (
                 <div key={field}>
@@ -347,7 +341,6 @@ export default function AdminCommandCenter() {
               ))}
             </div>
 
-            {/* KPI Output */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-px bg-slate-700">
               <div className="bg-slate-900 p-5 flex flex-col justify-center">
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total CBP</p>
@@ -376,7 +369,6 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* Graphical Chart output */}
             {chartData.length > 0 && (
               <div className="p-6 bg-slate-900 w-full h-80 border-t border-slate-700">
                 <ResponsiveContainer width="100%" height="100%">
@@ -395,7 +387,7 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 2: DEFAULTER TRACKING (Finance & Managers) --- */}
+        {/* --- SECTION 2: DEFAULTER TRACKING --- */}
         {(isFinanceTeam || isManagerOrAdmin) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-sm border border-red-200 overflow-hidden">
@@ -438,7 +430,7 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 3: OPERATIONAL METRICS (Managers & Admins Only) --- */}
+        {/* --- SECTION 3: OPERATIONAL METRICS --- */}
         {isManagerOrAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in">
             <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer">
@@ -446,11 +438,13 @@ export default function AdminCommandCenter() {
               <h2 className="text-3xl font-black text-slate-800">{stats.pending}</h2>
               <p className="text-yellow-600 font-bold mt-2 text-xs flex items-center justify-between">Pending Apps <span>→</span></p>
             </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-green-500">
+            
+            <div onClick={() => routeTo("/dashboard/partners")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-green-500 hover:shadow-md transition group block cursor-pointer">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Network Growth</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.approved}</h2>
-              <p className="text-green-600 font-bold mt-2 text-xs">Approved Partners</p>
+              <p className="text-green-600 font-bold mt-2 text-xs flex items-center justify-between">Approved Partners <span>→</span></p>
             </div>
+
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-red-500">
               <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Declined</p>
               <h2 className="text-3xl font-black text-slate-800">{stats.rejected}</h2>
@@ -464,7 +458,7 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 4: ENTERPRISE MODULES GRID (DYNAMIC PER ROLE) --- */}
+        {/* --- SECTION 4: ENTERPRISE MODULES GRID --- */}
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
           {isAccountant ? "Financial Modules" : isStaff ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
@@ -501,7 +495,7 @@ export default function AdminCommandCenter() {
               </div>
 
               <div onClick={() => routeTo("/dashboard/sales-verification")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">⚖️</div>
+                <div className="text-3xl mb-3">⚖️️</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
               </div>
@@ -514,17 +508,15 @@ export default function AdminCommandCenter() {
             </>
           )}
 
-          {/* GENERAL OPS: ONLY STAFF, MANAGERS & ADMINS */}
+          {/* GENERAL OPS */}
           {!isAccountant && (
             <>
-              {/* STAFF CAN SEE THIS: The only module Staff has access to */}
               <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📊</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">MIS & Balances</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Log daily Opening/Closing balances and manage operational ledgers.</p>
               </div>
 
-              {/* Managers & Admins Only: Rest of the Modules */}
               {isManagerOrAdmin && (
                 <>
                   <div onClick={() => routeTo("/dashboard/ocsc")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition group block cursor-pointer">
@@ -567,11 +559,10 @@ export default function AdminCommandCenter() {
           )}
         </div>
 
-        {/* --- SECTION 5: RECENT ACTIVITY (Managers & Admins Only) --- */}
+        {/* --- SECTION 5: RECENT ACTIVITY --- */}
         {isManagerOrAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4 animate-in fade-in">
             
-            {/* Website Enquiries */}
             <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-fit">
               <h2 className="text-lg font-black mb-6 text-slate-800 border-b pb-2">Website Enquiries</h2>
               {enquiries.length === 0 ? (
@@ -592,7 +583,6 @@ export default function AdminCommandCenter() {
               )}
             </div>
 
-            {/* Recent Franchise Applications */}
             <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-fit">
               <div className="bg-slate-900 p-4">
                 <h3 className="text-white font-black text-sm uppercase tracking-widest">Recent Franchise Apps</h3>
@@ -624,7 +614,6 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 6: INJECTED STAFF MANAGEMENT ENGINE --- */}
         {isGodMode && <StaffManagementEngine />}
         
       </div>

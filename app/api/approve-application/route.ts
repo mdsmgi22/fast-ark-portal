@@ -50,7 +50,6 @@ export async function POST(request: Request) {
     // =========================================================================
     let authUserId = null;
 
-    // A. Attempt to create fresh Auth Credentials
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: cleanEmail,
       password: tempPassword,
@@ -78,7 +77,6 @@ export async function POST(request: Request) {
           if (existingUser) {
             authUserId = existingUser.id;
             
-            // Force reset the password so the new Welcome Email credentials actually work
             await supabaseAdmin.auth.admin.updateUserById(authUserId, {
               password: tempPassword,
               user_metadata: { name: applicantName, role: role, center_id: locationId, mobile: mobile || null }
@@ -100,17 +98,8 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // 4. CLEAR THE RUNWAY FOR THE DATABASE TRIGGER
+    // 4. TRIGGER COLLISION FIX: Update Pending Queue FIRST
     // =========================================================================
-    // We delete any existing "Ghost" profile in active_partners. 
-    // This guarantees the database trigger won't hit a Duplicate Key constraint.
-    await supabaseAdmin.from('active_partners').delete().eq('email', cleanEmail);
-
-    // =========================================================================
-    // 5. FIRE THE TRIGGER & UPDATE DASHBOARD
-    // =========================================================================
-    // This updates the pending queue to 'Approved', which safely triggers 
-    // your Postgres automation to create the active_partner row.
     const { error: updateError } = await supabaseAdmin
       .from('pending_applications')
       .update({ status: 'Approved' }) 
@@ -121,28 +110,43 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // 6. PATCH THE MISSING IDs
+    // 5. SAFELY ENFORCE PROFILE DATA
     // =========================================================================
-    // The trigger successfully created the profile, but it doesn't know the 
-    // auth_id or application_id. We patch them in immediately.
-    const { error: patchError } = await supabaseAdmin
+    const { error: insertError } = await supabaseAdmin
       .from('active_partners')
-      .update({
+      .insert([{
          application_id: appId,
          auth_id: authUserId,
-         center_id: locationId,
+         partner_name: applicantName,
+         email: cleanEmail,
+         mobile: mobile,
          role: role,
+         center_id: locationId,
          status: 'Active',
          tc_accepted: false
-      })
-      .eq('email', cleanEmail);
-      
-    if (patchError) {
-       console.warn("Patch Warning:", patchError.message);
+      }]);
+
+    if (insertError) {
+      if (insertError.code === '23505' || insertError.message.includes('unique_partner_email')) {
+        const { error: updateProfileError } = await supabaseAdmin
+          .from('active_partners')
+          .update({
+             application_id: appId,
+             auth_id: authUserId,
+             status: 'Active',
+             role: role,
+             center_id: locationId
+          })
+          .eq('email', cleanEmail);
+          
+        if (updateProfileError) throw new Error(`Profile Sync Failed: ${updateProfileError.message}`);
+      } else {
+        throw new Error(`Profile Creation Failed: ${insertError.message}`);
+      }
     }
 
     // =========================================================================
-    // 7. Communication Dispatch
+    // 6. Communication Dispatch
     // =========================================================================
     await resend.emails.send({
       from: 'Fast Ark Onboarding <updates@fastark.org>',
