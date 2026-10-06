@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 
 const getLocalDateString = (date: Date) => {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 };
 
 export default function StaffProductivityDashboard() {

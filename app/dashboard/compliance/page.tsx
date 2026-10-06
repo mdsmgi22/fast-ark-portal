@@ -9,7 +9,7 @@ import { supabase } from "../../lib/supabase";
 const getISTDate = (offsetDays = 0) => {
   const date = new Date();
   date.setDate(date.getDate() + offsetDays);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 };
 
 const normalizeToYYYYMMDD = (dateStr: string) => {

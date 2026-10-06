@@ -7,7 +7,7 @@ import { supabase } from "../../lib/supabase";
 
 // --- Date Normalizers (IST Safe) ---
 const getLocalDateString = (date: Date) => {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 };
 
 const normalizeToYYYYMMDD = (dateStr: string) => {

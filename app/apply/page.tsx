@@ -129,7 +129,7 @@ export default function ApplicationForm() {
     const maxAllowedDate = new Date(maxDate);
     if (dobDate > maxAllowedDate) return showError("You must be at least 18 years old to submit this application.");
 
-    if (formData.gov_id_number.length !== 12) return showError("Validation Error: Aadhaar Number must be exactly 12 digits.");
+    if (formData.gov_id_number.length !== 12) return showError("Validation Error: ID Number must be exactly 12 digits.");
     
     if (formData.pan_number && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(formData.pan_number)) {
       return showError("Validation Error: Invalid PAN Card format. (e.g., ABCDE1234F).");
@@ -173,14 +173,12 @@ export default function ApplicationForm() {
       const pdfDoc = await PDFDocument.create();
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
       const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      
-      // FIX: Reconnected the tracking font variable so the footer loop has access to it
       const trackingFont = boldFont; 
       
       const timestamp = new Date().toLocaleString();
 
       // =========================================================================
-      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM (PAGE 1)
+      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM
       // =========================================================================
       const a4Width = 595.28;
       const a4Height = 841.89;
@@ -189,14 +187,18 @@ export default function ApplicationForm() {
       formPage.drawText("FAST ARK - PARTNER APPLICATION FORM", { x: 50, y: 790, size: 16, font: boldFont });
       formPage.drawLine({ start: { x: 50, y: 780 }, end: { x: 545, y: 780 }, thickness: 1 });
 
-      // Embed & Glue Photo to Top Right
+      // Embed & Glue Photo to Top Right (FIXED MIME PARSER)
       if (files.photo) {
         try {
           const photoBuffer = await files.photo.arrayBuffer();
-          const photoExt = files.photo.name.toLowerCase();
-          let photoImage = photoExt.endsWith('png') 
-            ? await pdfDoc.embedPng(photoBuffer) 
-            : await pdfDoc.embedJpg(photoBuffer);
+          const mimeType = files.photo.type.toLowerCase();
+          
+          let photoImage;
+          if (mimeType.includes('png')) {
+            photoImage = await pdfDoc.embedPng(photoBuffer);
+          } else {
+            photoImage = await pdfDoc.embedJpg(photoBuffer);
+          }
           
           formPage.drawImage(photoImage, { x: 445, y: 640, width: 100, height: 125 });
           formPage.drawRectangle({ x: 445, y: 640, width: 100, height: 125, borderColor: rgb(0,0,0), borderWidth: 1 });
@@ -218,7 +220,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Aadhaar Number:", formData.gov_id_number);
+      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -280,7 +282,6 @@ export default function ApplicationForm() {
               pdfDoc.addPage(page);
               const { width } = page.getSize();
               page.drawRectangle({ x: 0, y: 0, width: width, height: 20, color: rgb(0, 0, 0) });
-              // Safely using the trackingFont mapped to the boldFont variable
               page.drawText(stampText, { x: 10, y: 6, size: 7, font: trackingFont, color: rgb(1, 1, 1) });
             });
 
@@ -452,7 +453,7 @@ export default function ApplicationForm() {
                 
                 <input 
                   required 
-                  placeholder="Aadhaar Card No. (12 Digits) *" 
+                  placeholder="Gov ID No. (12 Digits) *" 
                   type="text" 
                   maxLength={12} 
                   className="border p-3 rounded outline-none focus:ring-2 focus:ring-blue-500" 

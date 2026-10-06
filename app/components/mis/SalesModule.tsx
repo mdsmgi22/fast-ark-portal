@@ -34,10 +34,8 @@ export default function SalesModule({
   });
   const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
 
-  // ENTRY FILTERS
   const [salesEntryStateFilter, setSalesEntryStateFilter] = useState("ALL");
 
-  // LEDGER FILTERS
   const [salesStateFilter, setSalesStateFilter] = useState("ALL");
   const [salesHqFilter, setSalesHqFilter] = useState("ALL");
   const [salesChildLocFilter, setSalesChildLocFilter] = useState("ALL");
@@ -79,7 +77,6 @@ export default function SalesModule({
     (e.target as HTMLInputElement).blur();
   };
 
-  // --- DUPLICATE ENTRY PROTECTION & RECONCILIATION DATA ---
   const currentCenterId = selectedChildLocKey ? parseInt(selectedChildLocKey.split('-')[0]) : null;
   const dbReportingMonth = `${reportingMonth}-01`;
   
@@ -166,7 +163,7 @@ export default function SalesModule({
         }]);
 
         alert(`✅ Center Sales successfully updated & audited.`);
-        setSalesMode('ledger'); // After editing, return to ledger view
+        setSalesMode('ledger'); 
       } else {
         const { data: parentRecord, error: parentError } = await supabase.from('mis_monthly_sales').insert([basePayload]).select().single();
         if (parentError) throw parentError;
@@ -192,7 +189,6 @@ export default function SalesModule({
         alert(`✅ Center Sales for ${reportingMonth} successfully locked.`);
       }
 
-      // --- COMPLETE FORM RESET FOR CONTINUOUS ENTRY ---
       setEditingSalesId(null);
       setConfirmSalesLock(false);
       setSalesEditRemarks("");
@@ -218,7 +214,6 @@ export default function SalesModule({
     setEditingSalesId(sale.id);
     setReportingMonth(sale.reporting_month.substring(0, 7));
     
-    // Reverse lookup state to hydrate the entry filter
     const parentHq = hqLocations.find((h: any) => h.id === sale.locations?.parent_master_id);
     if (parentHq) setSalesEntryStateFilter(parentHq.state || "ALL");
     
@@ -259,7 +254,6 @@ export default function SalesModule({
     setSalesMode('ledger');
   };
 
-  // --- LEDGER FILTERS & MATH ENGINE ---
   const filteredSalesLedger = rawSales.filter((s: any) => {
     let mMatch = salesMonthFilter === "ALL" || s.reporting_month === `${salesMonthFilter}-01`;
     let sMatch = salesStateFilter === "ALL" || s.locations?.state === salesStateFilter;
@@ -279,6 +273,12 @@ export default function SalesModule({
   const cumSalesLedgerCash = filteredSalesLedger.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
   const cumColLedgerCash = filteredCollectionsLedger.reduce((sum: number, c: any) => sum + Number(c.total_cash_collected || 0), 0);
   const cumPendingLedgerCash = cumSalesLedgerCash - cumColLedgerCash;
+
+  const currentMonthSalesContext = rawSales.filter((s: any) => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
+  const cumulativeSalesCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
+  const cumulativeCBPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
+  const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.ctop_recharge_cash||0), 0);
+  const cumulativeSIMCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
 
   const downloadCSV = () => {
     if (filteredSalesLedger.length === 0) return alert("No data available to export.");
@@ -363,18 +363,26 @@ export default function SalesModule({
             </div>
           </div>
 
-          {/* DUPLICATE ENTRY PROTECTION BLOCK */}
-          {hasExistingEntry && !editingSalesId && (
-            <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-4 animate-in fade-in">
-              <span className="text-2xl">⚠️</span>
-              <div>
-                <h3 className="font-black text-red-800 text-sm uppercase tracking-widest">Sales Already Locked</h3>
-                <p className="text-xs text-red-600 font-bold mt-1">Data for {reportingMonth} has already been submitted for this center. To modify, please use the Ledger & Reports tab.</p>
-              </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+            <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
+              <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumulativeSalesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
             </div>
-          )}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CBP Cash</p>
+              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCBPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CTOP Cash</p>
+              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCTOPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SIM Cash</p>
+              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeSIMCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+            </div>
+          </div>
 
-          <div className={`bg-white rounded-xl shadow-sm border p-6 ${hasExistingEntry && !editingSalesId ? 'opacity-50 pointer-events-none border-red-200' : 'border-slate-200'}`}>
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
               <div className="flex gap-4 items-center">
                 <span className="text-3xl">📝</span>
@@ -397,7 +405,6 @@ export default function SalesModule({
               </div>
             ) : (
               <form onSubmit={handleSalesSubmit} className="space-y-6">
-                {/* OCSC DYNAMIC GRID */}
                 {getActiveLocationType() === 'OCSC' && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div className="space-y-4">
@@ -432,8 +439,6 @@ export default function SalesModule({
                     </div>
                   </div>
                 )}
-
-                {/* CM DYNAMIC AGENT GRID */}
                 {getActiveLocationType() === 'CM' && (
                   <div className="space-y-3">
                     <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded mb-4">Mapped Agent CTOP Volumes</h3>
@@ -462,7 +467,6 @@ export default function SalesModule({
                   </div>
                 )}
 
-                {/* TWO-FACTOR VERIFICATION ENGINE */}
                 {editingSalesId && (
                   <div className="bg-red-50 p-4 border border-red-200 rounded-lg animate-in fade-in">
                     <label className="block text-[10px] text-red-600 font-black uppercase tracking-widest mb-1.5">Audit Remarks (Mandatory for Modifying Locked Sales) *</label>
