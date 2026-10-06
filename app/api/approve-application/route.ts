@@ -89,7 +89,6 @@ export async function POST(request: Request) {
           }
         }
 
-        // If the loop finished but we still don't have an ID, throw a specific trace error
         if (!authUserId) {
           throw new Error(`Ghost Auth Recovery Failed: Could not locate the hidden user for ${cleanEmail}`);
         }
@@ -100,11 +99,29 @@ export async function POST(request: Request) {
       authUserId = authData.user?.id;
     }
 
-    // B. Safely Insert or Reactivate Active Partner Profile
+    // =========================================================================
+    // B. Trigger Database Automations FIRST (Avoids Collision)
+    // =========================================================================
+    // By updating the pending queue FIRST, we allow your automated Postgres trigger 
+    // to fire naturally and create the active_partners row without a duplicate key crash.
+    const { error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Approved' }) 
+      .eq('id', appId);
+
+    if (updateError) {
+      throw new Error(`Failed to update pending queue: ${updateError.message}`);
+    }
+
+    // =========================================================================
+    // C. Safely Enforce Profile Data
+    // =========================================================================
+    // We attempt to insert the profile. If your Postgres trigger already created it
+    // during step B, we catch the duplicate key constraint and gracefully UPDATE the missing IDs instead.
     const { error: insertError } = await supabaseAdmin
       .from('active_partners')
       .insert([{
-         application_id: appId, // <-- ARCHITECTURAL FIX: Maps to dashboard
+         application_id: appId,
          auth_id: authUserId,
          partner_name: applicantName,
          email: cleanEmail,
@@ -116,30 +133,23 @@ export async function POST(request: Request) {
       }]);
 
     if (insertError) {
-      if (insertError.code === '23505') {
-        // If profile exists, force reactivation
-        const { error: updateProfileError } = await supabaseAdmin.from('active_partners').update({
-             application_id: appId, // <-- ARCHITECTURAL FIX: Re-maps ID on reactivation
+      // 23505 is PostgreSQL's specific code for "unique_violation"
+      if (insertError.code === '23505' || insertError.message.includes('unique_partner_email')) {
+        const { error: updateProfileError } = await supabaseAdmin
+          .from('active_partners')
+          .update({
+             application_id: appId,
              auth_id: authUserId,
              status: 'Active',
              role: role,
              center_id: locationId
-        }).eq('email', cleanEmail);
-        
-        if (updateProfileError) throw new Error(`Profile Reactivation Failed: ${updateProfileError.message}`);
+          })
+          .eq('email', cleanEmail);
+          
+        if (updateProfileError) throw new Error(`Profile Sync Failed: ${updateProfileError.message}`);
       } else {
         throw new Error(`Profile Creation Failed: ${insertError.message}`);
       }
-    }
-
-    // C. Update Original Application Record to 'Approved' so Dashboard updates
-    const { error: updateError } = await supabaseAdmin
-      .from('pending_applications')
-      .update({ status: 'Approved' }) 
-      .eq('id', appId);
-
-    if (updateError) {
-      throw new Error(`Failed to update pending queue: ${updateError.message}`);
     }
 
     // =========================================================================
