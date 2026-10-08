@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
     // 3. DISPATCH RECOVERY EMAIL
     // Dynamically grab the origin URL to construct the reset link
-    const origin = request.headers.get('origin') || 'https://fastark.in';
+    const origin = request.headers.get('origin') || 'https://fastark.org';
     const redirectUrl = `${origin}/update-password`;
 
     const { error: authError } = await supabaseAdmin.auth.resetPasswordForEmail(targetEmail, {

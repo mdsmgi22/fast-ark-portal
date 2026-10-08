@@ -149,7 +149,7 @@ export async function POST(request: Request) {
     // 6. Communication Dispatch
     // =========================================================================
     await resend.emails.send({
-      from: 'Fast Ark Onboarding <updates@fastark.org>',
+      from: 'Fast Ark Onboarding <updates@fastark.in>',
       to: cleanEmail,
       subject: 'Fast Ark Account Created - Credentials Enclosed 🚀',
       html: `
@@ -165,8 +165,8 @@ export async function POST(request: Request) {
     });
 
     await resend.emails.send({
-      from: 'Fast Ark System <updates@fastark.org>',
-      to: 'ENQUIRY@FASTARK.ORG',
+      from: 'Fast Ark System <updates@fastark.in>',
+      to: 'ENQUIRY@FASTARK.in',
       subject: `✅ NEW APPROVAL: ${applicantName}`,
       text: `The application for ${applicantName} has been APPROVED for the role of ${role} and mapped to ${loc?.center_name}. The welcome email has been dispatched.`,
     });

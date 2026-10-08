@@ -114,7 +114,7 @@ export async function POST(request: Request) {
     // =========================================================================
     // 4. Secure Credential Dispatch via Resend
     // =========================================================================
-    const senderEmail = 'updates@fastark.org';
+    const senderEmail = 'updates@fastark.in';
 
     await resend.emails.send({
       from: `Fast Ark IT Systems <${senderEmail}>`,
