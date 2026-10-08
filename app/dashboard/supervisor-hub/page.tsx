@@ -62,7 +62,7 @@ export default function SupervisorHub() {
       const { data: allocations } = await supabase
         .from('supervisor_allocations')
         .select('location_id, manage_cm, manage_ocsc, manage_aadhaar, manage_partner')
-        .eq('supervisor_id', staff.id);
+        .eq('supervisor_id', staff.auth_id);
 
       if (!allocations || allocations.length === 0) {
         setLoading(false);

@@ -19,7 +19,7 @@ export default function InfrastructureCommandCenter() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Supervisor Mapping Modal State (UPGRADED)
+  // Supervisor Mapping Modal State
   const [isSupModalOpen, setIsSupModalOpen] = useState(false);
   const [currentLocForSup, setCurrentLocForSup] = useState<any>(null);
   const [selectedSupId, setSelectedSupId] = useState("");
@@ -101,9 +101,10 @@ export default function InfrastructureCommandCenter() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
+      // CRITICAL FIX: Fetch auth_id to satisfy Foreign Key constraints
       const [locsRes, supRes, allocRes] = await Promise.all([
         supabase.from("locations").select("*, parent_master:locations(center_name)").order("center_name", { ascending: true }),
-        supabase.from("back_office_staff").select("id, name, email").eq("role", "Supervisor").eq("status", "Active"),
+        supabase.from("back_office_staff").select("id, auth_id, name, email").eq("role", "Supervisor").eq("status", "Active"),
         supabase.from("supervisor_allocations").select("*")
       ]);
 
@@ -201,11 +202,10 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
-  // --- SUPERVISOR MAPPING ACTIONS (UPGRADED) ---
+  // --- SUPERVISOR MAPPING ACTIONS ---
   const openSupModal = (loc: any) => {
     setCurrentLocForSup(loc);
     setSelectedSupId("");
-    // Reset roles
     setSupRoles({ cm: false, ocsc: false, aadhaar: false, partner: false });
     setIsSupModalOpen(true);
   };
@@ -214,7 +214,6 @@ export default function InfrastructureCommandCenter() {
     e.preventDefault();
     if (!selectedSupId || !currentLocForSup) return;
     
-    // Validation: They must select at least one role
     if (!supRoles.cm && !supRoles.ocsc && !supRoles.aadhaar && !supRoles.partner) {
       return alert("You must select at least one role for this Supervisor to manage.");
     }
@@ -222,7 +221,7 @@ export default function InfrastructureCommandCenter() {
     setIsSubmittingSup(true);
     try {
       const { error } = await supabase.from('supervisor_allocations').insert([{
-        supervisor_id: selectedSupId,
+        supervisor_id: selectedSupId, // This is now the auth_id
         location_id: currentLocForSup.id,
         manage_cm: supRoles.cm,
         manage_ocsc: supRoles.ocsc,
@@ -233,7 +232,7 @@ export default function InfrastructureCommandCenter() {
       if (error) throw error;
       
       const { data: { session } } = await supabase.auth.getSession();
-      const supName = supervisors.find(s => s.id === selectedSupId)?.name;
+      const supName = supervisors.find(s => s.auth_id === selectedSupId)?.name;
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session?.user?.id,
         staff_email: session?.user?.email,
@@ -404,7 +403,7 @@ export default function InfrastructureCommandCenter() {
             // Find assigned supervisors for this specific location
             const locAllocs = allocations.filter(a => a.location_id === loc.id);
             const assignedSups = locAllocs.map(a => {
-               const sup = supervisors.find(s => s.id === a.supervisor_id);
+               const sup = supervisors.find(s => s.auth_id === a.supervisor_id);
                return sup ? { ...sup, allocData: a } : null;
             }).filter(Boolean);
 
@@ -466,7 +465,7 @@ export default function InfrastructureCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ISOLATED SUPERVISOR RENDERER (UPGRADED) */}
+                  {/* ISOLATED SUPERVISOR RENDERER */}
                   <div className="mt-5 pt-4 border-t border-slate-100">
                     <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">Assigned Supervisor(s)</p>
                     {assignedSups.length > 0 ? (
@@ -511,94 +510,6 @@ export default function InfrastructureCommandCenter() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* --- SUPERVISOR ALLOCATION MODAL (UPGRADED) --- */}
-      {isSupModalOpen && currentLocForSup && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-md my-8 animate-in fade-in zoom-in-95">
-            <div className="bg-emerald-600 p-5 flex justify-between items-center rounded-t-xl text-white">
-              <h3 className="font-black text-lg flex items-center gap-2"><span>👤</span> Map Field Supervisor</h3>
-              <button onClick={() => setIsSupModalOpen(false)} className="hover:opacity-70 font-black text-2xl">&times;</button>
-            </div>
-            
-            <div className="p-6">
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
-                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
-                <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
-                <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
-              </div>
-
-              {/* List Current Mappings */}
-              <div className="mb-6 space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">Currently Assigned</label>
-                {allocations.filter(a => a.location_id === currentLocForSup.id).map(alloc => {
-                  const sup = supervisors.find(s => s.id === alloc.supervisor_id);
-                  return (
-                    <div key={alloc.id} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
-                      <span className="font-black text-sm text-slate-800 tracking-wider">👤 {sup?.name || 'Unknown User'}</span>
-                      <button onClick={() => handleRemoveSupervisor(alloc.id, sup?.name || 'Unknown')} className="text-[10px] uppercase tracking-widest font-black text-red-600 hover:underline border border-transparent hover:border-red-200 px-2 py-1 rounded transition">Revoke</button>
-                    </div>
-                  );
-                })}
-                {allocations.filter(a => a.location_id === currentLocForSup.id).length === 0 && (
-                  <p className="text-xs font-bold text-slate-500 italic p-3 text-center bg-slate-50 rounded border border-slate-100">No supervisors currently mapped to this center.</p>
-                )}
-              </div>
-
-              {/* Assign New Form (UPGRADED WITH ROLE CHECKBOXES) */}
-              <form onSubmit={handleAssignSupervisor} className="space-y-4 border-t border-slate-200 pt-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-2">Assign New Supervisor</label>
-                  <select required value={selectedSupId} onChange={(e) => setSelectedSupId(e.target.value)} className="w-full border-2 border-slate-200 p-3 rounded-lg text-sm font-bold bg-white outline-none focus:border-emerald-600">
-                    <option value="" disabled>-- Select Supervisor from Directory --</option>
-                    {supervisors.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.email})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* THE FINE-GRAINED ROLE SELECTOR */}
-                {selectedSupId && (
-                  <div className="bg-slate-50 p-4 border border-slate-200 rounded-lg animate-in fade-in">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-3">Which roles can they manage here?</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {currentLocForSup.role_cm && (
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={supRoles.cm} onChange={e => setSupRoles({...supRoles, cm: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
-                          <span className="text-xs font-bold text-slate-700 uppercase">Manage CM</span>
-                        </label>
-                      )}
-                      {currentLocForSup.role_ocsc && (
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={supRoles.ocsc} onChange={e => setSupRoles({...supRoles, ocsc: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
-                          <span className="text-xs font-bold text-slate-700 uppercase">Manage OCSC</span>
-                        </label>
-                      )}
-                      {currentLocForSup.role_aadhaar && (
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={supRoles.aadhaar} onChange={e => setSupRoles({...supRoles, aadhaar: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
-                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Aadhaar</span>
-                        </label>
-                      )}
-                      {currentLocForSup.role_partner && (
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={supRoles.partner} onChange={e => setSupRoles({...supRoles, partner: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
-                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Partner</span>
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <button type="submit" disabled={isSubmittingSup || !selectedSupId} className="w-full bg-slate-900 text-white font-black py-4 rounded-lg shadow disabled:bg-slate-300 disabled:text-slate-500 transition hover:bg-emerald-600 uppercase tracking-widest text-sm">
-                  {isSubmittingSup ? "Mapping..." : "Link to Center"}
-                </button>
-              </form>
-            </div>
-
-          </div>
         </div>
       )}
 
@@ -810,6 +721,95 @@ export default function InfrastructureCommandCenter() {
           </div>
         </div>
       )}
+
+      {/* --- SUPERVISOR ALLOCATION MODAL --- */}
+      {isSupModalOpen && currentLocForSup && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-md my-8 animate-in fade-in zoom-in-95">
+            <div className="bg-emerald-600 p-5 flex justify-between items-center rounded-t-xl text-white">
+              <h3 className="font-black text-lg flex items-center gap-2"><span>👤</span> Map Field Supervisor</h3>
+              <button onClick={() => setIsSupModalOpen(false)} className="hover:opacity-70 font-black text-2xl">&times;</button>
+            </div>
+            
+            <div className="p-6">
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
+                <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
+                <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
+              </div>
+
+              {/* List Current Mappings */}
+              <div className="mb-6 space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">Currently Assigned</label>
+                {allocations.filter(a => a.location_id === currentLocForSup.id).map(alloc => {
+                  const sup = supervisors.find(s => s.auth_id === alloc.supervisor_id);
+                  return (
+                    <div key={alloc.id} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
+                      <span className="font-black text-sm text-slate-800 tracking-wider">👤 {sup?.name || 'Unknown User'}</span>
+                      <button onClick={() => handleRemoveSupervisor(alloc.id, sup?.name || 'Unknown')} className="text-[10px] uppercase tracking-widest font-black text-red-600 hover:underline border border-transparent hover:border-red-200 px-2 py-1 rounded transition">Revoke</button>
+                    </div>
+                  );
+                })}
+                {allocations.filter(a => a.location_id === currentLocForSup.id).length === 0 && (
+                  <p className="text-xs font-bold text-slate-500 italic p-3 text-center bg-slate-50 rounded border border-slate-100">No supervisors currently mapped to this center.</p>
+                )}
+              </div>
+
+              {/* Assign New Form */}
+              <form onSubmit={handleAssignSupervisor} className="space-y-4 border-t border-slate-200 pt-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-2">Assign New Supervisor</label>
+                  <select required value={selectedSupId} onChange={(e) => setSelectedSupId(e.target.value)} className="w-full border-2 border-slate-200 p-3 rounded-lg text-sm font-bold bg-white outline-none focus:border-emerald-600">
+                    <option value="" disabled>-- Select Supervisor from Directory --</option>
+                    {supervisors.map(s => (
+                      <option key={s.id} value={s.auth_id}>{s.name} ({s.email})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* THE FINE-GRAINED ROLE SELECTOR */}
+                {selectedSupId && (
+                  <div className="bg-slate-50 p-4 border border-slate-200 rounded-lg animate-in fade-in">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-3">Which roles can they manage here?</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {currentLocForSup.role_cm && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.cm} onChange={e => setSupRoles({...supRoles, cm: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage CM</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_ocsc && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.ocsc} onChange={e => setSupRoles({...supRoles, ocsc: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage OCSC</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_aadhaar && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.aadhaar} onChange={e => setSupRoles({...supRoles, aadhaar: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Aadhaar</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_partner && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.partner} onChange={e => setSupRoles({...supRoles, partner: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Partner</span>
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" disabled={isSubmittingSup || !selectedSupId} className="w-full bg-slate-900 text-white font-black py-4 rounded-lg shadow disabled:bg-slate-300 disabled:text-slate-500 transition hover:bg-emerald-600 uppercase tracking-widest text-sm">
+                  {isSubmittingSup ? "Mapping..." : "Link to Center"}
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
