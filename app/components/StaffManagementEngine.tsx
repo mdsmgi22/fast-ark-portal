@@ -10,7 +10,7 @@ export default function StaffManagementEngine() {
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
   const [isRouting, setIsRouting] = useState(false);
   
-  // ARCHITECTURE VERIFIED: Supervisor limits securely synced with backend API quotas
+  // UPGRADED: Expanded limits including the new Supervisor perimeter
   const LIMITS = { Manager: 5, Accountant: 3, Supervisor: 20, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
