@@ -11,6 +11,8 @@ export default function ApplicationsList() {
   const [applications, setApplications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  // Default filter set to show only pending/unprocessed applications
+  const [statusFilter, setStatusFilter] = useState("Pending"); 
   const [pdfLoading, setPdfLoading] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,7 +28,7 @@ export default function ApplicationsList() {
 
     initializePage();
 
-    // --- THE CACHE-BUSTING ENGINE ---
+    // Cache-busting engine forces refresh when returning from the review page
     const handleFocus = () => fetchApplications();
     window.addEventListener('focus', handleFocus);
     window.addEventListener('popstate', handleFocus); 
@@ -54,7 +56,6 @@ export default function ApplicationsList() {
       if (error) throw error;
       if (data) setApplications(data);
 
-      // Force Next.js to obliterate the stale router cache in the background
       router.refresh();
       
     } catch (error: any) {
@@ -103,10 +104,22 @@ export default function ApplicationsList() {
     setPdfLoading(null);
   };
 
-  const filteredApps = applications.filter(app => 
-    app.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    app.mobile?.includes(searchTerm)
-  );
+  // Upgraded filtering engine isolates applications based on their status
+  const filteredApps = applications.filter(app => {
+    const matchesSearch = app.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          app.mobile?.includes(searchTerm);
+                          
+    let matchesStatus = true;
+    if (statusFilter !== "All") {
+      if (statusFilter === "Pending") {
+        matchesStatus = app.status === "Pending" || !app.status;
+      } else {
+        matchesStatus = app.status === statusFilter;
+      }
+    }
+    
+    return matchesSearch && matchesStatus;
+  });
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -149,14 +162,25 @@ export default function ApplicationsList() {
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           
-          <div className="p-4 border-b border-gray-200 bg-gray-50 flex gap-4">
+          <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col sm:flex-row gap-4">
             <input 
               type="text" 
               placeholder="Search by Applicant Name or Mobile No..." 
-              className="w-full max-w-md border border-gray-300 p-2.5 rounded outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium shadow-inner"
+              className="w-full sm:flex-1 border border-gray-300 p-2.5 rounded outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium shadow-inner"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
+            
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full sm:w-48 border border-gray-300 p-2.5 rounded outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold shadow-inner bg-white text-slate-700"
+            >
+              <option value="Pending">⏳ Approval Pending</option>
+              <option value="Approved">✅ Approved</option>
+              <option value="Rejected">❌ Rejected</option>
+              <option value="All">All Applications</option>
+            </select>
           </div>
 
           <div className="overflow-x-auto">
@@ -182,7 +206,7 @@ export default function ApplicationsList() {
                 ) : filteredApps.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-12 text-center text-gray-500 font-bold text-lg bg-slate-50">
-                      No applications found matching your search.
+                      No applications found matching your criteria.
                     </td>
                   </tr>
                 ) : (

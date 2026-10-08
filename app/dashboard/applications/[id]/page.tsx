@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link"; 
-// [BULLETPROOF FIX]: Mathematically exact relative path (3 levels up to 'app')
 import { supabase } from "../../../lib/supabase"; 
 
 export default function ApplicationReview() {
@@ -14,6 +13,10 @@ export default function ApplicationReview() {
   const [app, setApp] = useState<any>(null);
   const [locations, setLocations] = useState<any[]>([]);
   const [selectedLocation, setSelectedLocation] = useState("");
+  
+  // Cascading Filter States
+  const [filterState, setFilterState] = useState("ALL");
+  const [filterHQ, setFilterHQ] = useState("ALL");
   
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,7 +35,6 @@ export default function ApplicationReview() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // Fetch the application
       const { data: appData, error: appError } = await supabase
         .from('pending_applications')
         .select('*')
@@ -42,7 +44,6 @@ export default function ApplicationReview() {
       if (appError) throw appError;
       if (appData) setApp(appData);
 
-      // Fetch ALL locations (Since physical locations are permanent, we fetch them all)
       const { data: locData, error: locError } = await supabase
         .from('locations')
         .select('*')
@@ -58,26 +59,26 @@ export default function ApplicationReview() {
     }
   };
 
-  // Maps the legacy requested text string to the new Boolean database columns
+  // Derive filtering arrays based on locations data
+  const uniqueStates = Array.from(new Set(locations.map(l => l.state).filter(Boolean))).sort();
+  const masterHQs = locations.filter(l => l.is_master_node && (filterState === "ALL" || l.state === filterState));
+
   const getFilteredLocations = () => {
     if (!app) return [];
     return locations.filter((loc) => {
+      if (loc.is_master_node) return false; // Partners are only assigned to child centers/spokes
+      
+      // Geographic & Topology Cascading
+      if (filterState !== "ALL" && loc.state !== filterState) return false;
+      if (filterHQ !== "ALL" && loc.parent_master_id?.toString() !== filterHQ) return false;
+
+      // Role requirements based on application
       const req = app.requested_role?.toUpperCase();
       if (req === "OCSC") return loc.role_ocsc === true;
       if (req === "AADHAAR CENTER" || req === "AADHAAR") return loc.role_aadhaar === true;
       if (req === "CM (CONSUMER MOBILITY)" || req === "CM") return loc.role_cm === true;
-      // Default to returning franchise partners if the role is generic
       return loc.role_partner === true; 
     });
-  };
-
-  const getRoleIdentifier = (loc: any) => {
-    if (!app) return "Partner";
-    const req = app.requested_role?.toUpperCase();
-    if (req === "OCSC") return "OCSC Center";
-    if (req === "AADHAAR CENTER" || req === "AADHAAR") return "Aadhaar Kendra";
-    if (req === "CM (CONSUMER MOBILITY)" || req === "CM") return "CM Center";
-    return "Franchise Partner";
   };
 
   const handleViewKYC = async () => {
@@ -106,7 +107,6 @@ export default function ApplicationReview() {
     }
   };
 
-  // --- UPGRADED: APPROVAL + TELEMETRY ---
   const handleApprove = async () => {
     if (!selectedLocation) {
       return alert("Mandatory: You must assign an official infrastructure location to approve this applicant.");
@@ -118,7 +118,6 @@ export default function ApplicationReview() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Authentication error. Please log in again.");
 
-      // 1. Process Core Approval
       const response = await fetch('/api/approve-application', {
         method: 'POST',
         headers: { 
@@ -138,7 +137,6 @@ export default function ApplicationReview() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to process approval.");
 
-      // 2. PRODUCTIVITY MATRIX TELEMETRY
       const locDetails = locations.find(l => l.id === selectedLocation);
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session.user.id,
@@ -159,7 +157,6 @@ export default function ApplicationReview() {
     }
   };
 
-  // --- UPGRADED: REJECTION + TELEMETRY ---
   const handleReject = async () => {
     if (!rejectReason.trim()) {
       return alert("You must provide a reason for rejecting the application.");
@@ -172,7 +169,6 @@ export default function ApplicationReview() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Authentication error.");
 
-      // 1. Process Core Rejection
       const response = await fetch('/api/reject-application', {
         method: 'POST',
         headers: { 
@@ -190,7 +186,6 @@ export default function ApplicationReview() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to process rejection.");
 
-      // 2. PRODUCTIVITY MATRIX TELEMETRY
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session.user.id,
         staff_email: session.user.email,
@@ -224,7 +219,7 @@ export default function ApplicationReview() {
     </div>
   );
 
-  const filteredLocations = getFilteredLocations();
+  const availableCenters = getFilteredLocations();
 
   return (
     <div className="min-h-screen bg-slate-50 p-8">
@@ -268,7 +263,6 @@ export default function ApplicationReview() {
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">DOB</span><span className="font-bold text-slate-800">{app.dob}</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">{app.father_name?.split(':')[0] || "Guardian"}</span><span className="font-bold text-slate-800">{app.father_name?.split(':')[1] || app.father_name}</span></div>
                 
-                {/* ID Digits dynamically masked by prompt strict rules */}
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Gov ID</span><span className="font-bold text-slate-800">[ID Redacted]</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">PAN No</span><span className="font-bold text-slate-800">{app.pan_number || "N/A"}</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Qualification</span><span className="font-bold text-slate-800">{app.qualification}</span></div>
@@ -294,30 +288,57 @@ export default function ApplicationReview() {
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 border-t-4 border-t-blue-600">
                 <h2 className="text-xl font-black text-slate-900 mb-2">Official Mapping</h2>
                 <p className="text-xs text-gray-500 font-bold mb-6">
-                  Assign this user to an official master location before creating their account.
+                  Filter and assign this user to an official center infrastructure.
                 </p>
                 
-                <label className="block text-[10px] font-black uppercase tracking-widest text-blue-800 mb-2">
-                  Assign Master Location <span className="text-blue-600 bg-blue-100 px-1.5 rounded ml-1">({filteredLocations.length} Available)</span>
-                </label>
-                
-                <select 
-                  className="w-full border-2 border-blue-200 p-3 rounded-lg mb-4 outline-none focus:border-blue-600 font-bold text-sm bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
-                  value={selectedLocation}
-                  onChange={(e) => setSelectedLocation(e.target.value)}
-                  disabled={isProcessing}
-                >
-                  <option value="" disabled>-- Select Official Center --</option>
-                  {filteredLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      [{loc.center_code || "NO-CODE"}] {loc.center_name} ({loc.dist})
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-3 mb-6">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">1. Filter by State</label>
+                    <select 
+                      value={filterState} 
+                      onChange={e => { setFilterState(e.target.value); setFilterHQ("ALL"); setSelectedLocation(""); }}
+                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-slate-50"
+                    >
+                      <option value="ALL">-- All States --</option>
+                      {uniqueStates.map(st => <option key={st as string} value={st as string}>{st as string}</option>)}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">2. Filter by Master HQ</label>
+                    <select 
+                      value={filterHQ} 
+                      onChange={e => { setFilterHQ(e.target.value); setSelectedLocation(""); }}
+                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-slate-50"
+                    >
+                      <option value="ALL">-- All Master HQs --</option>
+                      {masterHQs.map(hq => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+                    </select>
+                  </div>
 
-                {filteredLocations.length === 0 && (
-                  <p className="text-[10px] text-red-600 font-bold mt-2 mb-4 bg-red-50 p-2 rounded">
-                    ⚠️ You have zero locations configured with this role. Go to the Locations module to configure one first.
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-blue-800 mb-1">
+                      3. Assign Target Center <span className="text-blue-600 bg-blue-100 px-1.5 rounded ml-1">({availableCenters.length})</span>
+                    </label>
+                    <select 
+                      className="w-full border-2 border-blue-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                      value={selectedLocation}
+                      onChange={(e) => setSelectedLocation(e.target.value)}
+                      disabled={isProcessing}
+                    >
+                      <option value="" disabled>-- Select Official Center --</option>
+                      {availableCenters.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          [{loc.center_code || "NO-CODE"}] {loc.center_name} ({loc.dist})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {availableCenters.length === 0 && (
+                  <p className="text-[10px] text-red-600 font-bold mt-2 mb-4 bg-red-50 p-2 rounded border border-red-100">
+                    ⚠️ No compatible centers found for this combination of State, HQ, and requested role.
                   </p>
                 )}
 
