@@ -31,7 +31,6 @@ export function proxy(request: NextRequest) {
       const base64Url = accessToken.split('.')[1];
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
       
-      // Add padding calculation before atob():
       const paddedBase64 = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
       const jsonPayload = decodeURIComponent(
         atob(paddedBase64).split('').map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
@@ -43,37 +42,37 @@ export function proxy(request: NextRequest) {
       const safeRole = rawRole.trim().toLowerCase();
 
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
-      
-      // [STRICT ALLOWANCE]: Staff added specifically to the MIS route
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
       const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
+      const supervisorRoutes = ['/dashboard/supervisor-hub'];
 
+      // Supervisor Guard: Strictly traps supervisors in their read-only hub
+      if (safeRole === 'supervisor') {
+        if (!supervisorRoutes.some(p => pathname.startsWith(p))) {
+          return NextResponse.redirect(new URL('/dashboard/supervisor-hub', request.url));
+        }
+      }
       // Accountant Guard
-      if (safeRole === 'accountant') {
+      else if (safeRole === 'accountant') {
         if (!financeRoutes.some(p => pathname.startsWith(p)) && pathname !== '/dashboard') {
           return NextResponse.redirect(new URL('/dashboard', request.url));
         }
       }
-
       // Staff Guard
-      if (safeRole === 'staff') {
+      else if (safeRole === 'staff') {
         if (!opsRoutes.some(p => pathname.startsWith(p)) && pathname !== '/dashboard') {
           return NextResponse.redirect(new URL('/dashboard', request.url));
         }
       }
-
       // Manager Guard
-      if (safeRole === 'manager') {
+      else if (safeRole === 'manager') {
         if (!managerRoutes.some(p => pathname.startsWith(p)) && pathname !== '/dashboard') {
           return NextResponse.redirect(new URL('/dashboard', request.url));
         }
       }
-
-      // [CRITICAL FIX]: Admin Guard Fault Tolerance
-      if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
-        // Explicitly bypass the Edge check. We allow the native DB lookup inside the
-        // page component to handle security. This stops the 307 Ghost Redirect loop.
+      // Admin Guard Fault Tolerance
+      else if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
         return NextResponse.next();
       }
 

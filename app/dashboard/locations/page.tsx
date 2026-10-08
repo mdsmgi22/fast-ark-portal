@@ -19,10 +19,11 @@ export default function InfrastructureCommandCenter() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Supervisor Mapping Modal State
+  // Supervisor Mapping Modal State (UPGRADED)
   const [isSupModalOpen, setIsSupModalOpen] = useState(false);
   const [currentLocForSup, setCurrentLocForSup] = useState<any>(null);
   const [selectedSupId, setSelectedSupId] = useState("");
+  const [supRoles, setSupRoles] = useState({ cm: false, ocsc: false, aadhaar: false, partner: false });
   const [isSubmittingSup, setIsSubmittingSup] = useState(false);
 
   // Auto-Fetch PIN State
@@ -42,8 +43,8 @@ export default function InfrastructureCommandCenter() {
     role_ocsc: false,
     role_aadhaar: false,
     role_partner: true, 
-    is_master_node: false, // Architectural Hub Toggle
-    parent_master_id: "",  // Spoke Tethering ID
+    is_master_node: false, 
+    parent_master_id: "",  
   };
   const [formData, setFormData] = useState(initialForm);
 
@@ -56,7 +57,6 @@ export default function InfrastructureCommandCenter() {
     fetchDataArchitecture();
   }, []);
 
-  // Smart UX: Reset Master HQ filter when the State filter changes
   useEffect(() => {
     setFilterMasterHQ("ALL");
   }, [filterState]);
@@ -90,7 +90,7 @@ export default function InfrastructureCommandCenter() {
       } finally {
         setIsFetchingPin(false);
       }
-    }, 500); // 500ms debounce
+    }, 500); 
 
     return () => clearTimeout(timer);
   }, [formData.pin_code]);
@@ -101,7 +101,6 @@ export default function InfrastructureCommandCenter() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // Parallel fetching for high performance
       const [locsRes, supRes, allocRes] = await Promise.all([
         supabase.from("locations").select("*, parent_master:locations(center_name)").order("center_name", { ascending: true }),
         supabase.from("back_office_staff").select("id, name, email").eq("role", "Supervisor").eq("status", "Active"),
@@ -202,10 +201,12 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
-  // --- SUPERVISOR MAPPING ACTIONS ---
+  // --- SUPERVISOR MAPPING ACTIONS (UPGRADED) ---
   const openSupModal = (loc: any) => {
     setCurrentLocForSup(loc);
     setSelectedSupId("");
+    // Reset roles
+    setSupRoles({ cm: false, ocsc: false, aadhaar: false, partner: false });
     setIsSupModalOpen(true);
   };
 
@@ -213,16 +214,24 @@ export default function InfrastructureCommandCenter() {
     e.preventDefault();
     if (!selectedSupId || !currentLocForSup) return;
     
+    // Validation: They must select at least one role
+    if (!supRoles.cm && !supRoles.ocsc && !supRoles.aadhaar && !supRoles.partner) {
+      return alert("You must select at least one role for this Supervisor to manage.");
+    }
+    
     setIsSubmittingSup(true);
     try {
       const { error } = await supabase.from('supervisor_allocations').insert([{
         supervisor_id: selectedSupId,
-        location_id: currentLocForSup.id
+        location_id: currentLocForSup.id,
+        manage_cm: supRoles.cm,
+        manage_ocsc: supRoles.ocsc,
+        manage_aadhaar: supRoles.aadhaar,
+        manage_partner: supRoles.partner
       }]);
       
       if (error) throw error;
       
-      // Telemetry Logging
       const { data: { session } } = await supabase.auth.getSession();
       const supName = supervisors.find(s => s.id === selectedSupId)?.name;
       await supabase.from('staff_activity_logs').insert([{
@@ -231,14 +240,14 @@ export default function InfrastructureCommandCenter() {
         action_type: 'MAPPING',
         module: 'INFRASTRUCTURE',
         target_id: currentLocForSup.id,
-        details: `Assigned Supervisor [${supName}] to Center: ${currentLocForSup.center_name}`
+        details: `Assigned Supervisor [${supName}] to Center: ${currentLocForSup.center_name} with specific role scoping.`
       }]);
 
       setSelectedSupId("");
-      fetchDataArchitecture(); // Refresh the grid to show new badge
+      fetchDataArchitecture(); 
     } catch (err: any) {
       if (err.message.includes('unique_supervisor_location') || err.code === '23505') {
-         alert("This supervisor is already assigned to this center.");
+         alert("This supervisor is already assigned to this center. Revoke their access first if you want to change their roles.");
       } else {
          alert("Error mapping supervisor: " + err.message);
       }
@@ -253,7 +262,6 @@ export default function InfrastructureCommandCenter() {
       const { error } = await supabase.from('supervisor_allocations').delete().eq('id', allocId);
       if (error) throw error;
 
-      // Telemetry Logging
       const { data: { session } } = await supabase.auth.getSession();
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session?.user?.id,
@@ -397,7 +405,7 @@ export default function InfrastructureCommandCenter() {
             const locAllocs = allocations.filter(a => a.location_id === loc.id);
             const assignedSups = locAllocs.map(a => {
                const sup = supervisors.find(s => s.id === a.supervisor_id);
-               return sup ? { ...sup, allocId: a.id } : null;
+               return sup ? { ...sup, allocData: a } : null;
             }).filter(Boolean);
 
             return (
@@ -458,16 +466,31 @@ export default function InfrastructureCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ISOLATED SUPERVISOR RENDERER */}
+                  {/* ISOLATED SUPERVISOR RENDERER (UPGRADED) */}
                   <div className="mt-5 pt-4 border-t border-slate-100">
                     <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">Assigned Supervisor(s)</p>
                     {assignedSups.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {assignedSups.map((s: any) => (
-                          <span key={s.allocId} className="bg-slate-900 text-white text-[10px] font-black px-2 py-1 rounded shadow-sm tracking-widest uppercase">
-                            {s.name}
-                          </span>
-                        ))}
+                      <div className="flex flex-col gap-2">
+                        {assignedSups.map((s: any) => {
+                          const roles = [];
+                          if (s.allocData.manage_cm) roles.push('CM');
+                          if (s.allocData.manage_ocsc) roles.push('OCSC');
+                          if (s.allocData.manage_aadhaar) roles.push('AADHAAR');
+                          if (s.allocData.manage_partner) roles.push('PARTNER');
+
+                          return (
+                            <div key={s.allocData.id} className="bg-slate-900 text-white text-xs p-2 rounded shadow-sm flex flex-col gap-1 border border-slate-800">
+                              <span className="font-black truncate">👤 {s.name}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {roles.map(r => (
+                                  <span key={r} className="text-[8px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase border border-slate-600">
+                                    {r}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Unassigned</span>
@@ -488,6 +511,94 @@ export default function InfrastructureCommandCenter() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* --- SUPERVISOR ALLOCATION MODAL (UPGRADED) --- */}
+      {isSupModalOpen && currentLocForSup && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-md my-8 animate-in fade-in zoom-in-95">
+            <div className="bg-emerald-600 p-5 flex justify-between items-center rounded-t-xl text-white">
+              <h3 className="font-black text-lg flex items-center gap-2"><span>👤</span> Map Field Supervisor</h3>
+              <button onClick={() => setIsSupModalOpen(false)} className="hover:opacity-70 font-black text-2xl">&times;</button>
+            </div>
+            
+            <div className="p-6">
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
+                <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
+                <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
+              </div>
+
+              {/* List Current Mappings */}
+              <div className="mb-6 space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">Currently Assigned</label>
+                {allocations.filter(a => a.location_id === currentLocForSup.id).map(alloc => {
+                  const sup = supervisors.find(s => s.id === alloc.supervisor_id);
+                  return (
+                    <div key={alloc.id} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
+                      <span className="font-black text-sm text-slate-800 tracking-wider">👤 {sup?.name || 'Unknown User'}</span>
+                      <button onClick={() => handleRemoveSupervisor(alloc.id, sup?.name || 'Unknown')} className="text-[10px] uppercase tracking-widest font-black text-red-600 hover:underline border border-transparent hover:border-red-200 px-2 py-1 rounded transition">Revoke</button>
+                    </div>
+                  );
+                })}
+                {allocations.filter(a => a.location_id === currentLocForSup.id).length === 0 && (
+                  <p className="text-xs font-bold text-slate-500 italic p-3 text-center bg-slate-50 rounded border border-slate-100">No supervisors currently mapped to this center.</p>
+                )}
+              </div>
+
+              {/* Assign New Form (UPGRADED WITH ROLE CHECKBOXES) */}
+              <form onSubmit={handleAssignSupervisor} className="space-y-4 border-t border-slate-200 pt-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-2">Assign New Supervisor</label>
+                  <select required value={selectedSupId} onChange={(e) => setSelectedSupId(e.target.value)} className="w-full border-2 border-slate-200 p-3 rounded-lg text-sm font-bold bg-white outline-none focus:border-emerald-600">
+                    <option value="" disabled>-- Select Supervisor from Directory --</option>
+                    {supervisors.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.email})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* THE FINE-GRAINED ROLE SELECTOR */}
+                {selectedSupId && (
+                  <div className="bg-slate-50 p-4 border border-slate-200 rounded-lg animate-in fade-in">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-3">Which roles can they manage here?</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {currentLocForSup.role_cm && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.cm} onChange={e => setSupRoles({...supRoles, cm: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage CM</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_ocsc && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.ocsc} onChange={e => setSupRoles({...supRoles, ocsc: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage OCSC</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_aadhaar && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.aadhaar} onChange={e => setSupRoles({...supRoles, aadhaar: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Aadhaar</span>
+                        </label>
+                      )}
+                      {currentLocForSup.role_partner && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={supRoles.partner} onChange={e => setSupRoles({...supRoles, partner: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
+                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Partner</span>
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" disabled={isSubmittingSup || !selectedSupId} className="w-full bg-slate-900 text-white font-black py-4 rounded-lg shadow disabled:bg-slate-300 disabled:text-slate-500 transition hover:bg-emerald-600 uppercase tracking-widest text-sm">
+                  {isSubmittingSup ? "Mapping..." : "Link to Center"}
+                </button>
+              </form>
+            </div>
+
+          </div>
         </div>
       )}
 
@@ -699,61 +810,6 @@ export default function InfrastructureCommandCenter() {
           </div>
         </div>
       )}
-
-      {/* --- SUPERVISOR ALLOCATION MODAL --- */}
-      {isSupModalOpen && currentLocForSup && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-md my-8 animate-in fade-in zoom-in-95">
-            <div className="bg-emerald-600 p-5 flex justify-between items-center rounded-t-xl text-white">
-              <h3 className="font-black text-lg flex items-center gap-2"><span>👤</span> Map Field Supervisor</h3>
-              <button onClick={() => setIsSupModalOpen(false)} className="hover:opacity-70 font-black text-2xl">&times;</button>
-            </div>
-            
-            <div className="p-6">
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
-                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
-                <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
-                <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
-              </div>
-
-              {/* List Current Mappings */}
-              <div className="mb-6 space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">Currently Assigned</label>
-                {allocations.filter(a => a.location_id === currentLocForSup.id).map(alloc => {
-                  const sup = supervisors.find(s => s.id === alloc.supervisor_id);
-                  return (
-                    <div key={alloc.id} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
-                      <span className="font-black text-sm text-slate-800 tracking-wider">👤 {sup?.name || 'Unknown User'}</span>
-                      <button onClick={() => handleRemoveSupervisor(alloc.id, sup?.name || 'Unknown')} className="text-[10px] uppercase tracking-widest font-black text-red-600 hover:underline border border-transparent hover:border-red-200 px-2 py-1 rounded transition">Revoke</button>
-                    </div>
-                  );
-                })}
-                {allocations.filter(a => a.location_id === currentLocForSup.id).length === 0 && (
-                  <p className="text-xs font-bold text-slate-500 italic p-3 text-center bg-slate-50 rounded border border-slate-100">No supervisors currently mapped to this center.</p>
-                )}
-              </div>
-
-              {/* Assign New Form */}
-              <form onSubmit={handleAssignSupervisor} className="space-y-4 border-t border-slate-200 pt-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-2">Assign New Supervisor</label>
-                  <select required value={selectedSupId} onChange={(e) => setSelectedSupId(e.target.value)} className="w-full border-2 border-slate-200 p-3 rounded-lg text-sm font-bold bg-white outline-none focus:border-emerald-600">
-                    <option value="" disabled>-- Select Supervisor from Directory --</option>
-                    {supervisors.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.email})</option>
-                    ))}
-                  </select>
-                </div>
-                <button type="submit" disabled={isSubmittingSup || !selectedSupId} className="w-full bg-slate-900 text-white font-black py-4 rounded-lg shadow disabled:bg-slate-300 disabled:text-slate-500 transition hover:bg-emerald-600 uppercase tracking-widest text-sm">
-                  {isSubmittingSup ? "Mapping..." : "Link to Center"}
-                </button>
-              </form>
-            </div>
-
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

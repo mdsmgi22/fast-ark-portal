@@ -58,29 +58,58 @@ export default function SupervisorHub() {
       }
       setStaffProfile(staff);
 
-      // 2. FETCH ISOLATED TERRITORY ALLOCATIONS
+      // 2. FETCH ISOLATED TERRITORY ALLOCATIONS (UPGRADED WITH ROLES)
       const { data: allocations } = await supabase
         .from('supervisor_allocations')
-        .select('location_id')
+        .select('location_id, manage_cm, manage_ocsc, manage_aadhaar, manage_partner')
         .eq('supervisor_id', staff.id);
 
       if (!allocations || allocations.length === 0) {
         setLoading(false);
-        return; // UI will render "No Centers Allocated" empty state
+        return; 
       }
 
       const allowedLocIds = allocations.map(a => a.location_id);
+      
+      // Build a strict mapping dictionary for memory isolation
+      const permissionMap: Record<number, any> = {};
+      allocations.forEach(a => {
+        permissionMap[a.location_id] = a;
+      });
 
-      // 3. PULL ISOLATED DATASTREAMS (Strict Row-Level Isolation)
-      const [locsRes, partnersRes, salesRes, depositsRes] = await Promise.all([
+      // 3. PULL ISOLATED DATASTREAMS
+      const [locsRes, partnersRes] = await Promise.all([
         supabase.from('locations').select('*').in('id', allowedLocIds),
-        supabase.from('active_partners').select('*, locations(center_name)').in('center_id', allowedLocIds),
-        supabase.from('daily_sales_reports').select('*, active_partners(partner_name)').in('location_id', allowedLocIds).order('report_date', { ascending: false }),
-        supabase.from('partner_deposits').select('*, active_partners(partner_name)').in('center_id', allowedLocIds).order('created_at', { ascending: false })
+        supabase.from('active_partners').select('*, locations(center_name)').in('center_id', allowedLocIds).eq('status', 'Active')
       ]);
 
       setAllocatedLocations(locsRes.data || []);
-      setRegionalPartners(partnersRes.data || []);
+      
+      const rawPartners = partnersRes.data || [];
+      
+      // 4. FINE-GRAINED ROLE ISOLATION ENGINE
+      const permittedPartners = rawPartners.filter(p => {
+        const rules = permissionMap[p.center_id];
+        if (!rules) return false;
+        
+        const r = (p.role || "").toUpperCase();
+        if (r.includes('CM') && rules.manage_cm) return true;
+        if (r.includes('OCSC') && rules.manage_ocsc) return true;
+        if (r.includes('AADHAAR') && rules.manage_aadhaar) return true;
+        if ((r === 'PARTNER' || r.includes('IRCTC')) && rules.manage_partner) return true;
+        
+        return false;
+      });
+
+      const permittedPartnerIds = permittedPartners.map(p => p.id);
+
+      // 5. FETCH SALES & DEPOSITS STRICTLY FOR PERMITTED PARTNERS
+      const [salesRes, depositsRes] = await Promise.all([
+        supabase.from('daily_sales_reports').select('*, active_partners(partner_name)').in('partner_id', permittedPartnerIds).order('report_date', { ascending: false }),
+        supabase.from('partner_deposits').select('*, active_partners(partner_name)').in('partner_id', permittedPartnerIds).order('created_at', { ascending: false })
+      ]);
+
+      setRegionalPartners(permittedPartners);
       setRegionalSales(salesRes.data || []);
       setRegionalDeposits(depositsRes.data || []);
 
@@ -105,7 +134,7 @@ export default function SupervisorHub() {
 
       const { data, error } = await supabase.storage
         .from("deposit-slips")
-        .createSignedUrl(deposit.deposit_slip_url, 60); // 60-second read-only token
+        .createSignedUrl(deposit.deposit_slip_url, 60); 
       
       if (error || !data) throw new Error("Vault Access Denied");
       
@@ -141,6 +170,16 @@ export default function SupervisorHub() {
       }]);
 
       if (error) throw error;
+
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: staffProfile.id,
+        staff_email: staffProfile.email,
+        action_type: 'DISPATCH_ALERT',
+        module: 'MESSAGES',
+        target_id: partner.id,
+        details: `Dispatched Regional Nudge to ${partner.partner_name} for ${issueType} compliance.`
+      }]);
+
       alert(`✅ Regional Nudge securely dispatched to ${partner.partner_name}.`);
 
     } catch (err: any) {
@@ -159,7 +198,6 @@ export default function SupervisorHub() {
   const todayStr = getISTDate(0);
   const yesterdayStr = getISTDate(-1);
 
-  // Compliance Matrix Engine
   const complianceMatrix = regionalPartners.map(p => {
     const pSales = regionalSales.filter(s => s.partner_id === p.id);
     const pDeposits = regionalDeposits.filter(d => d.partner_id === p.id && d.status !== 'Discrepancy');
@@ -223,7 +261,7 @@ export default function SupervisorHub() {
                 {allocatedLocations.length} Centers Monitored
               </span>
               <span className="text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200 px-3 py-1 rounded shadow-sm tracking-widest">
-                {regionalPartners.length} Active Partners
+                {regionalPartners.length} Permitted Partners
               </span>
             </div>
           </div>
@@ -269,7 +307,10 @@ export default function SupervisorHub() {
                   {complianceMatrix.map(p => (
                     <tr key={p.id} className={`transition ${p.isDefaulter ? 'bg-red-50/20' : 'hover:bg-slate-50'}`}>
                       <td className="p-4">
-                        <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                        <div className="flex justify-between items-start">
+                           <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                           <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">{p.role}</span>
+                        </div>
                         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">📍 {p.locations?.center_name}</p>
                       </td>
                       <td className="p-4 text-center border-l border-slate-100">
@@ -288,7 +329,7 @@ export default function SupervisorHub() {
                       </td>
                     </tr>
                   ))}
-                  {complianceMatrix.length === 0 && <tr><td colSpan={3} className="p-12 text-center font-bold text-slate-400">No active partners found in your allocated territory.</td></tr>}
+                  {complianceMatrix.length === 0 && <tr><td colSpan={3} className="p-12 text-center font-bold text-slate-400">No active partners found in your allocated territory matching your permitted roles.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -406,7 +447,10 @@ export default function SupervisorHub() {
                     complianceMatrix.filter(p => p.isDefaulter).map(p => (
                       <tr key={p.id} className="hover:bg-red-50/30 transition">
                         <td className="p-4">
-                          <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                          <div className="flex items-start gap-2">
+                            <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                            <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">{p.role}</span>
+                          </div>
                           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">📍 {p.locations?.center_name}</p>
                         </td>
                         <td className="p-4 text-center">
