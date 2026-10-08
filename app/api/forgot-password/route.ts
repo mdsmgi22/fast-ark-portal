@@ -8,13 +8,25 @@ export async function POST(request: Request) {
 
     const targetEmail = email.trim().toLowerCase();
 
-    // 1. Initialize Admin Client to safely bypass RLS for this specific check
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // =========================================================================
+    // 1. THE FIX: Strict Environment Variable Validation
+    // =========================================================================
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    // 2. STRICT DATABASE VERIFICATION
+    // If Next.js fails to load the key from .env.local, trap the error immediately.
+    if (!supabaseUrl || !serviceKey) {
+      console.error("❌ CRITICAL SERVER ERROR: SUPABASE_SERVICE_ROLE_KEY is missing or undefined in the server environment.");
+      return NextResponse.json({ 
+        success: false, 
+        error: "Server Configuration Error: The backend API key is missing. Please ensure SUPABASE_SERVICE_ROLE_KEY is correctly saved in your .env.local file and restart your terminal." 
+      }, { status: 500 });
+    }
+
+    // 2. Initialize Admin Client safely
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey);
+
+    // 3. STRICT DATABASE VERIFICATION
     const [staffRes, partnerRes] = await Promise.all([
       supabaseAdmin.from("back_office_staff").select("status").eq("email", targetEmail).maybeSingle(),
       supabaseAdmin.from("active_partners").select("status").eq("email", targetEmail).maybeSingle()
@@ -39,9 +51,9 @@ export async function POST(request: Request) {
       }, { status: 403 });
     }
 
-    // 3. DISPATCH RECOVERY EMAIL
+    // 4. DISPATCH RECOVERY EMAIL
     // Dynamically grab the origin URL to construct the reset link
-    const origin = request.headers.get('origin') || 'https://fastark.org';
+    const origin = request.headers.get('origin') || 'https://fastark.in';
     const redirectUrl = `${origin}/update-password`;
 
     const { error: authError } = await supabaseAdmin.auth.resetPasswordForEmail(targetEmail, {
@@ -50,7 +62,7 @@ export async function POST(request: Request) {
 
     if (authError) throw authError;
 
-    // 4. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+    // 5. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
     await supabaseAdmin.from('staff_activity_logs').insert([{
       staff_id: 'SYSTEM',
       staff_email: targetEmail,
