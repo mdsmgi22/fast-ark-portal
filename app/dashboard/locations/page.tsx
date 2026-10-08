@@ -8,12 +8,22 @@ import { useRouter } from "next/navigation";
 export default function InfrastructureCommandCenter() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  
+  // Data States
   const [locations, setLocations] = useState<any[]>([]);
+  const [supervisors, setSupervisors] = useState<any[]>([]);
+  const [allocations, setAllocations] = useState<any[]>([]);
 
-  // Modal State
+  // Location Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Supervisor Mapping Modal State
+  const [isSupModalOpen, setIsSupModalOpen] = useState(false);
+  const [currentLocForSup, setCurrentLocForSup] = useState<any>(null);
+  const [selectedSupId, setSelectedSupId] = useState("");
+  const [isSubmittingSup, setIsSubmittingSup] = useState(false);
 
   // Auto-Fetch PIN State
   const [isFetchingPin, setIsFetchingPin] = useState(false);
@@ -43,7 +53,7 @@ export default function InfrastructureCommandCenter() {
   const [filterMasterHQ, setFilterMasterHQ] = useState("ALL");
 
   useEffect(() => {
-    fetchLocations();
+    fetchDataArchitecture();
   }, []);
 
   // Smart UX: Reset Master HQ filter when the State filter changes
@@ -85,26 +95,32 @@ export default function InfrastructureCommandCenter() {
     return () => clearTimeout(timer);
   }, [formData.pin_code]);
 
-  const fetchLocations = async () => {
+  // --- CORE DATA FETCHING ENGINE ---
+  const fetchDataArchitecture = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // Fetch locations including the parent tether reference
-      const { data, error } = await supabase
-        .from("locations")
-        .select("*, parent_master:locations(center_name)")
-        .order("center_name", { ascending: true });
+      // Parallel fetching for high performance
+      const [locsRes, supRes, allocRes] = await Promise.all([
+        supabase.from("locations").select("*, parent_master:locations(center_name)").order("center_name", { ascending: true }),
+        supabase.from("back_office_staff").select("id, name, email").eq("role", "Supervisor").eq("status", "Active"),
+        supabase.from("supervisor_allocations").select("*")
+      ]);
 
-      if (error) throw error;
-      setLocations(data || []);
+      if (locsRes.error) throw locsRes.error;
+
+      setLocations(locsRes.data || []);
+      setSupervisors(supRes.data || []);
+      setAllocations(allocRes.data || []);
     } catch (err: any) {
-      console.error("Error fetching locations:", err.message);
+      console.error("Error fetching architecture data:", err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  // --- LOCATION FORM ACTIONS ---
   const openModalForNew = () => {
     setEditingId(null);
     setFormData(initialForm);
@@ -137,7 +153,6 @@ export default function InfrastructureCommandCenter() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Topology Validation
     if (!formData.is_master_node && !formData.parent_master_id) {
       return alert("A Franchise Center (Spoke) must be tethered to a Master HQ.");
     }
@@ -151,7 +166,6 @@ export default function InfrastructureCommandCenter() {
       taluk: formData.taluk,
       dist: formData.dist,
       state: formData.state,
-      // Architectural Logic applied to payload
       is_master_node: formData.is_master_node,
       parent_master_id: formData.is_master_node ? null : parseInt(formData.parent_master_id),
       role_cm: formData.is_master_node ? false : formData.role_cm,
@@ -174,10 +188,8 @@ export default function InfrastructureCommandCenter() {
         if (error) throw error;
       }
       setIsModalOpen(false);
-      fetchLocations();
+      fetchDataArchitecture();
     } catch (err: any) {
-      console.error("Database Transaction Failed:", err); 
-
       if (err?.code === '23505') {
         alert("Validation Error: The Center Name or Center Code already exists in the database. These must be uniquely identifiable.");
       } else if (err?.code === '23503') {
@@ -190,18 +202,84 @@ export default function InfrastructureCommandCenter() {
     }
   };
 
+  // --- SUPERVISOR MAPPING ACTIONS ---
+  const openSupModal = (loc: any) => {
+    setCurrentLocForSup(loc);
+    setSelectedSupId("");
+    setIsSupModalOpen(true);
+  };
+
+  const handleAssignSupervisor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSupId || !currentLocForSup) return;
+    
+    setIsSubmittingSup(true);
+    try {
+      const { error } = await supabase.from('supervisor_allocations').insert([{
+        supervisor_id: selectedSupId,
+        location_id: currentLocForSup.id
+      }]);
+      
+      if (error) throw error;
+      
+      // Telemetry Logging
+      const { data: { session } } = await supabase.auth.getSession();
+      const supName = supervisors.find(s => s.id === selectedSupId)?.name;
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: session?.user?.id,
+        staff_email: session?.user?.email,
+        action_type: 'MAPPING',
+        module: 'INFRASTRUCTURE',
+        target_id: currentLocForSup.id,
+        details: `Assigned Supervisor [${supName}] to Center: ${currentLocForSup.center_name}`
+      }]);
+
+      setSelectedSupId("");
+      fetchDataArchitecture(); // Refresh the grid to show new badge
+    } catch (err: any) {
+      if (err.message.includes('unique_supervisor_location') || err.code === '23505') {
+         alert("This supervisor is already assigned to this center.");
+      } else {
+         alert("Error mapping supervisor: " + err.message);
+      }
+    } finally {
+      setIsSubmittingSup(false);
+    }
+  };
+
+  const handleRemoveSupervisor = async (allocId: string, supName: string) => {
+    if (!confirm(`Are you sure you want to revoke ${supName}'s access to this center?`)) return;
+    try {
+      const { error } = await supabase.from('supervisor_allocations').delete().eq('id', allocId);
+      if (error) throw error;
+
+      // Telemetry Logging
+      const { data: { session } } = await supabase.auth.getSession();
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: session?.user?.id,
+        staff_email: session?.user?.email,
+        action_type: 'REVOCATION',
+        module: 'INFRASTRUCTURE',
+        target_id: currentLocForSup.id,
+        details: `Revoked Supervisor [${supName}] from Center: ${currentLocForSup.center_name}`
+      }]);
+
+      fetchDataArchitecture();
+    } catch (err: any) {
+      alert("Error removing supervisor: " + err.message);
+    }
+  };
+
   // DYNAMIC DATA EXTRACTION
   const uniqueStates = Array.from(new Set(locations.map(loc => loc.state).filter(Boolean))).sort();
   const masterHQs = locations.filter(loc => loc.is_master_node);
   
-  // Dynamically populate the Master HQ filter dropdown based on the selected State
   const masterHQsForFilter = masterHQs
     .filter(hq => filterState === "ALL" || hq.state === filterState)
     .sort((a, b) => a.center_name.localeCompare(b.center_name));
 
   // TRIPLE-AXIS STRICT FILTER ENGINE
   const filteredLocations = locations.filter(loc => {
-    // 1. Role Verification
     let roleMatch = true;
     if (filterRole === "HQ") roleMatch = loc.is_master_node;
     else if (filterRole === "CM") roleMatch = loc.role_cm;
@@ -209,13 +287,10 @@ export default function InfrastructureCommandCenter() {
     else if (filterRole === "AADHAAR") roleMatch = loc.role_aadhaar;
     else if (filterRole === "PARTNER") roleMatch = loc.role_partner;
 
-    // 2. Geography Verification (State)
     let stateMatch = filterState === "ALL" || loc.state === filterState;
 
-    // 3. Network Topology Verification (Master HQ)
     let hqMatch = true;
     if (filterMasterHQ !== "ALL") {
-      // If a Master HQ is selected, only show spokes tethered to it, OR show the HQ itself.
       hqMatch = loc.parent_master_id?.toString() === filterMasterHQ || loc.id.toString() === filterMasterHQ;
     }
 
@@ -229,13 +304,13 @@ export default function InfrastructureCommandCenter() {
   );
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
       
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-slate-200 pb-6">
         <div>
           <h1 className="text-3xl font-black text-slate-900">Infrastructure & Locations</h1>
-          <p className="text-slate-500 font-medium mt-1">Manage physical centers, BA/OA mapping, and operational roles.</p>
+          <p className="text-slate-500 font-medium mt-1">Manage physical centers, assign field supervisors, and map operational roles.</p>
         </div>
         <div className="flex items-center gap-3">
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm transition">
@@ -317,77 +392,106 @@ export default function InfrastructureCommandCenter() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
-          {filteredLocations.map(loc => (
-            <div key={loc.id} className={`bg-white rounded-xl shadow-sm border-2 hover:border-blue-300 overflow-hidden flex flex-col transition-all ${loc.is_master_node ? 'border-indigo-400' : 'border-slate-200'}`}>
-              
-              <div className="p-5 flex-1 border-b border-slate-100">
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="font-black text-lg text-slate-900 leading-tight">
-                    {loc.center_name}
-                  </h3>
-                  <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 uppercase tracking-widest">
-                    {loc.center_code || "NO-CODE"}
-                  </span>
-                </div>
+          {filteredLocations.map(loc => {
+            // Find assigned supervisors for this specific location
+            const locAllocs = allocations.filter(a => a.location_id === loc.id);
+            const assignedSups = locAllocs.map(a => {
+               const sup = supervisors.find(s => s.id === a.supervisor_id);
+               return sup ? { ...sup, allocId: a.id } : null;
+            }).filter(Boolean);
+
+            return (
+              <div key={loc.id} className={`bg-white rounded-xl shadow-sm border-2 hover:border-blue-300 overflow-hidden flex flex-col transition-all ${loc.is_master_node ? 'border-indigo-400' : 'border-slate-200'}`}>
                 
-                {/* ARCHITECTURE BADGE */}
-                <div className="mb-4">
-                  {loc.is_master_node ? (
-                    <span className="inline-block bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
-                      🏛️ Master HQ (Hub)
+                <div className="p-5 flex-1 border-b border-slate-100">
+                  <div className="flex justify-between items-start mb-4">
+                    <h3 className="font-black text-lg text-slate-900 leading-tight">
+                      {loc.center_name}
+                    </h3>
+                    <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 uppercase tracking-widest">
+                      {loc.center_code || "NO-CODE"}
                     </span>
-                  ) : (
-                    <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
-                      🔗 Tethered to: {loc.parent_master?.center_name || 'N/A'}
-                    </span>
+                  </div>
+                  
+                  {/* ARCHITECTURE BADGE */}
+                  <div className="mb-4">
+                    {loc.is_master_node ? (
+                      <span className="inline-block bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
+                        🏛️ Master HQ (Hub)
+                      </span>
+                    ) : (
+                      <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
+                        🔗 Tethered to: {loc.parent_master?.center_name || 'N/A'}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {!loc.is_master_node && (
+                    <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                      <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                        <span>Partner</span>
+                        <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
+                      </div>
+                      <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                        <span>OCSC</span>
+                        <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
+                      </div>
+                      <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                        <span>CM</span>
+                        <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
+                      </div>
+                      <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
+                        <span>Aadhaar</span>
+                        <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
+                      </div>
+                    </div>
                   )}
+
+                  <div className="space-y-2">
+                    <div className="flex items-center text-sm">
+                      <span className="w-6 text-slate-400">🏢</span>
+                      <span className="font-bold text-slate-700 text-xs">BA: {loc.ba || "N/A"} | OA: {loc.oa || "N/A"}</span>
+                    </div>
+                    <div className="flex items-start text-sm">
+                      <span className="w-6 text-slate-400 pt-0.5">📍</span>
+                      <span className="font-bold text-slate-700 text-xs">{loc.taluk ? `${loc.taluk}, ` : ""}{loc.dist}, {loc.state} <br/><span className="text-slate-400">PIN: {loc.pin_code}</span></span>
+                    </div>
+                  </div>
+
+                  {/* ISOLATED SUPERVISOR RENDERER */}
+                  <div className="mt-5 pt-4 border-t border-slate-100">
+                    <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">Assigned Supervisor(s)</p>
+                    {assignedSups.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {assignedSups.map((s: any) => (
+                          <span key={s.allocId} className="bg-slate-900 text-white text-[10px] font-black px-2 py-1 rounded shadow-sm tracking-widest uppercase">
+                            {s.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Unassigned</span>
+                    )}
+                  </div>
+
                 </div>
-                
-                {!loc.is_master_node && (
-                  <div className="grid grid-cols-2 gap-2 mb-5 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_partner ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>Partner</span>
-                      <span>{loc.role_partner ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_ocsc ? 'bg-blue-100 border-blue-200 text-blue-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>OCSC</span>
-                      <span>{loc.role_ocsc ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_cm ? 'bg-emerald-100 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>CM</span>
-                      <span>{loc.role_cm ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                    <div className={`px-2 py-1.5 rounded flex justify-between items-center text-[9px] font-black uppercase tracking-wider border ${loc.role_aadhaar ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}>
-                      <span>Aadhaar</span>
-                      <span>{loc.role_aadhaar ? '🟢 ON' : '🔴 OFF'}</span>
-                    </div>
-                  </div>
-                )}
 
-                <div className="space-y-2">
-                  <div className="flex items-center text-sm">
-                    <span className="w-6 text-slate-400">🏢</span>
-                    <span className="font-bold text-slate-700 text-xs">BA: {loc.ba || "N/A"} | OA: {loc.oa || "N/A"}</span>
-                  </div>
-                  <div className="flex items-start text-sm">
-                    <span className="w-6 text-slate-400 pt-0.5">📍</span>
-                    <span className="font-bold text-slate-700 text-xs">{loc.taluk ? `${loc.taluk}, ` : ""}{loc.dist}, {loc.state} <br/><span className="text-slate-400">PIN: {loc.pin_code}</span></span>
-                  </div>
+                <div className="bg-slate-50 p-3 flex justify-between items-center">
+                  <button onClick={() => openSupModal(loc)} className="text-xs font-black text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded border border-emerald-100 hover:bg-emerald-100 hover:border-emerald-200 transition shadow-sm">
+                    👤 Assign Supervisor
+                  </button>
+                  <button onClick={() => openModalForEdit(loc)} className="text-xs font-black text-blue-600 bg-blue-50 px-4 py-1.5 rounded border border-blue-100 hover:bg-blue-100 hover:border-blue-200 transition shadow-sm">
+                    Edit Location
+                  </button>
                 </div>
-              </div>
 
-              <div className="bg-slate-50 p-3 flex justify-end items-center">
-                <button onClick={() => openModalForEdit(loc)} className="text-xs font-black text-blue-600 bg-blue-50 px-4 py-1.5 rounded border border-blue-100 hover:bg-blue-100 hover:border-blue-200 transition shadow-sm">
-                  Edit Geography & Roles
-                </button>
               </div>
-
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* ADD/EDIT MODAL */}
+      {/* --- ADD / EDIT LOCATION MODAL --- */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-2xl border w-full max-w-2xl my-8 animate-in fade-in zoom-in-95">
@@ -595,6 +699,61 @@ export default function InfrastructureCommandCenter() {
           </div>
         </div>
       )}
+
+      {/* --- SUPERVISOR ALLOCATION MODAL --- */}
+      {isSupModalOpen && currentLocForSup && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-md my-8 animate-in fade-in zoom-in-95">
+            <div className="bg-emerald-600 p-5 flex justify-between items-center rounded-t-xl text-white">
+              <h3 className="font-black text-lg flex items-center gap-2"><span>👤</span> Map Field Supervisor</h3>
+              <button onClick={() => setIsSupModalOpen(false)} className="hover:opacity-70 font-black text-2xl">&times;</button>
+            </div>
+            
+            <div className="p-6">
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
+                <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
+                <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
+              </div>
+
+              {/* List Current Mappings */}
+              <div className="mb-6 space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">Currently Assigned</label>
+                {allocations.filter(a => a.location_id === currentLocForSup.id).map(alloc => {
+                  const sup = supervisors.find(s => s.id === alloc.supervisor_id);
+                  return (
+                    <div key={alloc.id} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
+                      <span className="font-black text-sm text-slate-800 tracking-wider">👤 {sup?.name || 'Unknown User'}</span>
+                      <button onClick={() => handleRemoveSupervisor(alloc.id, sup?.name || 'Unknown')} className="text-[10px] uppercase tracking-widest font-black text-red-600 hover:underline border border-transparent hover:border-red-200 px-2 py-1 rounded transition">Revoke</button>
+                    </div>
+                  );
+                })}
+                {allocations.filter(a => a.location_id === currentLocForSup.id).length === 0 && (
+                  <p className="text-xs font-bold text-slate-500 italic p-3 text-center bg-slate-50 rounded border border-slate-100">No supervisors currently mapped to this center.</p>
+                )}
+              </div>
+
+              {/* Assign New Form */}
+              <form onSubmit={handleAssignSupervisor} className="space-y-4 border-t border-slate-200 pt-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-2">Assign New Supervisor</label>
+                  <select required value={selectedSupId} onChange={(e) => setSelectedSupId(e.target.value)} className="w-full border-2 border-slate-200 p-3 rounded-lg text-sm font-bold bg-white outline-none focus:border-emerald-600">
+                    <option value="" disabled>-- Select Supervisor from Directory --</option>
+                    {supervisors.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <button type="submit" disabled={isSubmittingSup || !selectedSupId} className="w-full bg-slate-900 text-white font-black py-4 rounded-lg shadow disabled:bg-slate-300 disabled:text-slate-500 transition hover:bg-emerald-600 uppercase tracking-widest text-sm">
+                  {isSubmittingSup ? "Mapping..." : "Link to Center"}
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

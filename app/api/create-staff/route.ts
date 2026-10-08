@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 
-// Define strict enterprise limits (Upgraded Manager to 5)
+// Define strict enterprise limits including the new Supervisor role
 const ROLE_LIMITS: Record<string, number> = {
   'Manager': 5,
   'Accountant': 3,
+  'Supervisor': 20,
   'Staff': 11,
   'Admin': 2 
 };
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
     // 3. ARCHITECTURAL FIX: 2-STEP BYPASS WITH AUTH_ID BINDING
     // =========================================================================
     
-    // STEP A: Create the Auth User WITHOUT metadata to bypass the legacy trigger.
+    // STEP A: Create the Auth User WITHOUT metadata to bypass any legacy triggers.
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email.trim().toLowerCase(),
       password: tempPassword,
@@ -111,9 +112,9 @@ export async function POST(request: Request) {
     });
 
     // =========================================================================
-    // 4. Secure Credential Dispatch via Resend
+    // 4. Secure Credential Dispatch via Resend (Domain Migrated to .org)
     // =========================================================================
-    const senderEmail = 'updates@fastark.in';
+    const senderEmail = 'updates@fastark.org';
 
     await resend.emails.send({
       from: `Fast Ark IT Systems <${senderEmail}>`,

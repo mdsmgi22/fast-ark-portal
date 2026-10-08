@@ -10,8 +10,8 @@ export default function StaffManagementEngine() {
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
   const [isRouting, setIsRouting] = useState(false);
   
-  // UPGRADED: Manager limit expanded to 5
-  const LIMITS = { Manager: 5, Accountant: 3, Staff: 11 };
+  // ARCHITECTURE VERIFIED: Supervisor limits securely synced with backend API quotas
+  const LIMITS = { Manager: 5, Accountant: 3, Supervisor: 20, Staff: 11 };
   
   const [staffForm, setStaffForm] = useState({
     name: "",
@@ -107,7 +107,7 @@ export default function StaffManagementEngine() {
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-fit">
           <h3 className="text-lg font-black text-slate-800 mb-4 pb-2 border-b">Onboard New Team Member</h3>
           
-          <div className="grid grid-cols-3 gap-2 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
             <div className="bg-slate-100 p-2 rounded text-center">
               <p className="text-[10px] font-bold text-slate-500 uppercase">Managers</p>
               <p className={`font-black ${getRoleCount('Manager') >= LIMITS.Manager ? 'text-red-600' : 'text-slate-800'}`}>
@@ -118,6 +118,12 @@ export default function StaffManagementEngine() {
               <p className="text-[10px] font-bold text-slate-500 uppercase">Accountants</p>
               <p className={`font-black ${getRoleCount('Accountant') >= LIMITS.Accountant ? 'text-red-600' : 'text-slate-800'}`}>
                 {getRoleCount('Accountant')}/{LIMITS.Accountant}
+              </p>
+            </div>
+            <div className="bg-slate-100 p-2 rounded text-center">
+              <p className="text-[10px] font-bold text-slate-500 uppercase">Supervisors</p>
+              <p className={`font-black ${getRoleCount('Supervisor') >= LIMITS.Supervisor ? 'text-red-600' : 'text-slate-800'}`}>
+                {getRoleCount('Supervisor')}/{LIMITS.Supervisor}
               </p>
             </div>
             <div className="bg-slate-100 p-2 rounded text-center">
@@ -145,6 +151,7 @@ export default function StaffManagementEngine() {
               <label className="block text-slate-700 font-bold mb-1 uppercase text-[10px] tracking-widest">Assigned Role</label>
               <select value={staffForm.role} onChange={e => setStaffForm({...staffForm, role: e.target.value})} className="w-full border p-2.5 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-bold">
                 <option value="Staff">General Staff</option>
+                <option value="Supervisor">Field Supervisor</option>
                 <option value="Manager">Manager</option>
                 <option value="Accountant">Accountant</option>
               </select>
@@ -198,6 +205,7 @@ export default function StaffManagementEngine() {
                         s.role === 'Admin' ? 'bg-purple-100 text-purple-800 border-purple-200' :
                         s.role === 'Manager' ? 'bg-blue-100 text-blue-800 border-blue-200' :
                         s.role === 'Accountant' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                        s.role === 'Supervisor' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
                         'bg-slate-100 text-slate-700 border-slate-200'
                       }`}>
                         {s.role}
