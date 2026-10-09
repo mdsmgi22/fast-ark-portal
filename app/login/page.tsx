@@ -28,45 +28,67 @@ export default function BackOfficeLoginPage() {
       if (authError) throw new Error(authError.message);
       if (!authData.user) throw new Error("Authentication failed.");
 
-      // Insert right after authData is returned and verified:
+      // Check if temporary password needs to be changed
       if (authData.user.user_metadata?.must_change_password) {
         router.push("/update-password");
         return;
       }
 
-      // 2. Strict Verification against back_office_staff Table
+      // =====================================================================
+      // 2. UNIVERSAL ROUTING ENGINE
+      // =====================================================================
+      
+      // CHECK A: Is this an internal Corporate / Back-Office user?
       const { data: staffData, error: staffError } = await supabase
         .from("back_office_staff")
         .select("id, name, role, status")
         .eq("email", email.trim().toLowerCase())
         .maybeSingle();
 
-      if (staffError || !staffData) {
-        // Force sign out immediately if user is not in back_office_staff
-        await supabase.auth.signOut();
-        throw new Error(
-          "Access Denied: This credential is not mapped to an internal Back-Office profile."
-        );
+      if (staffData) {
+        // Apply strict Corporate clearance checks
+        if (staffData.status !== "Active") {
+          await supabase.auth.signOut();
+          throw new Error("Account Deactivated: Your clearance has been revoked. Contact Administration.");
+        }
+
+        // Self-Healing JWT Token to prevent middleware bounces
+        if (authData.user.user_metadata?.role !== staffData.role) {
+          await supabase.auth.updateUser({
+            data: { role: staffData.role }
+          });
+        }
+
+        setMessage("✅ Clearance verified. Establishing secure connection...");
+        router.push("/dashboard");
+        return;
       }
 
-      // 3. Strict Status Check (The Kill-Switch)
-      if (staffData.status !== "Active") {
-        await supabase.auth.signOut();
-        throw new Error("Account Deactivated: Your clearance has been revoked. Contact Administration.");
+      // CHECK B: If not corporate staff, is this a Franchise Partner?
+      const { data: partnerData, error: partnerError } = await supabase
+        .from('active_partners')
+        .select('status')
+        .eq('auth_id', authData.user.id)
+        .maybeSingle();
+
+      if (partnerData) {
+        // Apply strict Partner workflow routing
+        if (partnerData.status === 'Rejected') {
+          setMessage("⚠️ Application requires correction. Routing to portal...");
+          router.push('/partner/resubmit');
+        } else if (partnerData.status === 'Pending') {
+          await supabase.auth.signOut();
+          throw new Error("Your franchise application is currently under corporate review.");
+        } else if (partnerData.status === 'Active') {
+          setMessage("✅ Partner verified. Routing to dashboard...");
+          router.push('/partner/dashboard');
+        }
+        return;
       }
 
-      // [CRITICAL FIX]: Self-Healing JWT Token
-      // Instantly patch the Supabase JWT Cookie with the correct DB Role.
-      // This permanently stops "Ghost Click" bounces in the proxy.ts middleware.
-      if (authData.user.user_metadata?.role !== staffData.role) {
-        await supabase.auth.updateUser({
-          data: { role: staffData.role }
-        });
-      }
-
-      // 4. Role-Aware Intelligent Dispatch
-      setMessage("✅ Clearance verified. Establishing secure connection...");
-      router.push("/dashboard");
+      // 3. The Kill-Switch: User exists in Auth, but isn't mapped to ANY table
+      await supabase.auth.signOut();
+      throw new Error("Access Denied: This credential is not mapped to an internal or partner profile.");
 
     } catch (err: any) {
       setMessage("❌ " + err.message);
@@ -93,6 +115,8 @@ export default function BackOfficeLoginPage() {
           <div className={`mb-6 p-4 text-xs font-bold rounded-lg border leading-relaxed ${
             message.startsWith("❌") 
               ? "bg-red-950/50 text-red-400 border-red-900/50" 
+              : message.startsWith("⚠️")
+              ? "bg-amber-950/50 text-amber-400 border-amber-900/50"
               : "bg-emerald-950/50 text-emerald-400 border-emerald-900/50"
           }`}>
             {message}
@@ -102,7 +126,7 @@ export default function BackOfficeLoginPage() {
         <form onSubmit={handleSignIn} className="space-y-5">
           <div>
             <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-              Staff Email Address
+              Email Address
             </label>
             <input 
               type="email" 
