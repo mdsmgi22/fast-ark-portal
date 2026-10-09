@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase"; 
+import Image from "next/image";
 
 export default function BackOfficeLoginPage() {
   const router = useRouter();
@@ -103,12 +104,18 @@ export default function BackOfficeLoginPage() {
         {/* Decorative Internal UI Element */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 via-purple-600 to-emerald-600"></div>
 
-        <div className="text-center mb-8 mt-2">
-          <div className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-white font-black text-2xl mx-auto mb-4 shadow-md">
-            F
+        <div className="text-center mb-8 mt-4">
+          <div className="flex justify-center mb-3">
+            <Image 
+              src="/logo.png" 
+              alt="Fast Ark Logo" 
+              width={220} 
+              height={70} 
+              priority 
+              className="object-contain"
+            />
           </div>
-          <h1 className="text-2xl font-black tracking-wider text-white uppercase">FAST ARK</h1>
-          <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mt-1">Corporate Command Hub &bull; Authorized Personnel Only</p>
+          <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mt-2">Corporate Command Hub &bull; Authorized Personnel Only</p>
         </div>
 
         {message && (
