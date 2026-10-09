@@ -17,6 +17,9 @@ const CENTER_CATEGORIES = [
 export default function RelationalBankingHub() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  
+  // Security State (Allows Admins & Managers)
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Tab Navigation State
   const [activeTab, setActiveTab] = useState<'masters' | 'virtuals' | 'upis' | 'qrs'>('masters');
@@ -33,8 +36,10 @@ export default function RelationalBankingHub() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Cascading Filter in Modal
-  const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
+  // UPGRADED: Triple-Axis Cascading Filters for Mapping Modal
+  const [modalFilterState, setModalFilterState] = useState<string>("ALL");
+  const [modalFilterHQ, setModalFilterHQ] = useState<string>("ALL");
+  const [modalFilterCategory, setModalFilterCategory] = useState<string>("ALL");
 
   const initialForm = {
     bank_name: "",
@@ -52,18 +57,32 @@ export default function RelationalBankingHub() {
     fetchAllArchitecture();
   }, []);
 
+  // Smart Reset: Reset HQ filter when State changes
+  useEffect(() => {
+    setModalFilterHQ("ALL");
+  }, [modalFilterState]);
+
   const fetchAllArchitecture = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // [ALIGNED]: Fetching roles, center codes, and related location data for QRs
+      // Verify clearance level (Manager or Admin)
+      const { data: staffData } = await supabase
+        .from('back_office_staff')
+        .select('role')
+        .eq('email', session.user.email)
+        .single();
+      
+      if (staffData) setUserRole(staffData.role);
+
+      // [UPGRADED]: Fetching state and topology details to power the cascading filter
       const [mastersRes, virtualsRes, upisRes, qrsRes, locsRes] = await Promise.all([
         supabase.from("master_banks").select("*").order("created_at", { ascending: false }),
         supabase.from("virtual_accounts").select("*, master_banks(bank_name, actual_account_no), locations(center_name, center_code, role_partner, role_ocsc, role_cm, role_aadhaar)").order("created_at", { ascending: false }),
         supabase.from("upi_ids").select("*, master_banks(bank_name, actual_account_no), locations(center_name, center_code, role_partner, role_ocsc, role_cm, role_aadhaar)").order("created_at", { ascending: false }),
         supabase.from("qr_stickers").select("*, master_banks(bank_name, actual_account_no), locations(center_name, center_code)").order("created_at", { ascending: false }),
-        supabase.from("locations").select("id, center_name, center_code, role_partner, role_ocsc, role_cm, role_aadhaar").order("center_name", { ascending: true })
+        supabase.from("locations").select("id, center_name, center_code, state, is_master_node, parent_master_id, role_partner, role_ocsc, role_cm, role_aadhaar").order("center_name", { ascending: true })
       ]);
 
       if (locsRes.error) console.error("Locations Fetch Error:", locsRes.error.message);
@@ -80,27 +99,46 @@ export default function RelationalBankingHub() {
     }
   };
 
-  // Filter engine perfectly queries the boolean toggle states
-  const filteredLocations = useMemo(() => {
-    if (selectedCategory === "ALL") return locations;
-    return locations.filter((loc) => {
-      if (selectedCategory === "PARTNER") return loc.role_partner;
-      if (selectedCategory === "OCSC") return loc.role_ocsc;
-      if (selectedCategory === "CM") return loc.role_cm;
-      if (selectedCategory === "AADHAAR") return loc.role_aadhaar;
-      return false;
-    });
-  }, [locations, selectedCategory]);
+  const canUpdate = userRole === 'Admin' || userRole === 'Manager';
 
-  // --- UPGRADED: TOGGLE ENGINE WITH TELEMETRY ---
+  // --- TRIPLE-AXIS FILTER COMPUTATIONS ---
+  const uniqueStates = Array.from(new Set(locations.map(loc => loc.state).filter(Boolean))).sort();
+  const masterHQs = locations.filter(loc => loc.is_master_node);
+  const masterHQsForFilter = masterHQs
+    .filter(hq => modalFilterState === "ALL" || hq.state === modalFilterState)
+    .sort((a, b) => a.center_name.localeCompare(b.center_name));
+
+  const filteredLocations = useMemo(() => {
+    return locations.filter((loc) => {
+      // 1. Role Filter
+      let roleMatch = true;
+      if (modalFilterCategory === "PARTNER") roleMatch = loc.role_partner;
+      else if (modalFilterCategory === "OCSC") roleMatch = loc.role_ocsc;
+      else if (modalFilterCategory === "CM") roleMatch = loc.role_cm;
+      else if (modalFilterCategory === "AADHAAR") roleMatch = loc.role_aadhaar;
+
+      // 2. State Filter
+      let stateMatch = modalFilterState === "ALL" || loc.state === modalFilterState;
+
+      // 3. Topology (HQ) Filter
+      let hqMatch = true;
+      if (modalFilterHQ !== "ALL") {
+        hqMatch = loc.parent_master_id?.toString() === modalFilterHQ || loc.id.toString() === modalFilterHQ;
+      }
+
+      return roleMatch && stateMatch && hqMatch;
+    });
+  }, [locations, modalFilterCategory, modalFilterState, modalFilterHQ]);
+
+  // --- TOGGLE ENGINE WITH TELEMETRY ---
   const handleToggleStatus = async (table: string, id: string, currentStatus: boolean) => {
+    if (!canUpdate) return alert("Unauthorized: Only Managers and Admins can perform this action.");
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
       const { error } = await supabase.from(table).update({ is_active: !currentStatus }).eq("id", id);
       if (error) throw error;
 
-      // Telemetry Logging
       if (session?.user) {
         await supabase.from('staff_activity_logs').insert([{
           staff_id: session.user.id,
@@ -127,11 +165,10 @@ export default function RelationalBankingHub() {
     return data.publicUrl;
   };
 
-  // --- UPGRADED: SUBMISSION ENGINE WITH TELEMETRY & QR MAPPING ---
+  // --- SUBMISSION ENGINE WITH TELEMETRY & QR MAPPING ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Check mandatory center assignment for Virtuals, UPIs, and QRs
     if ((activeTab === 'virtuals' || activeTab === 'upis' || activeTab === 'qrs') && !formData.assigned_location_id) {
       return alert("Mandatory: You must select a mapped center from the dropdown.");
     }
@@ -174,7 +211,6 @@ export default function RelationalBankingHub() {
         if (!selectedFile) throw new Error("A file must be selected.");
         const qrUrl = await handleFileUpload(selectedFile);
         
-        // 1. Insert into qr_stickers master table
         const { error: qrError } = await supabase.from("qr_stickers").insert([{
           master_bank_id: formData.master_bank_id,
           assigned_location_id: parseInt(formData.assigned_location_id),
@@ -182,7 +218,6 @@ export default function RelationalBankingHub() {
         }]);
         if (qrError) throw qrError;
 
-        // 2. Dual-Write to locations table so Partner Dashboard can fetch it
         const { error: locError } = await supabase.from("locations").update({
           qr_asset_url: qrUrl
         }).eq("id", formData.assigned_location_id);
@@ -191,7 +226,6 @@ export default function RelationalBankingHub() {
         logDetails = `Uploaded and mapped QR Asset to Center ID: ${formData.assigned_location_id}`;
       }
 
-      // 3. PRODUCTIVITY MATRIX TELEMETRY
       if (session?.user && logDetails) {
         await supabase.from('staff_activity_logs').insert([{
           staff_id: session.user.id,
@@ -223,7 +257,9 @@ export default function RelationalBankingHub() {
       master_bank_id: masterBanks.length > 0 ? masterBanks[0].id : "",
       assigned_location_id: "" 
     });
-    setSelectedCategory("ALL");
+    setModalFilterState("ALL");
+    setModalFilterHQ("ALL");
+    setModalFilterCategory("ALL");
     setSelectedFile(null);
     setIsModalOpen(true);
   };
@@ -246,10 +282,12 @@ export default function RelationalBankingHub() {
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm transition">
             &larr; Admin
           </Link>
-          <button onClick={openModal} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
-            <span>+</span> 
-            {activeTab === 'masters' ? "Add Master Bank" : activeTab === 'virtuals' ? "Add Virtual Account" : activeTab === 'upis' ? "Add UPI ID" : "Upload QR Sticker"}
-          </button>
+          {canUpdate && (
+            <button onClick={openModal} className="bg-slate-900 hover:bg-slate-800 text-white font-black px-5 py-2.5 rounded-lg shadow-md transition flex gap-2 items-center">
+              <span>+</span> 
+              {activeTab === 'masters' ? "Add Master Bank" : activeTab === 'virtuals' ? "Add Virtual Account" : activeTab === 'upis' ? "Add UPI ID" : "Upload QR Sticker"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -268,9 +306,11 @@ export default function RelationalBankingHub() {
             <div key={bank.id} className={`bg-white rounded-xl shadow-sm border-2 overflow-hidden transition-all ${bank.is_active ? 'border-blue-200' : 'border-slate-200 grayscale opacity-70'}`}>
               <div className="p-4 bg-slate-50 flex justify-between items-center border-b">
                 <h3 className="font-black text-lg text-slate-900">{bank.bank_name}</h3>
-                <button onClick={() => handleToggleStatus('master_banks', bank.id, bank.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${bank.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                  {bank.is_active ? "Active" : "Suspended"}
-                </button>
+                {canUpdate && (
+                  <button onClick={() => handleToggleStatus('master_banks', bank.id, bank.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${bank.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {bank.is_active ? "Active" : "Suspended"}
+                  </button>
+                )}
               </div>
               <div className="p-5 space-y-3">
                 <div className="bg-red-50 border border-red-100 p-3 rounded">
@@ -305,9 +345,11 @@ export default function RelationalBankingHub() {
                     <h3 className="font-black text-xl text-slate-800">{v.virtual_account_no}</h3>
                     <p className="text-sm font-bold text-slate-600 mt-0.5">IFSC: {v.virtual_ifsc}</p>
                   </div>
-                  <button onClick={() => handleToggleStatus('virtual_accounts', v.id, v.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${v.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
-                    {v.is_active ? "Live" : "Off"}
-                  </button>
+                  {canUpdate && (
+                    <button onClick={() => handleToggleStatus('virtual_accounts', v.id, v.is_active)} className={`text-[10px] px-2 py-1 font-black uppercase rounded ${v.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
+                      {v.is_active ? "Live" : "Off"}
+                    </button>
+                  )}
                 </div>
                 <div className="bg-amber-50 border border-amber-200 p-2 rounded flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -335,7 +377,9 @@ export default function RelationalBankingHub() {
               <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex justify-between gap-2">
                   <span className="truncate">Bank: {u.master_banks?.bank_name} ({u.master_banks?.actual_account_no})</span>
-                  <button onClick={() => handleToggleStatus('upi_ids', u.id, u.is_active)} className={u.is_active ? 'text-green-600 font-black' : 'text-slate-400 font-black'}>{u.is_active ? 'LIVE' : 'OFF'}</button>
+                  {canUpdate && (
+                    <button onClick={() => handleToggleStatus('upi_ids', u.id, u.is_active)} className={u.is_active ? 'text-green-600 font-black' : 'text-slate-400 font-black'}>{u.is_active ? 'LIVE' : 'OFF'}</button>
+                  )}
                 </p>
                 <div className="bg-purple-50 border border-purple-100 p-3 rounded text-center mb-3">
                   <h3 className="font-black text-lg text-purple-900">{u.upi_id}</h3>
@@ -353,7 +397,7 @@ export default function RelationalBankingHub() {
         </div>
       )}
 
-      {/* TAB CONTENT: QR STICKERS (UPGRADED) */}
+      {/* TAB CONTENT: QR STICKERS */}
       {activeTab === 'qrs' && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6 animate-in fade-in slide-in-from-bottom-4">
           {qrStickers.map(qr => (
@@ -375,9 +419,11 @@ export default function RelationalBankingHub() {
                     </p>
                   )}
                 </div>
-                <button onClick={() => handleToggleStatus('qr_stickers', qr.id, qr.is_active)} className={`w-full text-[10px] py-1.5 font-black uppercase rounded mt-auto ${qr.is_active ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'} transition`}>
-                  {qr.is_active ? "Live Asset" : "Offline"}
-                </button>
+                {canUpdate && (
+                  <button onClick={() => handleToggleStatus('qr_stickers', qr.id, qr.is_active)} className={`w-full text-[10px] py-1.5 font-black uppercase rounded mt-auto ${qr.is_active ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'} transition`}>
+                    {qr.is_active ? "Live Asset" : "Offline"}
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -388,7 +434,7 @@ export default function RelationalBankingHub() {
       {/* MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-lg my-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-xl shadow-2xl border w-full max-w-xl my-8 animate-in fade-in zoom-in-95">
             <div className={`p-5 flex justify-between items-center rounded-t-xl text-white ${activeTab === 'masters' ? 'bg-blue-600' : activeTab === 'virtuals' ? 'bg-amber-600' : activeTab === 'upis' ? 'bg-purple-600' : 'bg-emerald-600'}`}>
               <h3 className="font-black text-lg">
                 {activeTab === 'masters' ? "New Master Bank" : activeTab === 'virtuals' ? "Deploy Virtual Account" : activeTab === 'upis' ? "Map Digital UPI" : "Upload Counter Sticker"}
@@ -428,20 +474,64 @@ export default function RelationalBankingHub() {
                 </>
               )}
 
-              {/* [UPGRADED] Cascading Dropdowns now apply to QRs as well */}
+              {/* [UPGRADED] Triple-Axis Cascading Mapping (Virtuals, UPIs, QRs) */}
               {(activeTab === 'virtuals' || activeTab === 'upis' || activeTab === 'qrs') && (
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Filter 1: State */}
+                    <div>
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest block mb-2">
+                        1. Filter by State
+                      </label>
+                      <select
+                        value={modalFilterState}
+                        onChange={(e) => {
+                          setModalFilterState(e.target.value);
+                          setFormData({ ...formData, assigned_location_id: "" });
+                        }}
+                        className="w-full border-2 border-slate-300 p-2.5 rounded-lg text-xs font-bold bg-white outline-none focus:border-slate-800 transition"
+                      >
+                        <option value="ALL">All States</option>
+                        {uniqueStates.map(state => (
+                          <option key={state} value={state}>{state}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Filter 2: Master HQ */}
+                    <div>
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest block mb-2">
+                        2. Filter by Master HQ
+                      </label>
+                      <select
+                        value={modalFilterHQ}
+                        onChange={(e) => {
+                          setModalFilterHQ(e.target.value);
+                          setFormData({ ...formData, assigned_location_id: "" });
+                        }}
+                        disabled={masterHQsForFilter.length === 0}
+                        className="w-full border-2 border-slate-300 p-2.5 rounded-lg text-xs font-bold bg-white outline-none focus:border-slate-800 disabled:opacity-50 transition"
+                      >
+                        <option value="ALL">All Regional Hubs</option>
+                        {masterHQsForFilter.map(hq => (
+                          <option key={hq.id} value={hq.id}>{hq.center_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Filter 3: Category */}
                   <div>
                     <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest block mb-2">
-                      1. Filter by Center Category
+                      3. Filter by Operational Role
                     </label>
                     <select
-                      value={selectedCategory}
+                      value={modalFilterCategory}
                       onChange={(e) => {
-                        setSelectedCategory(e.target.value);
+                        setModalFilterCategory(e.target.value);
                         setFormData({ ...formData, assigned_location_id: "" });
                       }}
-                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg text-sm font-bold bg-white outline-none focus:border-slate-800 transition"
+                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg text-xs font-bold bg-white outline-none focus:border-slate-800 transition"
                     >
                       {CENTER_CATEGORIES.map(cat => (
                         <option key={cat.key} value={cat.key}>{cat.label}</option>
@@ -449,18 +539,19 @@ export default function RelationalBankingHub() {
                     </select>
                   </div>
 
-                  <div>
+                  {/* Target Center Selector */}
+                  <div className="pt-2 border-t border-slate-200">
                     <label className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-2">
-                      2. Select Target Mapped Center * (Mandatory)
+                      4. Select Target Mapped Center *
                     </label>
                     <select
                       required
                       disabled={filteredLocations.length === 0}
                       value={formData.assigned_location_id}
                       onChange={e => setFormData({ ...formData, assigned_location_id: e.target.value })}
-                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg text-sm font-bold bg-white outline-none focus:border-slate-800 disabled:opacity-50 disabled:bg-slate-100 disabled:cursor-not-allowed transition"
+                      className="w-full border-2 border-red-300 p-2.5 rounded-lg text-sm font-bold bg-white outline-none focus:border-red-600 disabled:opacity-50 disabled:bg-slate-100 transition"
                     >
-                      <option value="" disabled>-- Select active mapped center --</option>
+                      <option value="" disabled>-- Assign to isolated center --</option>
                       {filteredLocations.map(loc => (
                         <option key={loc.id} value={loc.id}>
                           {loc.center_name} [{loc.center_code || "NO-CODE"}]
@@ -471,10 +562,10 @@ export default function RelationalBankingHub() {
                     {filteredLocations.length === 0 && (
                       <div className="mt-3 bg-red-50 p-3 rounded-lg border border-red-200">
                         <p className="text-[11px] text-red-800 font-bold uppercase tracking-wide flex items-center gap-1">
-                          <span>⚠️</span> No Centers Available
+                          <span>⚠️</span> No Centers Match Criteria
                         </p>
                         <p className="text-[10px] text-red-700 mt-1">
-                          There are currently 0 centers actively holding the <b>{CENTER_CATEGORIES.find(c => c.key === selectedCategory)?.label}</b> role.
+                          Zero active centers found in the selected region for the specified operational role.
                         </p>
                       </div>
                     )}
@@ -506,7 +597,7 @@ export default function RelationalBankingHub() {
               {activeTab === 'qrs' && (
                 <div className="border-2 border-dashed border-emerald-300 bg-emerald-50 p-6 rounded-lg text-center relative hover:bg-emerald-100 transition">
                   <input required type="file" accept="image/*,application/pdf" onChange={e => { if(e.target.files) setSelectedFile(e.target.files[0]) }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                  <span className="text-3xl block mb-2">📤</span>
+                  <span className="text-3xl block mb-2">📱</span>
                   <p className="text-sm font-black text-emerald-800">{selectedFile ? selectedFile.name : "Click to attach PDF / Image"}</p>
                 </div>
               )}
