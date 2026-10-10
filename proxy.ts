@@ -43,7 +43,7 @@ export function proxy(request: NextRequest) {
 
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
-      const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners'];
+      const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners', '/dashboard/banking'];
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
       const supervisorRoutes = ['/dashboard/supervisor-hub'];
 

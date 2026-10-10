@@ -500,11 +500,7 @@ export default function AdminCommandCenter() {
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
               </div>
 
-              <div onClick={() => routeTo("/dashboard/banking")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">💳</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">Corporate Banking Hub</h3>
-                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage remittance channels, virtual accounts, and UPI configurations.</p>
-              </div>
+
             </>
           )}
 
@@ -536,7 +532,12 @@ export default function AdminCommandCenter() {
                     <h3 className="font-black text-lg text-slate-900 group-hover:text-green-600">Logistics & Supply</h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Approve CTOP/CBP top-ups and mark physical SIMs dispatched.</p>
                   </div>
-
+              <div onClick={() => routeTo("/dashboard/banking")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-400 transition group block cursor-pointer">
+                <div className="text-3xl mb-3">💳</div>
+                <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">Corporate Banking Hub</h3>
+                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Manage remittance channels, virtual accounts, and UPI configurations.</p>
+              </div>
+              
                   <div onClick={() => routeTo("/dashboard/messages")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
                     <div className="text-3xl mb-3">💬</div>
                     <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
