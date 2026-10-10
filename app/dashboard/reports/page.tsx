@@ -43,7 +43,6 @@ export default function CorporateMISReports() {
         
       setAdminUser(staffData || { email: session.user.email });
 
-      // Fetch dynamic filters
       const { data: partners } = await supabase
         .from("active_partners")
         .select("id, partner_name, locations (state, dist, center_name)");
@@ -53,7 +52,6 @@ export default function CorporateMISReports() {
       const pList: {id: string, label: string}[] = [];
 
       (partners || []).forEach(p => {
-        // [COMPILER FIX]: Explicitly typed as 'any' to bypass TS Array strictness
         const locData = p.locations;
         const l: any = Array.isArray(locData) ? locData[0] : locData;
 
@@ -88,7 +86,6 @@ export default function CorporateMISReports() {
         return;
       }
 
-      // Strict Enforcement of the 31-Day Specification Limit
       const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
       
@@ -97,7 +94,6 @@ export default function CorporateMISReports() {
         return;
       }
 
-      // 1. Initial Database Query
       let query = supabase.from(exportType === 'sales' ? 'daily_sales_reports' : 'partner_deposits')
         .select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`);
 
@@ -110,13 +106,11 @@ export default function CorporateMISReports() {
       const { data, error } = await query;
       if (error) throw error;
 
-      // 2. Memory Filtering (Geo, Partner, and Status)
       let filteredData = data || [];
 
       filteredData = filteredData.filter(row => {
         const p = row.active_partners;
         
-        // [COMPILER FIX]: Explicitly typed as 'any' to bypass TS Array strictness
         const locData = p?.locations;
         const l: any = Array.isArray(locData) ? locData[0] : locData;
 
@@ -141,7 +135,6 @@ export default function CorporateMISReports() {
         return;
       }
 
-      // 3. Telemetry Logging (Productivity Matrix)
       if (adminUser?.email) {
         await supabase.from('staff_activity_logs').insert([{
           staff_id: adminUser.id || 'SYS',
@@ -153,7 +146,6 @@ export default function CorporateMISReports() {
         }]);
       }
 
-      // 4. Execute Export
       generateCSV(filteredData, exportType);
       
     } catch (err: any) {
@@ -163,10 +155,8 @@ export default function CorporateMISReports() {
     }
   };
 
-  // Enterprise Security: Prevent CSV Macro Injection
   const sanitizeCSV = (val: unknown): string => {
     let str = String(val || "").replace(/"/g, '""');
-    // Prefix formulas with a single quote to force Excel to read as text
     if (/^[=+\-@]/.test(str)) {
       str = "'" + str;
     }
@@ -175,7 +165,6 @@ export default function CorporateMISReports() {
 
   const generateCSV = (data: Record<string, any>[], type: string) => {
     const flatData = data.map(row => {
-      // [COMPILER FIX]: Explicitly typed as 'any' to bypass TS Array strictness
       const locData = row.active_partners?.locations;
       const l: any = Array.isArray(locData) ? locData[0] : locData;
 
@@ -188,7 +177,13 @@ export default function CorporateMISReports() {
       };
 
       if (type === 'sales') {
-        const totalCash = Number(row.cbp_landline_amt||0) + Number(row.cbp_gsm_amt||0) + Number(row.ctop_recharge_amt||0) + Number(row.sim_replacement_amt||0) + Number(row.sim_fancy_amt||0) + Number(row.sim_postpaid_amt||0) + Number(row.other_amt||0);
+        const totalCash = Number(row.cbp_landline_amt||0) + Number(row.cbp_gsm_amt||0) + 
+                          Number(row.ctop_recharge_amt||0) + Number(row.sim_replacement_amt||0) + 
+                          Number(row.sim_fancy_amt||0) + Number(row.sim_postpaid_amt||0) + 
+                          Number(row.other_amt||0) + Number(row.frc_amt||0) + Number(row.mnp_amt||0) +
+                          Number(row.pb_cbp_amt||0) + Number(row.pb_ctop_amt||0) + Number(row.pb_frc_amt||0) + 
+                          Number(row.pb_mnp_amt||0) + Number(row.pb_other_amt||0);
+
         return {
           ...baseRow,
           Report_Date: row.report_date,
@@ -197,11 +192,20 @@ export default function CorporateMISReports() {
           CBP_Landline_Amt: row.cbp_landline_amt || 0,
           CBP_GSM_Amt: row.cbp_gsm_amt || 0,
           CTOP_Recharge_Amt: row.ctop_recharge_amt || 0,
+          FRC_Qty: row.frc_qty || 0,
+          FRC_Amt: row.frc_amt || 0,
+          MNP_Qty: row.mnp_qty || 0,
+          MNP_Amt: row.mnp_amt || 0,
           SIM_Replacement_Amt: row.sim_replacement_amt || 0,
           SIM_Fancy_Amt: row.sim_fancy_amt || 0,
           SIM_Postpaid_Amt: row.sim_postpaid_amt || 0,
           Other_Amount: row.other_amt || 0,
           Cheque_Amount: row.cheque_amt || 0,
+          Paybull_CBP_Amt: row.pb_cbp_amt || 0,
+          Paybull_CTOP_Amt: row.pb_ctop_amt || 0,
+          Paybull_FRC_Amt: row.pb_frc_amt || 0,
+          Paybull_MNP_Amt: row.pb_mnp_amt || 0,
+          Paybull_Other_Amt: row.pb_other_amt || 0,
           Edited_By_Admin: row.is_edited_by_staff ? 'YES' : 'NO',
           Audit_Remarks: row.staff_edit_remarks || ''
         };

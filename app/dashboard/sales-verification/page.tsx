@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
-// --- Date Normalizers (IST Safe) ---
 const getLocalDateString = (date: Date) => {
   return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 };
@@ -36,12 +35,10 @@ export default function StaffSalesVerification() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   
-  // Data States
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [filteredSales, setFilteredSales] = useState<any[]>([]);
   const [latestDeposits, setLatestDeposits] = useState<Record<string, any>>({});
   
-  // Filter States (Upgraded with State & District)
   const [timeFilter, setTimeFilter] = useState("today"); 
   const [specificDateFilter, setSpecificDateFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("All");
@@ -50,12 +47,10 @@ export default function StaffSalesVerification() {
   
   const [dropdowns, setDropdowns] = useState({ states: [] as string[], dists: [] as string[], partners: [] as string[] });
 
-  // Audit / Edit Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingSale, setEditingSale] = useState<any>(null);
   
-  // Correction Reason States
   const [correctionCategory, setCorrectionCategory] = useState("");
   const [otherCorrectionText, setOtherCorrectionText] = useState("");
 
@@ -69,7 +64,6 @@ export default function StaffSalesVerification() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // 1. Fetch Sales (Pulling last 90 days, now extracting 'state' along with 'dist')
       const ninetyDaysAgo = new Date();
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
       
@@ -81,7 +75,6 @@ export default function StaffSalesVerification() {
 
       if (salesError) throw salesError;
 
-      // 2. Fetch Latest Deposits to cross-reference "Status of Deposit"
       const { data: deposits, error: depsError } = await supabase
         .from("partner_deposits")
         .select("partner_id, status, created_at, deposit_amount")
@@ -89,7 +82,6 @@ export default function StaffSalesVerification() {
 
       if (depsError) throw depsError;
 
-      // Map the most recent deposit for each partner
       const depMap: Record<string, any> = {};
       (deposits || []).forEach(d => {
         if (!depMap[d.partner_id]) {
@@ -101,7 +93,6 @@ export default function StaffSalesVerification() {
       const salesData = sales || [];
       setRawSales(salesData);
 
-      // Extract unique geographical and partner data for dropdowns
       const stNames = new Set<string>();
       const dtNames = new Set<string>();
       const pNames = new Set<string>();
@@ -121,7 +112,6 @@ export default function StaffSalesVerification() {
         partners: Array.from(pNames).sort() 
       });
 
-      // Apply initial filters
       applyFilters("today", "", "All", "All", "All", salesData);
 
     } catch (err: any) {
@@ -131,11 +121,9 @@ export default function StaffSalesVerification() {
     }
   };
 
-  // --- UPGRADED FILTER ENGINE ---
   const applyFilters = (time: string, specDate: string, state: string, dist: string, partner: string, data = rawSales) => {
     let result = data;
 
-    // 1. Apply Specific Date OR Time Range
     if (specDate) {
       const targetDate = normalizeToYYYYMMDD(specDate);
       result = result.filter(s => normalizeToYYYYMMDD(s.report_date) === targetDate);
@@ -145,7 +133,6 @@ export default function StaffSalesVerification() {
       let endDate = new Date();
 
       if (time === "today") {
-        // Keep as today
       } else if (time === "yesterday") {
         startDate.setDate(startDate.getDate() - 1);
         endDate.setDate(endDate.getDate() - 1);
@@ -167,21 +154,13 @@ export default function StaffSalesVerification() {
       setTimeFilter(time);
     }
 
-    // 2. Apply Geo & Partner Filters
-    if (state !== "All") {
-      result = result.filter(s => s.active_partners?.locations?.state === state);
-    }
-    if (dist !== "All") {
-      result = result.filter(s => s.active_partners?.locations?.dist === dist);
-    }
-    if (partner !== "All") {
-      result = result.filter(s => `${s.active_partners?.partner_name} (${s.active_partners?.locations?.center_name})` === partner);
-    }
+    if (state !== "All") result = result.filter(s => s.active_partners?.locations?.state === state);
+    if (dist !== "All") result = result.filter(s => s.active_partners?.locations?.dist === dist);
+    if (partner !== "All") result = result.filter(s => `${s.active_partners?.partner_name} (${s.active_partners?.locations?.center_name})` === partner);
 
     setFilteredSales(result);
   };
 
-  // UI Handlers for Filters
   const handleTimeClick = (mode: string) => {
     setSpecificDateFilter(""); 
     applyFilters(mode, "", stateFilter, distFilter, partnerFilter, rawSales);
@@ -207,9 +186,19 @@ export default function StaffSalesVerification() {
     applyFilters(timeFilter, specificDateFilter, stateFilter, distFilter, val, rawSales);
   };
 
-  // --- EDIT MODAL ENGINE ---
   const openEditModal = (sale: any) => {
-    setEditingSale({ ...sale }); 
+    setEditingSale({ 
+      ...sale,
+      frc_qty: sale.frc_qty || 0,
+      frc_amt: sale.frc_amt || 0,
+      mnp_qty: sale.mnp_qty || 0,
+      mnp_amt: sale.mnp_amt || 0,
+      pb_cbp_amt: sale.pb_cbp_amt || 0,
+      pb_ctop_amt: sale.pb_ctop_amt || 0,
+      pb_frc_amt: sale.pb_frc_amt || 0,
+      pb_mnp_amt: sale.pb_mnp_amt || 0,
+      pb_other_amt: sale.pb_other_amt || 0
+    }); 
     setCorrectionCategory("");
     setOtherCorrectionText("");
     setIsEditModalOpen(true);
@@ -232,7 +221,6 @@ export default function StaffSalesVerification() {
     
     setIsSubmitting(true);
     try {
-      // FIX: Replaced fragile getUser() network request with robust getSession() cache read
       const { data: { session } } = await supabase.auth.getSession();
       const user = session?.user;
       
@@ -249,6 +237,10 @@ export default function StaffSalesVerification() {
         cbp_gsm_amt: editingSale.cbp_gsm_amt,
         ctop_recharge_qty: editingSale.ctop_recharge_qty,
         ctop_recharge_amt: editingSale.ctop_recharge_amt,
+        frc_qty: editingSale.frc_qty,
+        frc_amt: editingSale.frc_amt,
+        mnp_qty: editingSale.mnp_qty,
+        mnp_amt: editingSale.mnp_amt,
         sim_new_qty: editingSale.sim_new_qty,
         sim_upgrade_qty: editingSale.sim_upgrade_qty,
         sim_postpaid_qty: editingSale.sim_postpaid_qty,
@@ -261,6 +253,11 @@ export default function StaffSalesVerification() {
         cheque_amt: editingSale.cheque_amt,
         other_amt: editingSale.other_amt,
         other_details: editingSale.other_details,
+        pb_cbp_amt: editingSale.pb_cbp_amt,
+        pb_ctop_amt: editingSale.pb_ctop_amt,
+        pb_frc_amt: editingSale.pb_frc_amt,
+        pb_mnp_amt: editingSale.pb_mnp_amt,
+        pb_other_amt: editingSale.pb_other_amt,
         is_edited_by_staff: true,
         staff_edit_remarks: finalRemarks,
         edited_at: new Date().toISOString(),
@@ -269,11 +266,9 @@ export default function StaffSalesVerification() {
         edit_request_reason: null
       };
 
-      // 1. Update Core Database
       const { error } = await supabase.from("daily_sales_reports").update(updatePayload).eq("id", editingSale.id);
       if (error) throw error;
 
-      // 2. Staff Telemetry Logging
       await supabase.from('staff_activity_logs').insert([{
         staff_id: user.id,
         staff_email: user.email,
@@ -283,10 +278,9 @@ export default function StaffSalesVerification() {
         details: `Overwrote sales report for ${editingSale.report_date}. Reason: ${finalRemarks}`
       }]);
 
-      // 3. Dispatch UI Alert to Partner
       await supabase.from("partner_messages").insert([{
         partner_id: editingSale.partner_id,
-        subject: `⚠️️ Financial Ledger Correction: ${editingSale.report_date}`,
+        subject: `⚠ Financial Ledger Correction: ${editingSale.report_date}`,
         body: `Your sales report for ${editingSale.report_date} was audited and corrected by the Back-Office. Reason: ${finalRemarks}. Please check your updated ledger balance.`
       }]);
 
@@ -324,7 +318,6 @@ export default function StaffSalesVerification() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
       <div className="max-w-[1400px] mx-auto space-y-6">
         
-        {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-6 gap-4">
           <div>
             <Link href="/dashboard" className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-block">
@@ -337,10 +330,8 @@ export default function StaffSalesVerification() {
           </div>
         </div>
 
-        {/* MASTER FILTER ENGINE (Upgraded) */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
           
-          {/* Row 1: Time & Date */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2 flex bg-slate-100 rounded-lg p-1 overflow-x-auto border border-slate-200">
               {['today', 'yesterday', 'thisweek', 'month', 'all'].map(mode => (
@@ -364,7 +355,6 @@ export default function StaffSalesVerification() {
             </div>
           </div>
 
-          {/* Row 2: Geo & Partner Filters */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">State Filter</label>
@@ -391,7 +381,6 @@ export default function StaffSalesVerification() {
 
         </div>
 
-        {/* SALES AUDIT GRID */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
             <h3 className="font-black tracking-widest uppercase text-xs">Sales Reports Ledger</h3>
@@ -419,7 +408,13 @@ export default function StaffSalesVerification() {
                   </tr>
                 ) : (
                   filteredSales.map(sale => {
-                    const totalCash = Number(sale.cbp_landline_amt || 0) + Number(sale.cbp_gsm_amt || 0) + Number(sale.ctop_recharge_amt || 0) + Number(sale.sim_replacement_amt || 0) + Number(sale.sim_fancy_amt || 0) + Number(sale.sim_postpaid_amt || 0) + Number(sale.other_amt || 0);
+                    const totalCash = Number(sale.cbp_landline_amt || 0) + Number(sale.cbp_gsm_amt || 0) + 
+                                      Number(sale.ctop_recharge_amt || 0) + Number(sale.sim_replacement_amt || 0) + 
+                                      Number(sale.sim_fancy_amt || 0) + Number(sale.sim_postpaid_amt || 0) + 
+                                      Number(sale.other_amt || 0) + Number(sale.frc_amt || 0) + Number(sale.mnp_amt || 0) +
+                                      Number(sale.pb_cbp_amt || 0) + Number(sale.pb_ctop_amt || 0) + 
+                                      Number(sale.pb_frc_amt || 0) + Number(sale.pb_mnp_amt || 0) + Number(sale.pb_other_amt || 0);
+
                     const lDep = latestDeposits[sale.partner_id];
                     const loc = sale.active_partners?.locations;
 
@@ -524,16 +519,20 @@ export default function StaffSalesVerification() {
                 <h4 className="font-black text-slate-800 text-sm uppercase tracking-widest">Live Audit Totals:</h4>
                 <div className="flex gap-4">
                   <div className="text-center bg-slate-50 p-2 rounded border border-slate-200 min-w-[100px]">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">CBP / CTOP</p>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">BSNL CBP / CTOP</p>
                     <p className="font-black text-lg text-slate-800">₹{(Number(editingSale.cbp_landline_amt)+Number(editingSale.cbp_gsm_amt)+Number(editingSale.ctop_recharge_amt)).toLocaleString()}</p>
                   </div>
                   <div className="text-center bg-slate-50 p-2 rounded border border-slate-200 min-w-[100px]">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">SIM / Other</p>
-                    <p className="font-black text-lg text-slate-800">₹{(Number(editingSale.sim_replacement_amt)+Number(editingSale.sim_fancy_amt)+Number(editingSale.sim_postpaid_amt)+Number(editingSale.other_amt)).toLocaleString()}</p>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">BSNL SIM / Other</p>
+                    <p className="font-black text-lg text-slate-800">₹{(Number(editingSale.sim_replacement_amt)+Number(editingSale.sim_fancy_amt)+Number(editingSale.sim_postpaid_amt)+Number(editingSale.other_amt)+Number(editingSale.frc_amt)+Number(editingSale.mnp_amt)).toLocaleString()}</p>
+                  </div>
+                  <div className="text-center bg-indigo-50 p-2 rounded border border-indigo-200 min-w-[100px]">
+                    <p className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">Paybull Cash</p>
+                    <p className="font-black text-lg text-indigo-800">₹{(Number(editingSale.pb_cbp_amt)+Number(editingSale.pb_ctop_amt)+Number(editingSale.pb_frc_amt)+Number(editingSale.pb_mnp_amt)+Number(editingSale.pb_other_amt)).toLocaleString()}</p>
                   </div>
                   <div className="text-center bg-emerald-50 border border-emerald-200 p-2 rounded min-w-[120px]">
                     <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest">Total Gross</p>
-                    <p className="font-black text-xl text-emerald-700">₹{(Number(editingSale.cbp_landline_amt)+Number(editingSale.cbp_gsm_amt)+Number(editingSale.ctop_recharge_amt)+Number(editingSale.sim_replacement_amt)+Number(editingSale.sim_fancy_amt)+Number(editingSale.sim_postpaid_amt)+Number(editingSale.other_amt)).toLocaleString()}</p>
+                    <p className="font-black text-xl text-emerald-700">₹{(Number(editingSale.cbp_landline_amt)+Number(editingSale.cbp_gsm_amt)+Number(editingSale.ctop_recharge_amt)+Number(editingSale.sim_replacement_amt)+Number(editingSale.sim_fancy_amt)+Number(editingSale.sim_postpaid_amt)+Number(editingSale.other_amt)+Number(editingSale.frc_amt)+Number(editingSale.mnp_amt)+Number(editingSale.pb_cbp_amt)+Number(editingSale.pb_ctop_amt)+Number(editingSale.pb_frc_amt)+Number(editingSale.pb_mnp_amt)+Number(editingSale.pb_other_amt)).toLocaleString()}</p>
                   </div>
                 </div>
               </div>
@@ -542,7 +541,7 @@ export default function StaffSalesVerification() {
                 
                 {/* CBP Block */}
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">1. CBP Sales</h4>
+                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">1. BSNL CBP Sales</h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div><label className="text-[10px] font-bold text-slate-500">LL Qty</label><input type="number" value={editingSale.cbp_landline_qty} onChange={e => handleEditInputChange('cbp_landline_qty', e.target.value)} className={numInputClass} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">LL ₹</label><input type="number" step="0.01" value={editingSale.cbp_landline_amt} onChange={e => handleEditInputChange('cbp_landline_amt', e.target.value)} className={numInputClass} /></div>
@@ -553,26 +552,31 @@ export default function StaffSalesVerification() {
 
                 {/* CTOP Block */}
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">2. CTOP Balances</h4>
+                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">2. BSNL CTOP & FRC</h4>
                   <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-[10px] font-bold text-slate-500">CTOP Qty</label><input type="number" value={editingSale.ctop_recharge_qty} onChange={e => handleEditInputChange('ctop_recharge_qty', e.target.value)} className={numInputClass} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-500">CTOP ₹</label><input type="number" step="0.01" value={editingSale.ctop_recharge_amt} onChange={e => handleEditInputChange('ctop_recharge_amt', e.target.value)} className={`${numInputClass} bg-blue-50`} /></div>
+                    <div><label className="text-[10px] font-bold text-blue-800">CTOP Qty</label><input type="number" value={editingSale.ctop_recharge_qty} onChange={e => handleEditInputChange('ctop_recharge_qty', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-blue-800">CTOP ₹</label><input type="number" step="0.01" value={editingSale.ctop_recharge_amt} onChange={e => handleEditInputChange('ctop_recharge_amt', e.target.value)} className={`${numInputClass} bg-blue-50 border-blue-200`} /></div>
+                    <div><label className="text-[10px] font-bold text-emerald-800">FRC Qty</label><input type="number" value={editingSale.frc_qty} onChange={e => handleEditInputChange('frc_qty', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-emerald-800">FRC ₹</label><input type="number" step="0.01" value={editingSale.frc_amt} onChange={e => handleEditInputChange('frc_amt', e.target.value)} className={`${numInputClass} bg-emerald-50 border-emerald-200`} /></div>
                   </div>
                 </div>
 
                 {/* SIM Block */}
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm lg:col-span-2">
-                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">3. SIM Activations & Upgrades</h4>
+                  <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">3. BSNL SIM Tracking</h4>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div><label className="text-[10px] font-bold text-purple-800">MNP Qty</label><input type="number" value={editingSale.mnp_qty} onChange={e => handleEditInputChange('mnp_qty', e.target.value)} className={numInputClass} /></div>
+                    <div className="md:col-span-4"><label className="text-[10px] font-bold text-purple-800">MNP ₹</label><input type="number" step="0.01" value={editingSale.mnp_amt} onChange={e => handleEditInputChange('mnp_amt', e.target.value)} className={`${numInputClass} bg-purple-50 border-purple-200`} /></div>
+                    
                     <div><label className="text-[10px] font-bold text-slate-500">New Qty</label><input type="number" value={editingSale.sim_new_qty} onChange={e => handleEditInputChange('sim_new_qty', e.target.value)} className={numInputClass} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">Upgrd Qty</label><input type="number" value={editingSale.sim_upgrade_qty} onChange={e => handleEditInputChange('sim_upgrade_qty', e.target.value)} className={numInputClass} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">Postpd Qty</label><input type="number" value={editingSale.sim_postpaid_qty} onChange={e => handleEditInputChange('sim_postpaid_qty', e.target.value)} className={numInputClass} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">Replc Qty</label><input type="number" value={editingSale.sim_replacement_qty} onChange={e => handleEditInputChange('sim_replacement_qty', e.target.value)} className={numInputClass} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">Fancy Qty</label><input type="number" value={editingSale.sim_fancy_qty} onChange={e => handleEditInputChange('sim_fancy_qty', e.target.value)} className={numInputClass} /></div>
                     
-                    <div className="md:col-start-3"><label className="text-[10px] font-bold text-slate-500">Postpd ₹</label><input type="number" step="0.01" value={editingSale.sim_postpaid_amt} onChange={e => handleEditInputChange('sim_postpaid_amt', e.target.value)} className={`${numInputClass} bg-purple-50`} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-500">Replc ₹</label><input type="number" step="0.01" value={editingSale.sim_replacement_amt} onChange={e => handleEditInputChange('sim_replacement_amt', e.target.value)} className={`${numInputClass} bg-purple-50`} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-500">Fancy ₹</label><input type="number" step="0.01" value={editingSale.sim_fancy_amt} onChange={e => handleEditInputChange('sim_fancy_amt', e.target.value)} className={`${numInputClass} bg-purple-50`} /></div>
+                    <div className="md:col-start-3"><label className="text-[10px] font-bold text-slate-500">Postpd ₹</label><input type="number" step="0.01" value={editingSale.sim_postpaid_amt} onChange={e => handleEditInputChange('sim_postpaid_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-500">Replc ₹</label><input type="number" step="0.01" value={editingSale.sim_replacement_amt} onChange={e => handleEditInputChange('sim_replacement_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-500">Fancy ₹</label><input type="number" step="0.01" value={editingSale.sim_fancy_amt} onChange={e => handleEditInputChange('sim_fancy_amt', e.target.value)} className={numInputClass} /></div>
                   </div>
                 </div>
 
@@ -581,9 +585,21 @@ export default function StaffSalesVerification() {
                   <h4 className="font-black text-xs text-slate-500 uppercase tracking-widest border-b pb-2 mb-4">4. Adjustments & Cheques</h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div><label className="text-[10px] font-bold text-slate-500">Cheque Qty</label><input type="number" value={editingSale.cheque_qty} onChange={e => handleEditInputChange('cheque_qty', e.target.value)} className={numInputClass} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-500">Cheque ₹</label><input type="number" step="0.01" value={editingSale.cheque_amt} onChange={e => handleEditInputChange('cheque_amt', e.target.value)} className={`${numInputClass} bg-amber-50`} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-500">Total Cheque ₹</label><input type="number" step="0.01" value={editingSale.cheque_amt} onChange={e => handleEditInputChange('cheque_amt', e.target.value)} className={`${numInputClass} bg-amber-50`} /></div>
                     <div><label className="text-[10px] font-bold text-slate-500">Other Text</label><input type="text" value={editingSale.other_details || ''} onChange={e => setEditingSale({...editingSale, other_details: e.target.value})} className={numInputClass} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-500">Other ₹</label><input type="number" step="0.01" value={editingSale.other_amt} onChange={e => handleEditInputChange('other_amt', e.target.value)} className={`${numInputClass} bg-emerald-50`} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-500">Other Cash ₹</label><input type="number" step="0.01" value={editingSale.other_amt} onChange={e => handleEditInputChange('other_amt', e.target.value)} className={`${numInputClass} bg-emerald-50`} /></div>
+                  </div>
+                </div>
+
+                {/* PAYBULL ISOLATION */}
+                <div className="bg-indigo-50 p-5 rounded-xl border border-indigo-200 shadow-sm lg:col-span-2">
+                  <h4 className="font-black text-xs text-indigo-900 uppercase tracking-widest border-b border-indigo-200 pb-2 mb-4 flex items-center gap-2"><span>💳</span> 5. Paybull Platform Adjustments</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div><label className="text-[10px] font-bold text-indigo-800">PB CBP ₹</label><input type="number" step="0.01" value={editingSale.pb_cbp_amt} onChange={e => handleEditInputChange('pb_cbp_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-indigo-800">PB CTOP ₹</label><input type="number" step="0.01" value={editingSale.pb_ctop_amt} onChange={e => handleEditInputChange('pb_ctop_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-indigo-800">PB FRC ₹</label><input type="number" step="0.01" value={editingSale.pb_frc_amt} onChange={e => handleEditInputChange('pb_frc_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-indigo-800">PB MNP ₹</label><input type="number" step="0.01" value={editingSale.pb_mnp_amt} onChange={e => handleEditInputChange('pb_mnp_amt', e.target.value)} className={numInputClass} /></div>
+                    <div><label className="text-[10px] font-bold text-indigo-800">PB Other ₹</label><input type="number" step="0.01" value={editingSale.pb_other_amt} onChange={e => handleEditInputChange('pb_other_amt', e.target.value)} className={numInputClass} /></div>
                   </div>
                 </div>
 
@@ -601,9 +617,10 @@ export default function StaffSalesVerification() {
                   >
                     <option value="" disabled>-- Select Strict Reason Code --</option>
                     <option value="CBP correction">CBP correction</option>
-                    <option value="Ctop correction">Ctop correction</option>
-                    <option value="sim sales Correction">sim sales Correction</option>
-                    <option value="cheque correction">cheque correction</option>
+                    <option value="CTOP / FRC correction">CTOP / FRC correction</option>
+                    <option value="sim sales Correction">SIM sales Correction</option>
+                    <option value="Paybull Correction">Paybull Platform Correction</option>
+                    <option value="cheque correction">Cheque correction</option>
                     <option value="All above">All above</option>
                     <option value="Other">Other (Specify Below)</option>
                   </select>
@@ -617,7 +634,7 @@ export default function StaffSalesVerification() {
                       type="text" 
                       placeholder="TYPE DETAILED REASON HERE..."
                       value={otherCorrectionText} 
-                      onChange={e => setOtherCorrectionText(e.target.value.toUpperCase())} // Forces Uppercase instantly
+                      onChange={e => setOtherCorrectionText(e.target.value.toUpperCase())} 
                       className="w-full bg-slate-800 border-2 border-amber-600 text-white font-black uppercase tracking-wider text-sm rounded-lg p-3 outline-none focus:ring-2 focus:ring-amber-500"
                     />
                   </div>

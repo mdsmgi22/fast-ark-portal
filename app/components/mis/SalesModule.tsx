@@ -8,9 +8,22 @@ const sanitizeCSV = (val: unknown): string => {
   return `"${str}"`;
 };
 
+// UPGRADED: Core Calculator securely aggregates BSNL and Paybull platforms
 const calculateTotalSalesCash = (s: any) => {
-  return Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0) + Number(s.ctop_recharge_cash||0) + 
-         Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0);
+  const bsnlCash = Number(s.cbp_landline_cash || s.cbp_landline_amt || 0) + 
+                   Number(s.cbp_gsm_cash || s.cbp_gsm_amt || 0) + 
+                   Number(s.ctop_recharge_cash || s.ctop_recharge_amt || 0) + 
+                   Number(s.sim_postpaid_amt || 0) + 
+                   Number(s.sim_replace_cash || s.sim_replacement_amt || 0) + 
+                   Number(s.sim_fancy_cash || s.sim_fancy_amt || 0) + 
+                   Number(s.sim_other_cash || s.other_amt || 0) +
+                   Number(s.frc_amt || 0) + Number(s.mnp_amt || 0);
+
+  const paybullCash = Number(s.pb_cbp_amt || 0) + Number(s.pb_ctop_amt || 0) + 
+                      Number(s.pb_frc_amt || 0) + Number(s.pb_mnp_amt || 0) + 
+                      Number(s.pb_other_amt || 0);
+
+  return bsnlCash + paybullCash;
 };
 
 const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
@@ -28,9 +41,11 @@ export default function SalesModule({
 
   const [ocscSales, setOcscSales] = useState({
     cbp_landline_qty: "", cbp_landline_cash: "", cbp_gsm_qty: "", cbp_gsm_cash: "", 
-    ctop_recharge_qty: "", ctop_recharge_cash: "", sim_new_qty: "", sim_upgrade_qty: "", 
+    ctop_recharge_qty: "", ctop_recharge_cash: "", frc_qty: "", frc_amt: "",
+    sim_new_qty: "", sim_upgrade_qty: "", mnp_qty: "", mnp_amt: "",
     sim_postpaid_qty: "", sim_postpaid_amt: "", sim_replace_qty: "", sim_replace_cash: "", 
     sim_fancy_qty: "", sim_fancy_cash: "", sim_other_qty: "", sim_other_cash: "",
+    pb_cbp_amt: "", pb_ctop_amt: "", pb_frc_amt: "", pb_mnp_amt: "", pb_other_amt: ""
   });
   const [cmSales, setCmSales] = useState<{agent_ctop_no: string, qty: string}[]>([]);
 
@@ -108,6 +123,10 @@ export default function SalesModule({
         cbp_gsm_cash: parseFloat(ocscSales.cbp_gsm_cash) || 0,
         ctop_recharge_qty: parseInt(ocscSales.ctop_recharge_qty) || 0,
         ctop_recharge_cash: parseFloat(ocscSales.ctop_recharge_cash) || 0,
+        frc_qty: parseInt(ocscSales.frc_qty) || 0,
+        frc_amt: parseFloat(ocscSales.frc_amt) || 0,
+        mnp_qty: parseInt(ocscSales.mnp_qty) || 0,
+        mnp_amt: parseFloat(ocscSales.mnp_amt) || 0,
         sim_new_qty: parseInt(ocscSales.sim_new_qty) || 0,
         sim_upgrade_qty: parseInt(ocscSales.sim_upgrade_qty) || 0,
         sim_postpaid_qty: parseInt(ocscSales.sim_postpaid_qty) || 0,
@@ -118,6 +137,11 @@ export default function SalesModule({
         sim_fancy_cash: parseFloat(ocscSales.sim_fancy_cash) || 0,
         sim_other_qty: parseInt(ocscSales.sim_other_qty) || 0,
         sim_other_cash: parseFloat(ocscSales.sim_other_cash) || 0,
+        pb_cbp_amt: parseFloat(ocscSales.pb_cbp_amt) || 0,
+        pb_ctop_amt: parseFloat(ocscSales.pb_ctop_amt) || 0,
+        pb_frc_amt: parseFloat(ocscSales.pb_frc_amt) || 0,
+        pb_mnp_amt: parseFloat(ocscSales.pb_mnp_amt) || 0,
+        pb_other_amt: parseFloat(ocscSales.pb_other_amt) || 0,
       };
 
       const basePayload = {
@@ -195,9 +219,11 @@ export default function SalesModule({
       setSelectedChildLocKey(""); 
       setOcscSales({
         cbp_landline_qty: "", cbp_landline_cash: "", cbp_gsm_qty: "", cbp_gsm_cash: "", 
-        ctop_recharge_qty: "", ctop_recharge_cash: "", sim_new_qty: "", sim_upgrade_qty: "", 
+        ctop_recharge_qty: "", ctop_recharge_cash: "", frc_qty: "", frc_amt: "",
+        sim_new_qty: "", sim_upgrade_qty: "", mnp_qty: "", mnp_amt: "",
         sim_postpaid_qty: "", sim_postpaid_amt: "", sim_replace_qty: "", sim_replace_cash: "", 
         sim_fancy_qty: "", sim_fancy_cash: "", sim_other_qty: "", sim_other_cash: "",
+        pb_cbp_amt: "", pb_ctop_amt: "", pb_frc_amt: "", pb_mnp_amt: "", pb_other_amt: ""
       });
       setCmSales(cmSales.map(a => ({ ...a, qty: "" })));
       
@@ -226,21 +252,30 @@ export default function SalesModule({
     if (sale.center_type === 'OCSC') {
       setOcscSales({
         cbp_landline_qty: sale.cbp_landline_qty?.toString() || "",
-        cbp_landline_cash: sale.cbp_landline_cash?.toString() || "",
+        cbp_landline_cash: sale.cbp_landline_cash?.toString() || sale.cbp_landline_amt?.toString() || "",
         cbp_gsm_qty: sale.cbp_gsm_qty?.toString() || "",
-        cbp_gsm_cash: sale.cbp_gsm_cash?.toString() || "",
+        cbp_gsm_cash: sale.cbp_gsm_cash?.toString() || sale.cbp_gsm_amt?.toString() || "",
         ctop_recharge_qty: sale.ctop_recharge_qty?.toString() || "",
-        ctop_recharge_cash: sale.ctop_recharge_cash?.toString() || "",
+        ctop_recharge_cash: sale.ctop_recharge_cash?.toString() || sale.ctop_recharge_amt?.toString() || "",
+        frc_qty: sale.frc_qty?.toString() || "",
+        frc_amt: sale.frc_amt?.toString() || "",
+        mnp_qty: sale.mnp_qty?.toString() || "",
+        mnp_amt: sale.mnp_amt?.toString() || "",
         sim_new_qty: sale.sim_new_qty?.toString() || "",
         sim_upgrade_qty: sale.sim_upgrade_qty?.toString() || "",
         sim_postpaid_qty: sale.sim_postpaid_qty?.toString() || "",
         sim_postpaid_amt: sale.sim_postpaid_amt?.toString() || "",
-        sim_replace_qty: sale.sim_replace_qty?.toString() || "",
-        sim_replace_cash: sale.sim_replace_cash?.toString() || "",
+        sim_replace_qty: sale.sim_replace_qty?.toString() || sale.sim_replacement_qty?.toString() || "",
+        sim_replace_cash: sale.sim_replace_cash?.toString() || sale.sim_replacement_amt?.toString() || "",
         sim_fancy_qty: sale.sim_fancy_qty?.toString() || "",
-        sim_fancy_cash: sale.sim_fancy_cash?.toString() || "",
+        sim_fancy_cash: sale.sim_fancy_cash?.toString() || sale.sim_fancy_amt?.toString() || "",
         sim_other_qty: sale.sim_other_qty?.toString() || "",
-        sim_other_cash: sale.sim_other_cash?.toString() || "",
+        sim_other_cash: sale.sim_other_cash?.toString() || sale.other_amt?.toString() || "",
+        pb_cbp_amt: sale.pb_cbp_amt?.toString() || "",
+        pb_ctop_amt: sale.pb_ctop_amt?.toString() || "",
+        pb_frc_amt: sale.pb_frc_amt?.toString() || "",
+        pb_mnp_amt: sale.pb_mnp_amt?.toString() || "",
+        pb_other_amt: sale.pb_other_amt?.toString() || "",
       });
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -276,20 +311,22 @@ export default function SalesModule({
 
   const currentMonthSalesContext = rawSales.filter((s: any) => s.reporting_month === `${reportingMonth}-01` && (entryMasterLocId === "" || s.locations?.parent_master_id?.toString() === entryMasterLocId));
   const cumulativeSalesCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + calculateTotalSalesCash(s), 0);
-  const cumulativeCBPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0);
-  const cumulativeCTOPCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.ctop_recharge_cash||0), 0);
-  const cumulativeSIMCash = currentMonthSalesContext.reduce((sum: number, s: any) => sum + Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0), 0);
+  
+  // Realtime Active Form Calculators
+  const activeBsnlSimCash = Number(ocscSales.sim_postpaid_amt||0) + Number(ocscSales.sim_replace_cash||0) + Number(ocscSales.sim_fancy_cash||0) + Number(ocscSales.sim_other_cash||0) + Number(ocscSales.frc_amt||0) + Number(ocscSales.mnp_amt||0);
+  const activePaybullCash = Number(ocscSales.pb_cbp_amt||0) + Number(ocscSales.pb_ctop_amt||0) + Number(ocscSales.pb_frc_amt||0) + Number(ocscSales.pb_mnp_amt||0) + Number(ocscSales.pb_other_amt||0);
+  const activeTotalSimQty = Number(ocscSales.sim_new_qty||0) + Number(ocscSales.sim_upgrade_qty||0) + Number(ocscSales.sim_postpaid_qty||0) + Number(ocscSales.sim_replace_qty||0) + Number(ocscSales.sim_fancy_qty||0) + Number(ocscSales.frc_qty||0) + Number(ocscSales.mnp_qty||0);
 
   const downloadCSV = () => {
     if (filteredSalesLedger.length === 0) return alert("No data available to export.");
-    const csvContent = "Month,State,Location,Type,CBP_Landline_Qty,CBP_Landline_Cash,CBP_GSM_Qty,CBP_GSM_Cash,CTOP_Qty,CTOP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,SIM_Postpaid_Qty,SIM_Postpaid_Cash,SIM_Replace_Qty,SIM_Replace_Cash,SIM_Fancy_Qty,SIM_Fancy_Cash,SIM_Other_Qty,SIM_Other_Cash,Total_Sales_INR,Total_Collected_INR,Pending_Balance_INR,Edited,Audit_Remarks\n" + 
+    const csvContent = "Month,State,Location,Type,CBP_Landline_Qty,CBP_Landline_Cash,CBP_GSM_Qty,CBP_GSM_Cash,CTOP_Qty,CTOP_Cash,FRC_Qty,FRC_Cash,MNP_Qty,MNP_Cash,SIM_New_Qty,SIM_Upgrade_Qty,SIM_Postpaid_Qty,SIM_Postpaid_Cash,SIM_Replace_Qty,SIM_Replace_Cash,SIM_Fancy_Qty,SIM_Fancy_Cash,SIM_Other_Qty,SIM_Other_Cash,PB_CBP_Amt,PB_CTOP_Amt,PB_FRC_Amt,PB_MNP_Amt,PB_Other_Amt,Total_Sales_INR,Total_Collected_INR,Pending_Balance_INR,Edited,Audit_Remarks\n" + 
       filteredSalesLedger.map((r: any) => {
         const salesCash = calculateTotalSalesCash(r);
         const col = rawCollections.find((c: any) => c.location_id === r.location_id && c.reporting_month === r.reporting_month);
         const colCash = col ? Number(col.total_cash_collected || 0) : 0;
         const pending = salesCash - colCash;
 
-        return `${r.reporting_month},${sanitizeCSV(r.locations?.state)},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_qty||0},${r.cbp_landline_cash||0},${r.cbp_gsm_qty||0},${r.cbp_gsm_cash||0},${r.ctop_recharge_qty||0},${r.ctop_recharge_cash||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.sim_postpaid_qty||0},${r.sim_postpaid_amt||0},${r.sim_replace_qty||0},${r.sim_replace_cash||0},${r.sim_fancy_qty||0},${r.sim_fancy_cash||0},${r.sim_other_qty||0},${r.sim_other_cash||0},${salesCash},${colCash},${pending},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
+        return `${r.reporting_month},${sanitizeCSV(r.locations?.state)},${sanitizeCSV(r.locations?.center_name)},${r.center_type},${r.cbp_landline_qty||0},${r.cbp_landline_cash||r.cbp_landline_amt||0},${r.cbp_gsm_qty||0},${r.cbp_gsm_cash||r.cbp_gsm_amt||0},${r.ctop_recharge_qty||0},${r.ctop_recharge_cash||r.ctop_recharge_amt||0},${r.frc_qty||0},${r.frc_amt||0},${r.mnp_qty||0},${r.mnp_amt||0},${r.sim_new_qty||0},${r.sim_upgrade_qty||0},${r.sim_postpaid_qty||0},${r.sim_postpaid_amt||0},${r.sim_replace_qty||r.sim_replacement_qty||0},${r.sim_replace_cash||r.sim_replacement_amt||0},${r.sim_fancy_qty||0},${r.sim_fancy_cash||r.sim_fancy_amt||0},${r.sim_other_qty||0},${r.sim_other_cash||r.other_amt||0},${r.pb_cbp_amt||0},${r.pb_ctop_amt||0},${r.pb_frc_amt||0},${r.pb_mnp_amt||0},${r.pb_other_amt||0},${salesCash},${colCash},${pending},${r.is_edited_by_staff?'YES':'NO'},${sanitizeCSV(r.staff_edit_remarks)}`
       }).join("\n");
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -363,25 +400,6 @@ export default function SalesModule({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
-            <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales Cash</p>
-              <p className="text-2xl font-black text-indigo-700 mt-1">₹{cumulativeSalesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CBP Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCBPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CTOP Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeCTOPCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SIM Cash</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{cumulativeSIMCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
-            </div>
-          </div>
-
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingSalesId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
               <div className="flex gap-4 items-center">
@@ -407,20 +425,30 @@ export default function SalesModule({
               <form onSubmit={handleSalesSubmit} className="space-y-6">
                 {getActiveLocationType() === 'OCSC' && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    
+                    {/* BSNL CORE METRICS */}
                     <div className="space-y-4">
-                      <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">CBP & CTOP Cash</h3>
+                      <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded border border-slate-200">1. BSNL CBP & CTOP Heads</h3>
                       <div className="grid grid-cols-2 gap-4">
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Qty</label><input type="number" step="1" min="0" value={ocscSales.cbp_landline_qty} onChange={e => setOcscSales({...ocscSales, cbp_landline_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP Landline Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_landline_cash} onChange={e => setOcscSales({...ocscSales, cbp_landline_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Qty</label><input type="number" step="1" min="0" value={ocscSales.cbp_gsm_qty} onChange={e => setOcscSales({...ocscSales, cbp_gsm_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">CBP GSM Cash</label><input type="number" step="0.01" min="0" value={ocscSales.cbp_gsm_cash} onChange={e => setOcscSales({...ocscSales, cbp_gsm_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Qty</label><input type="number" step="1" min="0" value={ocscSales.ctop_recharge_qty} onChange={e => setOcscSales({...ocscSales, ctop_recharge_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" min="0" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} bg-indigo-50 border-indigo-200`} /></div>
                       </div>
-                    </div>
-                    <div className="space-y-4">
-                      <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded">SIM Cash & Qty</h3>
+                      
+                      <div className="grid grid-cols-2 gap-4 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
+                        <div><label className="text-[10px] font-bold text-indigo-800 uppercase">CTOP Recharge Qty</label><input type="number" step="1" min="0" value={ocscSales.ctop_recharge_qty} onChange={e => setOcscSales({...ocscSales, ctop_recharge_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        <div><label className="text-[10px] font-bold text-indigo-800 uppercase">CTOP Recharge Cash</label><input type="number" step="0.01" min="0" value={ocscSales.ctop_recharge_cash} onChange={e => setOcscSales({...ocscSales, ctop_recharge_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} border-indigo-300 text-indigo-900`} /></div>
+                        
+                        <div><label className="text-[10px] font-bold text-emerald-800 uppercase">FRC Qty</label><input type="number" step="1" min="0" value={ocscSales.frc_qty} onChange={e => setOcscSales({...ocscSales, frc_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        <div><label className="text-[10px] font-bold text-emerald-800 uppercase">FRC Cash</label><input type="number" step="0.01" min="0" value={ocscSales.frc_amt} onChange={e => setOcscSales({...ocscSales, frc_amt: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} border-emerald-300 text-emerald-900`} /></div>
+                      </div>
+
+                      <h3 className="font-black text-slate-700 uppercase text-xs tracking-widest bg-slate-100 p-2 rounded border border-slate-200 mt-4">2. BSNL SIM Tracking</h3>
                       <div className="grid grid-cols-2 gap-4">
+                        <div><label className="text-[10px] font-bold text-purple-800 uppercase">MNP Qty</label><input type="number" step="1" min="0" value={ocscSales.mnp_qty} onChange={e => setOcscSales({...ocscSales, mnp_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        <div><label className="text-[10px] font-bold text-purple-800 uppercase">MNP Cash</label><input type="number" step="0.01" min="0" value={ocscSales.mnp_amt} onChange={e => setOcscSales({...ocscSales, mnp_amt: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={`${numInputClass} bg-purple-50 border-purple-300`} /></div>
+
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">New SIM Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_new_qty} onChange={e => setOcscSales({...ocscSales, sim_new_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">Upgrade SIM Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_upgrade_qty} onChange={e => setOcscSales({...ocscSales, sim_upgrade_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         
@@ -433,9 +461,39 @@ export default function SalesModule({
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_fancy_qty} onChange={e => setOcscSales({...ocscSales, sim_fancy_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fancy Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_fancy_cash} onChange={e => setOcscSales({...ocscSales, sim_fancy_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                         
-                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
-                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Adjust. Qty</label><input type="number" step="1" min="0" value={ocscSales.sim_other_qty} onChange={e => setOcscSales({...ocscSales, sim_other_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
+                        <div><label className="text-[10px] font-bold text-slate-500 uppercase">Other Adjust. Cash</label><input type="number" step="0.01" min="0" value={ocscSales.sim_other_cash} onChange={e => setOcscSales({...ocscSales, sim_other_cash: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} /></div>
                       </div>
+                    </div>
+
+                    {/* PAYBULL ISOLATION */}
+                    <div className="space-y-4">
+                      
+                      <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-xl border border-indigo-200 shadow-sm">
+                        <h3 className="font-black text-indigo-900 border-b border-indigo-200 pb-2 mb-4 flex items-center gap-2">
+                          <span className="text-xl">💳</span> 3. Paybull Platform Cash
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CTOP ₹</label><input type="number" step="0.01" min="0" value={ocscSales.pb_ctop_amt} onChange={(e) => setOcscSales({...ocscSales, pb_ctop_amt: e.target.value})} placeholder="0.00" className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CBP ₹</label><input type="number" step="0.01" min="0" value={ocscSales.pb_cbp_amt} onChange={(e) => setOcscSales({...ocscSales, pb_cbp_amt: e.target.value})} placeholder="0.00" className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB FRC ₹</label><input type="number" step="0.01" min="0" value={ocscSales.pb_frc_amt} onChange={(e) => setOcscSales({...ocscSales, pb_frc_amt: e.target.value})} placeholder="0.00" className={numInputClass} /></div>
+                          <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB MNP ₹</label><input type="number" step="0.01" min="0" value={ocscSales.pb_mnp_amt} onChange={(e) => setOcscSales({...ocscSales, pb_mnp_amt: e.target.value})} placeholder="0.00" className={numInputClass} /></div>
+                          <div className="col-span-2"><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB Other ₹</label><input type="number" step="0.01" min="0" value={ocscSales.pb_other_amt} onChange={(e) => setOcscSales({...ocscSales, pb_other_amt: e.target.value})} placeholder="0.00" className={numInputClass} /></div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900 rounded-xl p-5 border border-slate-800 shadow-xl">
+                         <div className="flex justify-between items-center text-sm border-b border-slate-700 pb-3 mb-3"><span className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">BSNL SIM Cash Head:</span><span className="text-emerald-400 font-black">₹{activeBsnlSimCash.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                         <div className="flex justify-between items-center text-sm border-b border-slate-700 pb-3 mb-3"><span className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Total SIMs Deployed:</span><span className="text-emerald-400 font-black">{activeTotalSimQty}</span></div>
+                         <div className="flex justify-between items-center text-sm border-b border-slate-700 pb-3 mb-3"><span className="text-indigo-400 font-bold uppercase tracking-widest text-[10px]">Paybull Platform Cash:</span><span className="text-indigo-400 font-black">₹{activePaybullCash.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                         <div className="flex justify-between items-center pt-2">
+                           <span className="text-white font-black uppercase tracking-widest text-xs">Gross Revenue:</span>
+                           <span className="text-white text-2xl font-black">
+                             ₹{(Number(ocscSales.cbp_landline_cash||0) + Number(ocscSales.cbp_gsm_cash||0) + Number(ocscSales.ctop_recharge_cash||0) + activeBsnlSimCash + activePaybullCash).toLocaleString('en-IN')}
+                           </span>
+                         </div>
+                      </div>
+
                     </div>
                   </div>
                 )}
@@ -532,15 +590,15 @@ export default function SalesModule({
               </p>
             </div>
             <div className="bg-white p-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase">CBP Component</p>
-              <p className="text-xl font-black text-slate-800 mt-1">₹{filteredSalesLedger.reduce((sum: number, s: any) => sum + Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
+              <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Paybull Component</p>
+              <p className="text-xl font-black text-indigo-900 mt-1">₹{filteredSalesLedger.reduce((sum: number, s: any) => sum + Number(s.pb_cbp_amt||0) + Number(s.pb_ctop_amt||0) + Number(s.pb_frc_amt||0) + Number(s.pb_mnp_amt||0) + Number(s.pb_other_amt||0), 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</p>
             </div>
           </div>
 
           <div className="overflow-x-auto max-h-[600px]">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 sticky top-0 border-b border-slate-200 shadow-sm z-10">
-                <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">Total Sales</th><th className="p-4 text-right">Collected</th><th className="p-4 text-right">Pending</th><th className="p-4 text-right">CBP</th><th className="p-4 text-right">CTOP</th><th className="p-4 text-right">SIM</th><th className="p-4 text-right">Action</th></tr>
+                <tr><th className="p-4">Month</th><th className="p-4">Center</th><th className="p-4 text-right">Gross Sales</th><th className="p-4 text-right">Collected</th><th className="p-4 text-right">Pending</th><th className="p-4 text-right border-l">Paybull Cash</th><th className="p-4 text-right">BSNL SIM Cash</th><th className="p-4 text-right">Action</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredSalesLedger.map((s: any) => {
@@ -559,9 +617,8 @@ export default function SalesModule({
                       <td className="p-4 text-right font-black text-indigo-700">₹{salesCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                       <td className="p-4 text-right font-black text-emerald-600">₹{colCash.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                       <td className={`p-4 text-right font-black ${pending > 0 ? 'text-red-600' : 'text-slate-800'}`}>₹{pending.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(Number(s.cbp_landline_cash||0) + Number(s.cbp_gsm_cash||0)).toLocaleString('en-IN')}</td>
-                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(s.ctop_recharge_cash||0).toLocaleString('en-IN')}</td>
-                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||0) + Number(s.sim_fancy_cash||0) + Number(s.sim_other_cash||0)).toLocaleString('en-IN')}</td>
+                      <td className="p-4 text-right font-medium text-indigo-600 border-l bg-indigo-50/20">₹{Number(Number(s.pb_cbp_amt||0)+Number(s.pb_ctop_amt||0)+Number(s.pb_frc_amt||0)+Number(s.pb_mnp_amt||0)+Number(s.pb_other_amt||0)).toLocaleString('en-IN')}</td>
+                      <td className="p-4 text-right font-medium text-slate-500">₹{Number(Number(s.sim_postpaid_amt||0) + Number(s.sim_replace_cash||s.sim_replacement_amt||0) + Number(s.sim_fancy_cash||s.sim_fancy_amt||0) + Number(s.sim_other_cash||s.other_amt||0) + Number(s.frc_amt||0) + Number(s.mnp_amt||0)).toLocaleString('en-IN')}</td>
                       <td className="p-4 text-right">
                         <button onClick={() => handleEditSales(s)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
                           Edit
@@ -570,7 +627,7 @@ export default function SalesModule({
                     </tr>
                   )
                 })}
-                {filteredSalesLedger.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-slate-500 font-bold">No sales records found for this criteria.</td></tr>}
+                {filteredSalesLedger.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-500 font-bold">No sales records found for this criteria.</td></tr>}
               </tbody>
             </table>
           </div>
