@@ -271,20 +271,34 @@ export default function PartnerDashboard() {
       <nav className="bg-blue-600 text-white px-4 md:px-8 py-4 flex justify-between items-center shadow-lg sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center font-black text-2xl text-blue-600 shadow-sm transform -rotate-12">F</div>
-          <div><h1 className="font-black text-lg leading-tight tracking-wide">FAST ARK</h1><p className="text-[9px] text-blue-200 font-bold uppercase tracking-widest">Partner Operations Hub</p></div>
-        </div>
-        <div className="flex items-center gap-3 md:gap-5">
-          <div className="hidden sm:flex bg-blue-700 border border-blue-500 px-3 py-1.5 rounded-lg text-right shadow-sm items-center gap-2 cursor-pointer hover:bg-blue-800 transition" title="View Inbox Below">
-            <span className="text-xl animate-pulse">{unreadCount > 0 ? '🔔' : '🔕'}</span>
-            <div><p className="text-[9px] text-blue-200 font-black uppercase tracking-widest leading-none">Unread Alerts</p><p className={`font-black text-xs ${unreadCount > 0 ? 'text-white' : 'text-blue-300'}`}>{unreadCount} Notices</p></div>
+          <div>
+            <h1 className="font-black text-lg leading-tight tracking-wide text-white">FAST ARK</h1>
+            <p className="text-[9px] text-blue-200 font-bold uppercase tracking-widest hidden sm:block">Partner Operations Hub</p>
           </div>
-          <button onClick={handleSignOut} disabled={isLoggingOut} className="text-xs font-black text-blue-600 bg-white hover:bg-slate-100 px-4 py-2 rounded-lg shadow-sm transition uppercase tracking-widest">{isLoggingOut ? "Closing..." : "Logout"}</button>
+        </div>
+        
+        <div className="flex items-center gap-3 md:gap-5">
+          <div 
+            className="flex bg-blue-700 border border-blue-500 px-2 sm:px-3 py-1.5 rounded-lg text-right shadow-sm items-center gap-2 cursor-pointer hover:bg-blue-800 transition" 
+            title="View Inbox Below"
+            onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
+          >
+            <span className="text-xl animate-pulse">{unreadCount > 0 ? '🔔' : '🔕'}</span>
+            <div className="hidden sm:block">
+              <p className="text-[9px] text-blue-200 font-black uppercase tracking-widest leading-none">Unread Alerts</p>
+              <p className={`font-black text-xs ${unreadCount > 0 ? 'text-white' : 'text-blue-300'}`}>{unreadCount} Notices</p>
+            </div>
+            <span className="sm:hidden font-black text-xs text-white bg-red-500 px-1.5 py-0.5 rounded-full">{unreadCount}</span>
+          </div>
+
+          <button onClick={handleSignOut} disabled={isLoggingOut} className="text-xs font-black text-blue-600 bg-white hover:bg-slate-100 px-3 sm:px-4 py-2 rounded-lg shadow-sm transition uppercase tracking-widest">
+            {isLoggingOut ? "Closing..." : "Logout"}
+          </button>
         </div>
       </nav>
 
       <div className="p-4 md:p-8 max-w-[1400px] mx-auto space-y-6">
         
-        {/* COMPLIANCE & ESCALATION NOTICES */}
         {!hasUploadedDocs ? (
           <button onClick={() => setIsDocModalOpen(true)} className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 px-6 rounded-xl shadow-lg border-2 border-red-800 flex flex-col md:flex-row items-center justify-between gap-4 transition transform hover:-translate-y-1 animate-in fade-in">
             <div className="flex items-center gap-4 text-left"><span className="text-3xl md:text-4xl animate-pulse">🚨</span><div><h3 className="text-lg md:text-xl uppercase tracking-widest leading-tight">Action Required: Upload Compliance Docs</h3><p className="text-xs font-bold text-red-200 mt-1">Your account requires mandatory documentation to maintain active status.</p></div></div>
@@ -308,7 +322,6 @@ export default function PartnerDashboard() {
           </div>
         )}
 
-        {/* PHASE 2 & 3: RENDER THE ISOLATED COMPONENTS */}
         <DashboardQuickActions hasSubmittedToday={hasSubmittedToday} />
 
         <InfrastructureAccordions partner={partner} partnerCtops={partnerCtops} virtualAccounts={virtualAccounts} upiIds={upiIds} />
