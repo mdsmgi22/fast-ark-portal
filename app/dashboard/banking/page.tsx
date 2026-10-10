@@ -156,12 +156,22 @@ export default function RelationalBankingHub() {
     }
   };
 
+  // ==============================================================================
+  // 🚀 ARCHITECTURAL FIX: UPLOAD TO PUBLIC 'qr_assets' BUCKET
+  // ==============================================================================
   const handleFileUpload = async (file: File): Promise<string> => {
     const fileExt = file.name.split('.').pop();
-    const fileName = `sticker_${Date.now()}.${fileExt}`;
-    const { error: uploadError } = await supabase.storage.from('deposit-slips').upload(`stickers/${fileName}`, file);
+    const fileName = `QR_LOC_${Date.now()}.${fileExt}`;
+    
+    // Upload to the public bucket instead of the private deposit-slips vault
+    const { error: uploadError } = await supabase.storage
+      .from('qr_assets')
+      .upload(fileName, file, { contentType: file.type, upsert: true });
+      
     if (uploadError) throw new Error(uploadError.message);
-    const { data } = supabase.storage.from('deposit-slips').getPublicUrl(`stickers/${fileName}`);
+    
+    // Extract the valid public URL
+    const { data } = supabase.storage.from('qr_assets').getPublicUrl(fileName);
     return data.publicUrl;
   };
 
@@ -209,6 +219,8 @@ export default function RelationalBankingHub() {
       } 
       else if (activeTab === 'qrs') {
         if (!selectedFile) throw new Error("A file must be selected.");
+        
+        // Automatically triggers the new public bucket upload
         const qrUrl = await handleFileUpload(selectedFile);
         
         const { error: qrError } = await supabase.from("qr_stickers").insert([{
@@ -218,6 +230,7 @@ export default function RelationalBankingHub() {
         }]);
         if (qrError) throw qrError;
 
+        // Automatically updates the locations table for the Partner Dashboard to read
         const { error: locError } = await supabase.from("locations").update({
           qr_asset_url: qrUrl
         }).eq("id", formData.assigned_location_id);
@@ -493,7 +506,7 @@ export default function RelationalBankingHub() {
                       >
                         <option value="ALL">All States</option>
                         {uniqueStates.map(state => (
-                          <option key={state} value={state}>{state}</option>
+                          <option key={state as string} value={state as string}>{state as string}</option>
                         ))}
                       </select>
                     </div>
