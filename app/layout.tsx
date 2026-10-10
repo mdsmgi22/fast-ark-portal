@@ -1,7 +1,7 @@
-// FILE PATH: ./app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import SessionManager from "./components/SessionManager";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,14 +18,18 @@ export const metadata: Metadata = {
   description: "Enterprise Operations & Treasury",
 };
 
-// FIX: Replaced invalid LayoutProps<"/"> with standard Readonly ReactNode types
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* The Session Manager wraps the children to enforce concurrent limits and timeouts */}
+        <SessionManager>
+          {children}
+        </SessionManager>
+      </body>
     </html>
   );
 }

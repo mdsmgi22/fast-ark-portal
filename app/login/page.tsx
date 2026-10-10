@@ -29,67 +29,108 @@ export default function BackOfficeLoginPage() {
       if (authError) throw new Error(authError.message);
       if (!authData.user) throw new Error("Authentication failed.");
 
-      // Check if temporary password needs to be changed
-      if (authData.user.user_metadata?.must_change_password) {
-        router.push("/update-password");
-        return;
-      }
-
-      // =====================================================================
-      // 2. UNIVERSAL ROUTING ENGINE
-      // =====================================================================
-      
-      // CHECK A: Is this an internal Corporate / Back-Office user?
-      const { data: staffData, error: staffError } = await supabase
+      // 2. Fetch Profiles for Validation
+      const { data: staffData } = await supabase
         .from("back_office_staff")
         .select("id, name, role, status")
         .eq("email", email.trim().toLowerCase())
         .maybeSingle();
 
+      const { data: partnerData } = await supabase
+        .from('active_partners')
+        .select('id, status, tc_accepted, role')
+        .eq('auth_id', authData.user.id)
+        .maybeSingle();
+
+      let isStaff = false;
+      let targetId = "";
+
+      // 3. Verify Clearance Status
       if (staffData) {
-        // Apply strict Corporate clearance checks
         if (staffData.status !== "Active") {
           await supabase.auth.signOut();
           throw new Error("Account Deactivated: Your clearance has been revoked. Contact Administration.");
         }
-
-        // Self-Healing JWT Token to prevent middleware bounces
         if (authData.user.user_metadata?.role !== staffData.role) {
-          await supabase.auth.updateUser({
-            data: { role: staffData.role }
-          });
+          await supabase.auth.updateUser({ data: { role: staffData.role } });
         }
-
-        setMessage("✅ Clearance verified. Establishing secure connection...");
-        router.push("/dashboard");
-        return;
-      }
-
-      // CHECK B: If not corporate staff, is this a Franchise Partner?
-      const { data: partnerData, error: partnerError } = await supabase
-        .from('active_partners')
-        .select('status')
-        .eq('auth_id', authData.user.id)
-        .maybeSingle();
-
-      if (partnerData) {
-        // Apply strict Partner workflow routing
+        isStaff = true;
+        targetId = staffData.id;
+      } else if (partnerData) {
         if (partnerData.status === 'Rejected') {
           setMessage("⚠️ Application requires correction. Routing to portal...");
           router.push('/partner/resubmit');
+          return;
         } else if (partnerData.status === 'Pending') {
           await supabase.auth.signOut();
           throw new Error("Your franchise application is currently under corporate review.");
-        } else if (partnerData.status === 'Active') {
-          setMessage("✅ Partner verified. Routing to dashboard...");
-          router.push('/partner/dashboard');
+        } else if (partnerData.status === 'Suspended') {
+          await supabase.auth.signOut();
+          throw new Error("Account Suspended: Please contact your Fast Ark manager.");
         }
+        targetId = partnerData.id;
+      } else {
+        await supabase.auth.signOut();
+        throw new Error("Access Denied: This credential is not mapped to an internal or partner profile.");
+      }
+
+      // =====================================================================
+      // 4. SESSION CONCURRENCY & IP TRACKING ENGINE
+      // =====================================================================
+      const sessionPrefix = isStaff ? "STAFF" : "PARTNER";
+      const sessionToken = `${sessionPrefix}_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+      let currentIp = "Unknown";
+      
+      try {
+        const ipRes = await fetch("https://api.ipify.org?format=json");
+        currentIp = (await ipRes.json()).ip;
+      } catch (err) {
+        console.warn("Could not fetch IP address for audit log.");
+      }
+
+      const { error: sessionError } = await supabase.from('active_sessions').upsert({
+        user_id: authData.user.id,
+        session_token: sessionToken,
+        ip_address: currentIp,
+        last_active: new Date().toISOString()
+      });
+
+      if (sessionError) throw new Error("Failed to establish secure session connection.");
+
+      localStorage.setItem("fapl_session_token", sessionToken);
+
+      // =====================================================================
+      // 5. SECURITY AUDIT LOGGING
+      // =====================================================================
+      await supabase.from('staff_activity_logs').insert([{
+        staff_id: authData.user.id,
+        staff_email: email.trim().toLowerCase(),
+        action_type: 'SECURITY_AUDIT',
+        module: 'AUTHENTICATION',
+        target_id: targetId,
+        details: `${isStaff ? 'Staff' : 'Partner'} authenticated. IP: ${currentIp}`
+      }]);
+
+      // =====================================================================
+      // 6. INTELLIGENT ROUTING
+      // =====================================================================
+      if (authData.user.user_metadata?.must_change_password) {
+        router.push("/update-password");
         return;
       }
 
-      // 3. The Kill-Switch: User exists in Auth, but isn't mapped to ANY table
-      await supabase.auth.signOut();
-      throw new Error("Access Denied: This credential is not mapped to an internal or partner profile.");
+      if (isStaff) {
+        setMessage("✅ Clearance verified. Establishing secure connection...");
+        router.push("/dashboard");
+      } else {
+        // TypeScript Fix: Optional chaining prevents the 18047 strict null check error
+        if (!partnerData?.tc_accepted) {
+          router.push("/partner/terms");
+        } else {
+          setMessage("✅ Partner verified. Routing to dashboard...");
+          router.push("/partner/dashboard");
+        }
+      }
 
     } catch (err: any) {
       setMessage("❌ " + err.message);
@@ -171,7 +212,7 @@ export default function BackOfficeLoginPage() {
             disabled={isLoading}
             className="w-full bg-white hover:bg-slate-200 text-slate-900 p-3.5 rounded-lg font-black text-xs uppercase tracking-widest transition shadow-md disabled:bg-slate-700 disabled:text-slate-500 mt-2"
           >
-            {isLoading ? "Authenticating Clearance..." : "Authorize Access"}
+            {isLoading ? "Authenticating Clearance & Logging..." : "Authorize Access"}
           </button>
         </form>
 

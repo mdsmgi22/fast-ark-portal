@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
+import Image from "next/image";
 
 export default function PartnerLogin() {
   const router = useRouter();
@@ -44,18 +45,47 @@ export default function PartnerLogin() {
         throw new Error("Account Suspended: Please contact your Fast Ark manager.");
       }
 
-      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      // Tracks the exact timestamp and user ID of the login to prevent false claims.
+      // =====================================================================
+      // 3. SESSION CONCURRENCY & IP TRACKING ENGINE
+      // =====================================================================
+      const sessionToken = `PARTNER_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+      let currentIp = "Unknown";
+      
+      try {
+        const ipRes = await fetch("https://api.ipify.org?format=json");
+        currentIp = (await ipRes.json()).ip;
+      } catch (err) {
+        console.warn("Could not fetch IP address for audit log.");
+      }
+
+      // Upsert the token to the database to enforce Single Active Session
+      const { error: sessionError } = await supabase.from('active_sessions').upsert({
+        user_id: authData.user.id,
+        session_token: sessionToken,
+        ip_address: currentIp,
+        last_active: new Date().toISOString()
+      });
+
+      if (sessionError) throw new Error("Failed to establish secure session connection.");
+
+      // Store locally for the SessionManager component to verify
+      localStorage.setItem("fapl_session_token", sessionToken);
+
+      // =====================================================================
+      // 4. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+      // =====================================================================
       await supabase.from('staff_activity_logs').insert([{
         staff_id: authData.user.id,
         staff_email: email.trim().toLowerCase(),
         action_type: 'SECURITY_AUDIT',
         module: 'AUTHENTICATION',
         target_id: partnerData.id,
-        details: `Partner successfully authenticated and established a secure session.`
+        details: `Partner successfully authenticated. IP: ${currentIp}`
       }]);
 
-      // 4. Intelligent Routing (First-time password change -> T&C -> Dashboard)
+      // =====================================================================
+      // 5. INTELLIGENT ROUTING
+      // =====================================================================
       if (authData.user.user_metadata?.must_change_password) {
         router.push("/update-password");
         return;
@@ -75,7 +105,7 @@ export default function PartnerLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4">
+    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4 font-sans">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
         
         <div className="bg-blue-600 p-8 text-center border-b-4 border-slate-900">
