@@ -88,44 +88,48 @@ export default function ApplicationForm() {
   };
 
   // =========================================================================
-  // SMART OVERWRITE ENGINE: Evaluates status to bypass collision blocks
+  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE 
+  // Evaluates database constraints to see if the user was previously rejected
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
     if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    const queries = [
-      supabase.from('pending_applications').select('id, status').ilike('email', formData.email).limit(1),
-      supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
-    ];
-
-    if (formData.alt_mobile) {
-      queries.push(
-        supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
-      );
+    // Build a single comprehensive OR query to find ALL collisions across unique identifiers
+    let orQuery = `email.ilike.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
+    
+    if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
+      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
+    }
+    if (formData.pan_number && formData.pan_number.trim() !== "") {
+      orQuery += `,pan_number.eq.${formData.pan_number}`;
     }
 
-    const results = await Promise.all(queries);
+    const { data: existingRecords, error } = await supabase
+      .from('pending_applications')
+      .select('id, status')
+      .or(orQuery);
 
-    // Block if collisions exist and are actively pending or approved
-    if (results[0].data && results[0].data.length > 0 && results[0].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Email '${formData.email}' is already registered and under process.`, rejectedId: null };
-    }
-    if (results[1].data && results[1].data.length > 0 && results[1].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered and under process.`, rejectedId: null };
-    }
-    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0 && results[2].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered and under process.`, rejectedId: null };
+    if (error) {
+      console.error("Collision check error:", error);
+      return { error: "Database verification failed. Please try again.", rejectedId: null };
     }
 
-    // Extract the ID of the strictly rejected record for overwrite mapping
-    let rejectedId = null;
-    if (results[0].data && results[0].data.length > 0) rejectedId = results[0].data[0].id;
-    else if (results[1].data && results[1].data.length > 0) rejectedId = results[1].data[0].id;
-    else if (formData.alt_mobile && results[2].data && results[2].data.length > 0) rejectedId = results[2].data[0].id;
+    if (existingRecords && existingRecords.length > 0) {
+      // If ANY colliding record is currently Active or Pending, block the submission
+      const hasActiveCollision = existingRecords.some(r => r.status !== 'Rejected');
+      
+      if (hasActiveCollision) {
+        return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
+      }
 
-    return { error: null, rejectedId };
+      // If we reach here, it means all colliding records are "Rejected". 
+      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
+      return { error: null, rejectedId: existingRecords[0].id };
+    }
+
+    return { error: null, rejectedId: null }; 
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -168,6 +172,7 @@ export default function ApplicationForm() {
     setMessage("Validating application data...");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
+    // Evaluate duplicates and grab the rejected ID (if it exists)
     const { error: duplicateErrorMsg, rejectedId } = await checkDuplicatesAndRejections();
     if (duplicateErrorMsg) {
       return showError(duplicateErrorMsg); 
@@ -192,6 +197,9 @@ export default function ApplicationForm() {
       
       const timestamp = new Date().toLocaleString();
 
+      // =========================================================================
+      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM
+      // =========================================================================
       const a4Width = 595.28;
       const a4Height = 841.89;
       const formPage = pdfDoc.addPage([a4Width, a4Height]);
@@ -230,7 +238,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Gov ID Number:", "[Redacted]");  
+      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -256,6 +264,10 @@ export default function ApplicationForm() {
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
       formPage.drawText(formStampText, { x: 10, y: 6, size: 7, font: boldFont, color: rgb(1, 1, 1) });
 
+
+      // =========================================================================
+      // 🚀 APPEND KYC DOCUMENTS BEHIND THE A4 FORM
+      // =========================================================================
       const fileArray = [
         { file: files.poi, label: `POI: ${formData.poi_type}` },
         { file: files.poa, label: `POA: ${formData.poa_type}` },
@@ -353,11 +365,15 @@ export default function ApplicationForm() {
         terms_accepted: formData.terms_accepted,
         ip_address: userIp,
         photo_path: savedPhotoPath,
-        status: 'Pending',
-        reject_reason: null
+        status: 'Pending', // Force reset status to Pending
+        reject_reason: null // Clear any old rejection remarks
       };
 
+      // =========================================================================
+      // DYNAMIC UPSERT: Overwrite if they were rejected, otherwise insert new
+      // =========================================================================
       let dbError;
+
       if (rejectedId) {
         const { error } = await supabase.from('pending_applications').update(dbPayload).eq('id', rejectedId);
         dbError = error;
@@ -368,7 +384,7 @@ export default function ApplicationForm() {
       
       if (dbError) {
         if (dbError.code === '23505') {
-          return showError("Database Block: A record with this Email or Mobile already exists securely in the database.");
+          return showError("Database Block: A record with this Email, Mobile, Gov ID, or PAN already exists securely in the database. If you were rejected, ensure you are updating your exact previous application.");
         }
         throw dbError; 
       }
@@ -393,7 +409,7 @@ export default function ApplicationForm() {
   return (
     <div className="min-h-screen bg-slate-100 py-12 px-4 sm:px-6">
       
-      {/* 1. TOP ESCAPE HATCH: Clear exit path before engaging with the form */}
+      {/* 1. TOP ESCAPE HATCH */}
       <div className="max-w-6xl mx-auto mb-4">
         <Link href="/" className="inline-flex items-center gap-2 text-slate-500 font-black tracking-widest uppercase text-xs hover:text-blue-600 transition bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
           <span>&larr;</span> Return to Main Website

@@ -90,31 +90,45 @@ export default function ApplicationForm() {
     }
   };
 
-  const checkDuplicates = async () => {
+  // =========================================================================
+  // SMART OVERWRITE ENGINE: Evaluates status to bypass collision blocks
+  // =========================================================================
+  const checkDuplicatesAndRejections = async () => {
     if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
-      return "Alternative mobile number cannot be the exact same as your primary mobile number.";
+      return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
     const queries = [
-      supabase.from('pending_applications').select('id').ilike('email', formData.email).limit(1),
-      supabase.from('pending_applications').select('id').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
+      supabase.from('pending_applications').select('id, status').ilike('email', formData.email).limit(1),
+      supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
     ];
 
     if (formData.alt_mobile) {
       queries.push(
-        supabase.from('pending_applications').select('id').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
+        supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
       );
     }
 
     const results = await Promise.all(queries);
 
-    if (results[0].data && results[0].data.length > 0) return `Duplicate Entry: The Email '${formData.email}' is already registered.`;
-    if (results[1].data && results[1].data.length > 0) return `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered.`;
-    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0) {
-      return `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered.`;
+    // Block if collisions exist and are actively pending or approved
+    if (results[0].data && results[0].data.length > 0 && results[0].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Email '${formData.email}' is already registered and under process.`, rejectedId: null };
+    }
+    if (results[1].data && results[1].data.length > 0 && results[1].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered and under process.`, rejectedId: null };
+    }
+    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0 && results[2].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered and under process.`, rejectedId: null };
     }
 
-    return null; 
+    // Extract the ID of the strictly rejected record for overwrite mapping
+    let rejectedId = null;
+    if (results[0].data && results[0].data.length > 0) rejectedId = results[0].data[0].id;
+    else if (results[1].data && results[1].data.length > 0) rejectedId = results[1].data[0].id;
+    else if (formData.alt_mobile && results[2].data && results[2].data.length > 0) rejectedId = results[2].data[0].id;
+
+    return { error: null, rejectedId };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -157,7 +171,7 @@ export default function ApplicationForm() {
     setMessage("Validating application data...");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    const duplicateErrorMsg = await checkDuplicates();
+    const { error: duplicateErrorMsg, rejectedId } = await checkDuplicatesAndRejections();
     if (duplicateErrorMsg) {
       return showError(duplicateErrorMsg); 
     }
@@ -181,9 +195,6 @@ export default function ApplicationForm() {
       
       const timestamp = new Date().toLocaleString();
 
-      // =========================================================================
-      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM
-      // =========================================================================
       const a4Width = 595.28;
       const a4Height = 841.89;
       const formPage = pdfDoc.addPage([a4Width, a4Height]);
@@ -191,7 +202,6 @@ export default function ApplicationForm() {
       formPage.drawText("FAST ARK - PARTNER APPLICATION FORM", { x: 50, y: 790, size: 16, font: boldFont });
       formPage.drawLine({ start: { x: 50, y: 780 }, end: { x: 545, y: 780 }, thickness: 1 });
 
-      // Embed & Glue Photo to Top Right (FIXED MIME PARSER)
       if (files.photo) {
         try {
           const photoBuffer = await files.photo.arrayBuffer();
@@ -211,7 +221,6 @@ export default function ApplicationForm() {
         }
       }
 
-      // Type out Application Details
       let currentY = 750;
       const drawRow = (label: string, value: string) => {
         formPage.drawText(label, { x: 50, y: currentY, size: 10, font: boldFont });
@@ -224,7 +233,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
+      drawRow("Gov ID Number:", "[Redacted]");  
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -246,15 +255,10 @@ export default function ApplicationForm() {
       drawRow("Requested Role:", formData.requested_role);
       drawRow("Requested Center:", formData.center_name.toUpperCase());
 
-      // Form Page Footer
       const formStampText = `APP: ${formData.name.toUpperCase()} | DOC: SYSTEM GENERATED FORM | FILE: A4_APPLICATION.PDF | IP: ${userIp} | TIME: ${timestamp}`;
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
       formPage.drawText(formStampText, { x: 10, y: 6, size: 7, font: boldFont, color: rgb(1, 1, 1) });
 
-
-      // =========================================================================
-      // 🚀 APPEND KYC DOCUMENTS BEHIND THE A4 FORM
-      // =========================================================================
       const fileArray = [
         { file: files.poi, label: `POI: ${formData.poi_type}` },
         { file: files.poa, label: `POA: ${formData.poa_type}` },
@@ -342,19 +346,28 @@ export default function ApplicationForm() {
       setMessage("Saving application record...");
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
-      const { error: dbError } = await supabase
-        .from('pending_applications')
-        .insert([{
-           name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
-           mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
-           qualification: formData.qualification, father_name: combinedGuardian,
-           address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
-           taluk: formData.taluk, dist: formData.dist, state: formData.state,
-           requested_role: formData.requested_role, center_name: formData.center_name,
-           terms_accepted: formData.terms_accepted,
-           ip_address: userIp,
-           photo_path: savedPhotoPath 
-        }]);
+      const dbPayload = {
+        name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
+        mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
+        qualification: formData.qualification, father_name: combinedGuardian,
+        address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
+        taluk: formData.taluk, dist: formData.dist, state: formData.state,
+        requested_role: formData.requested_role, center_name: formData.center_name,
+        terms_accepted: formData.terms_accepted,
+        ip_address: userIp,
+        photo_path: savedPhotoPath,
+        status: 'Pending',
+        reject_reason: null
+      };
+
+      let dbError;
+      if (rejectedId) {
+        const { error } = await supabase.from('pending_applications').update(dbPayload).eq('id', rejectedId);
+        dbError = error;
+      } else {
+        const { error } = await supabase.from('pending_applications').insert([dbPayload]);
+        dbError = error;
+      }
       
       if (dbError) {
         if (dbError.code === '23505') {
@@ -1631,7 +1644,7 @@ export default function PartnerSalesReport() {
 
         setPartner(partnerData);
         
-        // AUTO-DETECT APPROVED EDITS
+        // AUTO-DETECT APPROVED EDITS & APPROVED BACKDATES (MANDATORY QUEUE PIPELINE)
         const { data: approvedEdit } = await supabase
           .from("daily_sales_reports")
           .select("*")
@@ -1681,31 +1694,77 @@ export default function PartnerSalesReport() {
   };
 
   // =====================================================================
+  // DYNAMIC TIME ENGINE: Calculates exact age of selected ledger date
+  // =====================================================================
+  const calculateDiffDays = () => {
+    if (!form.report_date) return 0;
+    const rDate = new Date(form.report_date);
+    const tDate = new Date();
+    // Normalize to midnight to prevent partial day mismatches
+    rDate.setHours(0,0,0,0);
+    tDate.setHours(0,0,0,0);
+    return Math.round((tDate.getTime() - rDate.getTime()) / (1000 * 60 * 60 * 24));
+  };
+
+  const diffDaysDynamic = calculateDiffDays();
+  // If editing an approved backdate request, it is NOT locked
+  const isBackdateLocked = !isEditMode && diffDaysDynamic > 7 && diffDaysDynamic <= 30;
+  const isTooOld = !isEditMode && diffDaysDynamic > 30;
+
+  // =====================================================================
   // DUAL-PLATFORM MATHEMATICAL ENGINE 
   // =====================================================================
-  
-  // 1. BSNL Core Ledgers
   const bsnlCbpCash = form.cbp_landline_amt + form.cbp_gsm_amt;
   const bsnlCtopCash = form.ctop_recharge_amt;
   const bsnlSimCash = form.sim_replacement_amt + form.sim_fancy_amt + form.sim_postpaid_amt + form.frc_amt + form.mnp_amt;
   const bsnlOtherCash = form.other_amt;
   
-  // 2. Total Physical Stock Disbursed
   const totalSimQty = form.sim_new_qty + form.sim_upgrade_qty + form.sim_postpaid_qty + form.sim_replacement_qty + form.sim_fancy_qty + form.frc_qty + form.mnp_qty;
-
-  // 3. Paybull Master Ledger (Isolated)
   const paybullTotalCash = form.pb_cbp_amt + form.pb_ctop_amt + form.pb_frc_amt + form.pb_mnp_amt + form.pb_other_amt;
-
-  // 4. Grand Final Bank Remittance (No Double Counting)
   const grandTotalCashCollection = bsnlCbpCash + bsnlCtopCash + bsnlSimCash + bsnlOtherCash + paybullTotalCash;
 
-  // 5. Zero Entry Blocker Logic
   const isZeroBusiness = grandTotalCashCollection === 0 && totalSimQty === 0 && form.cheque_amt === 0;
+
+  // =====================================================================
+  // THE SKELETON ROW GENERATOR (BACKDATE REQUEST ENGINE)
+  // =====================================================================
+  const handleBackdateRequest = async () => {
+    if (!partner) return alert("System Error: Partner profile not loaded.");
+    setSubmitting(true);
+    
+    try {
+      const payload = {
+        partner_id: partner.id,
+        center_id: partner.center_id,
+        ...form, // Ensures all numeric columns safely receive '0' via UI hydration
+        status: 'Pending Deposit', // Standard placeholder to pass DB constraints
+        edit_request_status: 'Pending',
+        edit_request_reason: `BACKDATE REQUEST: Permission required to log missing sales for ${formatToDDMMYYYY(form.report_date)}`
+      };
+
+      const { error } = await supabase.from("daily_sales_reports").insert([payload]);
+      
+      if (error) {
+        if (error.code === '23505') {
+          throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
+        }
+        throw error;
+      }
+      
+      alert("✅ Backdate approval request submitted. The Back-Office will review it shortly. Once approved, you will be prompted to enter the actual sales data.");
+      router.push("/partner/dashboard");
+    } catch (err: any) {
+      alert("Request Error: " + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!partner) return alert("System Error: Partner profile not loaded.");
+    if (isBackdateLocked || isTooOld) return alert("System Guardrail Error: Cannot submit locked dates.");
     
     // Strict Verification: Prevents blank zero-submissions
     if (isZeroBusiness && !form.zero_business_reason) {
@@ -1714,11 +1773,8 @@ export default function PartnerSalesReport() {
 
     setSubmitting(true);
     try {
-      const reportDate = new Date(form.report_date);
-      const today = new Date();
-      const diffDays = Math.ceil(Math.abs(today.getTime() - reportDate.getTime()) / (1000 * 60 * 60 * 24)); 
-      
-      if (!isEditMode && diffDays > 7) throw new Error("You cannot submit a new report older than 7 days.");
+      // Final backend guardrail to prevent script manipulation
+      if (!isEditMode && diffDaysDynamic > 7) throw new Error("You cannot bypass the backdate lock.");
 
       const finalStatus = isZeroBusiness ? 'No Deposit Required' : 'Pending Deposit';
       
@@ -1740,7 +1796,10 @@ export default function PartnerSalesReport() {
         alert("✅ Sales Report Corrected Successfully! The ledger has been updated.");
       } else {
         const { error } = await supabase.from("daily_sales_reports").insert([payload]);
-        if (error) throw error;
+        if (error) {
+          if (error.code === '23505') throw new Error("A sales record for this specific date has already been logged. Please check your dashboard history.");
+          throw error;
+        }
         alert(isZeroBusiness 
           ? "✅ Zero Business Day Logged. No deposit required." 
           : "✅ Sales Report Saved! Please proceed to 'Deposit of Sales' to clear your ledger."
@@ -1775,7 +1834,6 @@ export default function PartnerSalesReport() {
     </div>
   );
 
-  // Mobile Optimized Input Class (Larger padding for touch targets)
   const numInputClass = "w-full border border-slate-300 p-3 rounded-md bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 font-bold text-slate-800 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   return (
@@ -1799,6 +1857,13 @@ export default function PartnerSalesReport() {
           </div>
         )}
 
+        {isBackdateLocked && (
+          <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
+            <h3 className="font-black text-amber-900 uppercase tracking-widest text-xs flex items-center gap-2"><span>🔒</span> Ledger Locked (Backdate Mode)</h3>
+            <p className="text-amber-800 text-sm font-bold mt-1">The date you selected is older than 7 days. You must request approval from the Corporate Admin before you can type in your sales data.</p>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
           
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center gap-4">
@@ -1812,7 +1877,7 @@ export default function PartnerSalesReport() {
                 onChange={(e) => setForm({...form, report_date: e.target.value})} 
                 className="w-full border border-slate-300 p-3 rounded-lg font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" 
               />
-              <p className="text-xs text-red-600 font-bold mt-2">Reports older than 3 days may incur a ₹500/day penalty.</p>
+              <p className="text-xs text-red-600 font-bold mt-2">Reports older than 7 days require manual unlock requests.</p>
             </div>
             <div className="flex-1 bg-slate-50 border border-slate-200 p-4 rounded-lg flex items-center justify-between">
               <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Format: DD/MM/YYYY</span>
@@ -1820,8 +1885,10 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
+          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
             
+            {/* ARCHITECTURAL FIX: Lockdown classes applied ONLY to the left column containing inputs */}
             <div className="lg:col-span-8 space-y-6">
               
               {/* --- 1. BSNL CBP HEAD --- */}
@@ -1940,7 +2007,7 @@ export default function PartnerSalesReport() {
                   </div>
 
                   {/* ZERO BUSINESS MENU TRIGGER */}
-                  {isZeroBusiness && (
+                  {isZeroBusiness && !isBackdateLocked && !isTooOld && (
                     <div className="mt-4 bg-amber-50 p-4 rounded-lg border-2 border-amber-400 animate-in fade-in zoom-in-95">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-amber-900 mb-2">⚠️ '0' Entry Detected - Select Reason *</label>
                       <select 
@@ -1961,13 +2028,29 @@ export default function PartnerSalesReport() {
                 </div>
 
                 <div className="p-4 bg-slate-950">
-                  <button 
-                    type="submit" 
-                    disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
-                    className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
-                  >
-                    {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
-                  </button>
+                  {isTooOld ? (
+                    <div className="bg-red-900/50 border border-red-500 p-4 rounded-lg text-center">
+                      <p className="text-red-400 font-black uppercase tracking-widest text-sm">System Blocked</p>
+                      <p className="text-red-200 text-xs font-bold mt-1">You cannot submit or request entries older than 30 days.</p>
+                    </div>
+                  ) : isBackdateLocked ? (
+                    <button 
+                      type="button" 
+                      onClick={handleBackdateRequest}
+                      disabled={submitting} 
+                      className="w-full py-4 bg-amber-500 hover:bg-amber-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:opacity-50 uppercase tracking-wider flex justify-center items-center gap-2"
+                    >
+                      {submitting ? "Requesting..." : "🔒 Request Backdate Approval"}
+                    </button>
+                  ) : (
+                    <button 
+                      type="submit" 
+                      disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
+                      className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
+                    >
+                      {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
