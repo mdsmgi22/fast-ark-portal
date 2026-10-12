@@ -79,7 +79,7 @@ export default function PartnerSalesReport() {
 
         setPartner(partnerData);
         
-        // AUTO-DETECT APPROVED EDITS & APPROVED BACKDATES
+        // AUTO-DETECT APPROVED EDITS & APPROVED BACKDATES (MANDATORY QUEUE PIPELINE)
         const { data: approvedEdit } = await supabase
           .from("daily_sales_reports")
           .select("*")
@@ -171,7 +171,7 @@ export default function PartnerSalesReport() {
       const payload = {
         partner_id: partner.id,
         center_id: partner.center_id,
-        ...form, // Ensures all numeric columns safely receive '0'
+        ...form, // Ensures all numeric columns safely receive '0' via UI hydration
         status: 'Pending Deposit', // Standard placeholder to pass DB constraints
         edit_request_status: 'Pending',
         edit_request_reason: `BACKDATE REQUEST: Permission required to log missing sales for ${formatToDDMMYYYY(form.report_date)}`
@@ -320,10 +320,11 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
+          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
             
             {/* ARCHITECTURAL FIX: Lockdown classes applied ONLY to the left column containing inputs */}
-            <div className={`lg:col-span-8 space-y-6 ${(isBackdateLocked || isTooOld) ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+            <div className="lg:col-span-8 space-y-6">
               
               {/* --- 1. BSNL CBP HEAD --- */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
