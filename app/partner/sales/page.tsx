@@ -132,6 +132,21 @@ export default function PartnerSalesReport() {
   };
 
   // =====================================================================
+  // DYNAMIC UX ENGINE: Strict Input Sanitization & Scroll Locks
+  // =====================================================================
+  const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+    // Instantly drops focus to prevent the mouse wheel from scrolling the numeric value
+    (e.target as HTMLInputElement).blur();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Intercept Arrow Keys and Math/Exponential symbols to enforce strict numeric purity
+    if (['ArrowUp', 'ArrowDown', 'e', 'E', '+', '-'].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
+
+  // =====================================================================
   // DYNAMIC TIME ENGINE: Calculates exact age of selected ledger date
   // =====================================================================
   const calculateDiffDays = () => {
@@ -359,10 +374,10 @@ export default function PartnerSalesReport() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="font-black text-slate-800 border-b border-slate-200 pb-2 mb-4">1. BSNL CBP Head</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><label className="text-xs font-bold text-slate-500">Landline Qty</label><input type="number" step="1" value={form.cbp_landline_qty || ''} onChange={(e) => handleInputChange('cbp_landline_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Landline ₹</label><input type="number" step="0.01" value={form.cbp_landline_amt || ''} onChange={(e) => handleInputChange('cbp_landline_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">GSM Qty</label><input type="number" step="1" value={form.cbp_gsm_qty || ''} onChange={(e) => handleInputChange('cbp_gsm_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">GSM ₹</label><input type="number" step="0.01" value={form.cbp_gsm_amt || ''} onChange={(e) => handleInputChange('cbp_gsm_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Landline Qty</label><input type="number" step="1" value={form.cbp_landline_qty || ''} onChange={(e) => handleInputChange('cbp_landline_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Landline ₹</label><input type="number" step="0.01" value={form.cbp_landline_amt || ''} onChange={(e) => handleInputChange('cbp_landline_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">GSM Qty</label><input type="number" step="1" value={form.cbp_gsm_qty || ''} onChange={(e) => handleInputChange('cbp_gsm_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">GSM ₹</label><input type="number" step="0.01" value={form.cbp_gsm_amt || ''} onChange={(e) => handleInputChange('cbp_gsm_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
                 </div>
               </div>
 
@@ -370,10 +385,10 @@ export default function PartnerSalesReport() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="font-black text-slate-800 border-b border-slate-200 pb-2 mb-4">2. BSNL CTOP Head</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><label className="text-xs font-bold text-blue-800">CTOP Qty</label><input type="number" step="1" value={form.ctop_recharge_qty || ''} onChange={(e) => handleInputChange('ctop_recharge_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-blue-800">CTOP ₹</label><input type="number" step="0.01" value={form.ctop_recharge_amt || ''} onChange={(e) => handleInputChange('ctop_recharge_amt', e.target.value)} placeholder="0.00" className={`${numInputClass} bg-blue-50 border-blue-300 text-blue-900`} /></div>
-                  <div><label className="text-xs font-bold text-emerald-800">FRC Qty</label><input type="number" step="1" value={form.frc_qty || ''} onChange={(e) => handleInputChange('frc_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-emerald-800">FRC ₹</label><input type="number" step="0.01" value={form.frc_amt || ''} onChange={(e) => handleInputChange('frc_amt', e.target.value)} placeholder="0.00" className={`${numInputClass} bg-emerald-50 border-emerald-300 text-emerald-900`} /></div>
+                  <div><label className="text-xs font-bold text-blue-800">CTOP Qty</label><input type="number" step="1" value={form.ctop_recharge_qty || ''} onChange={(e) => handleInputChange('ctop_recharge_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-blue-800">CTOP ₹</label><input type="number" step="0.01" value={form.ctop_recharge_amt || ''} onChange={(e) => handleInputChange('ctop_recharge_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={`${numInputClass} bg-blue-50 border-blue-300 text-blue-900`} /></div>
+                  <div><label className="text-xs font-bold text-emerald-800">FRC Qty</label><input type="number" step="1" value={form.frc_qty || ''} onChange={(e) => handleInputChange('frc_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-emerald-800">FRC ₹</label><input type="number" step="0.01" value={form.frc_amt || ''} onChange={(e) => handleInputChange('frc_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={`${numInputClass} bg-emerald-50 border-emerald-300 text-emerald-900`} /></div>
                 </div>
               </div>
 
@@ -381,18 +396,18 @@ export default function PartnerSalesReport() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="font-black text-slate-800 border-b border-slate-200 pb-2 mb-4">3. BSNL SIM Tracking</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><label className="text-xs font-bold text-purple-800">MNP Qty</label><input type="number" step="1" value={form.mnp_qty || ''} onChange={(e) => handleInputChange('mnp_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-purple-800">MNP ₹</label><input type="number" step="0.01" value={form.mnp_amt || ''} onChange={(e) => handleInputChange('mnp_amt', e.target.value)} placeholder="0.00" className={`${numInputClass} bg-purple-50 border-purple-300 text-purple-900`} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">New Qty</label><input type="number" step="1" value={form.sim_new_qty || ''} onChange={(e) => handleInputChange('sim_new_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Upgrade Qty</label><input type="number" step="1" value={form.sim_upgrade_qty || ''} onChange={(e) => handleInputChange('sim_upgrade_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-purple-800">MNP Qty</label><input type="number" step="1" value={form.mnp_qty || ''} onChange={(e) => handleInputChange('mnp_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-purple-800">MNP ₹</label><input type="number" step="0.01" value={form.mnp_amt || ''} onChange={(e) => handleInputChange('mnp_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={`${numInputClass} bg-purple-50 border-purple-300 text-purple-900`} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">New Qty</label><input type="number" step="1" value={form.sim_new_qty || ''} onChange={(e) => handleInputChange('sim_new_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Upgrade Qty</label><input type="number" step="1" value={form.sim_upgrade_qty || ''} onChange={(e) => handleInputChange('sim_upgrade_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
                   
-                  <div><label className="text-xs font-bold text-slate-500">Postpaid Qty</label><input type="number" step="1" value={form.sim_postpaid_qty || ''} onChange={(e) => handleInputChange('sim_postpaid_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Postpaid ₹</label><input type="number" step="0.01" value={form.sim_postpaid_amt || ''} onChange={(e) => handleInputChange('sim_postpaid_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Replace Qty</label><input type="number" step="1" value={form.sim_replacement_qty || ''} onChange={(e) => handleInputChange('sim_replacement_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Replace ₹</label><input type="number" step="0.01" value={form.sim_replacement_amt || ''} onChange={(e) => handleInputChange('sim_replacement_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Postpaid Qty</label><input type="number" step="1" value={form.sim_postpaid_qty || ''} onChange={(e) => handleInputChange('sim_postpaid_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Postpaid ₹</label><input type="number" step="0.01" value={form.sim_postpaid_amt || ''} onChange={(e) => handleInputChange('sim_postpaid_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Replace Qty</label><input type="number" step="1" value={form.sim_replacement_qty || ''} onChange={(e) => handleInputChange('sim_replacement_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Replace ₹</label><input type="number" step="0.01" value={form.sim_replacement_amt || ''} onChange={(e) => handleInputChange('sim_replacement_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
                   
-                  <div><label className="text-xs font-bold text-slate-500">Fancy Qty</label><input type="number" step="1" value={form.sim_fancy_qty || ''} onChange={(e) => handleInputChange('sim_fancy_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Fancy ₹</label><input type="number" step="0.01" value={form.sim_fancy_amt || ''} onChange={(e) => handleInputChange('sim_fancy_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Fancy Qty</label><input type="number" step="1" value={form.sim_fancy_qty || ''} onChange={(e) => handleInputChange('sim_fancy_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Fancy ₹</label><input type="number" step="0.01" value={form.sim_fancy_amt || ''} onChange={(e) => handleInputChange('sim_fancy_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
                 </div>
               </div>
 
@@ -400,10 +415,10 @@ export default function PartnerSalesReport() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="font-black text-slate-800 border-b border-slate-200 pb-2 mb-4">4. Cheques & Other Adjustments</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><label className="text-xs font-bold text-slate-500">Cheque Qty</label><input type="number" step="1" value={form.cheque_qty || ''} onChange={(e) => handleInputChange('cheque_qty', e.target.value)} placeholder="0" className={numInputClass} /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Total Cheque ₹</label><input type="number" step="0.01" value={form.cheque_amt || ''} onChange={(e) => handleInputChange('cheque_amt', e.target.value)} placeholder="0.00" className={`${numInputClass} bg-amber-50 border-amber-300 text-amber-900`} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Cheque Qty</label><input type="number" step="1" value={form.cheque_qty || ''} onChange={(e) => handleInputChange('cheque_qty', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Total Cheque ₹</label><input type="number" step="0.01" value={form.cheque_amt || ''} onChange={(e) => handleInputChange('cheque_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={`${numInputClass} bg-amber-50 border-amber-300 text-amber-900`} /></div>
                   <div className="col-span-2 md:col-span-1"><label className="text-xs font-bold text-slate-500">Other Details</label><input type="text" value={form.other_details} onChange={(e) => setForm({...form, other_details: e.target.value})} placeholder="Remarks..." className="w-full border border-slate-300 p-3 rounded-md bg-white outline-none focus:ring-2 focus:ring-blue-200 text-sm" /></div>
-                  <div><label className="text-xs font-bold text-slate-500">Other Cash ₹</label><input type="number" step="0.01" value={form.other_amt || ''} onChange={(e) => handleInputChange('other_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-xs font-bold text-slate-500">Other Cash ₹</label><input type="number" step="0.01" value={form.other_amt || ''} onChange={(e) => handleInputChange('other_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
                 </div>
               </div>
 
@@ -414,11 +429,11 @@ export default function PartnerSalesReport() {
                 </h3>
                 <p className="text-[10px] uppercase font-black text-indigo-500 tracking-widest mb-4">Log transactions processed exclusively on Paybull</p>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CTOP ₹</label><input type="number" step="0.01" value={form.pb_ctop_amt || ''} onChange={(e) => handleInputChange('pb_ctop_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CBP ₹</label><input type="number" step="0.01" value={form.pb_cbp_amt || ''} onChange={(e) => handleInputChange('pb_cbp_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB FRC ₹</label><input type="number" step="0.01" value={form.pb_frc_amt || ''} onChange={(e) => handleInputChange('pb_frc_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB MNP ₹</label><input type="number" step="0.01" value={form.pb_mnp_amt || ''} onChange={(e) => handleInputChange('pb_mnp_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
-                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB Other ₹</label><input type="number" step="0.01" value={form.pb_other_amt || ''} onChange={(e) => handleInputChange('pb_other_amt', e.target.value)} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CTOP ₹</label><input type="number" step="0.01" value={form.pb_ctop_amt || ''} onChange={(e) => handleInputChange('pb_ctop_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB CBP ₹</label><input type="number" step="0.01" value={form.pb_cbp_amt || ''} onChange={(e) => handleInputChange('pb_cbp_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB FRC ₹</label><input type="number" step="0.01" value={form.pb_frc_amt || ''} onChange={(e) => handleInputChange('pb_frc_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB MNP ₹</label><input type="number" step="0.01" value={form.pb_mnp_amt || ''} onChange={(e) => handleInputChange('pb_mnp_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
+                  <div><label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest">PB Other ₹</label><input type="number" step="0.01" value={form.pb_other_amt || ''} onChange={(e) => handleInputChange('pb_other_amt', e.target.value)} onWheel={handleWheel} onKeyDown={handleKeyDown} placeholder="0.00" className={numInputClass} /></div>
                 </div>
               </div>
 
