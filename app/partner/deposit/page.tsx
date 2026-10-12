@@ -369,7 +369,19 @@ export default function PartnerDepositPage() {
 
   const userEnteredValue = parseFloat(form.deposit_amount) || 0;
   const companyUPI = companyBanks.length > 0 ? companyBanks[0].upi_id : "fastark@upi";
-  const upiString = `upi://pay?pa=${companyUPI}&pn=Fast%20Ark&am=${userEnteredValue}&cu=INR&tn=RollingDeposit_${partner?.center_id}`;
+
+  // 1. Force strict 2-decimal formatting mandated by NPCI specs
+  const safeAmount = userEnteredValue.toFixed(2);
+  
+  // 2. Safely encode the Payee Name
+  const safeName = encodeURIComponent("Fast Ark");
+  
+  // 3. Truncate the Transaction Note to strictly bypass the 50-character limit and URL encode it
+  const rawNote = `Rolling_${partner?.center_id}`;
+  const safeNote = encodeURIComponent(rawNote.substring(0, 48));
+
+  // 4. Safely construct the final deep link
+  const upiString = `upi://pay?pa=${companyUPI}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`;
 
   const numInputClass = "w-full border-2 border-slate-200 p-3 rounded-lg outline-none focus:border-blue-500 font-black text-slate-800 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 

@@ -91,44 +91,48 @@ export default function ApplicationForm() {
   };
 
   // =========================================================================
-  // SMART OVERWRITE ENGINE: Evaluates status to bypass collision blocks
+  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE 
+  // Evaluates database constraints to see if the user was previously rejected
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
     if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    const queries = [
-      supabase.from('pending_applications').select('id, status').ilike('email', formData.email).limit(1),
-      supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
-    ];
-
-    if (formData.alt_mobile) {
-      queries.push(
-        supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
-      );
+    // Build a single comprehensive OR query to find ALL collisions across unique identifiers
+    let orQuery = `email.ilike.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
+    
+    if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
+      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
+    }
+    if (formData.pan_number && formData.pan_number.trim() !== "") {
+      orQuery += `,pan_number.eq.${formData.pan_number}`;
     }
 
-    const results = await Promise.all(queries);
+    const { data: existingRecords, error } = await supabase
+      .from('pending_applications')
+      .select('id, status')
+      .or(orQuery);
 
-    // Block if collisions exist and are actively pending or approved
-    if (results[0].data && results[0].data.length > 0 && results[0].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Email '${formData.email}' is already registered and under process.`, rejectedId: null };
-    }
-    if (results[1].data && results[1].data.length > 0 && results[1].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered and under process.`, rejectedId: null };
-    }
-    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0 && results[2].data[0].status !== 'Rejected') {
-      return { error: `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered and under process.`, rejectedId: null };
+    if (error) {
+      console.error("Collision check error:", error);
+      return { error: "Database verification failed. Please try again.", rejectedId: null };
     }
 
-    // Extract the ID of the strictly rejected record for overwrite mapping
-    let rejectedId = null;
-    if (results[0].data && results[0].data.length > 0) rejectedId = results[0].data[0].id;
-    else if (results[1].data && results[1].data.length > 0) rejectedId = results[1].data[0].id;
-    else if (formData.alt_mobile && results[2].data && results[2].data.length > 0) rejectedId = results[2].data[0].id;
+    if (existingRecords && existingRecords.length > 0) {
+      // If ANY colliding record is currently Active or Pending, block the submission
+      const hasActiveCollision = existingRecords.some(r => r.status !== 'Rejected');
+      
+      if (hasActiveCollision) {
+        return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
+      }
 
-    return { error: null, rejectedId };
+      // If we reach here, it means all colliding records are "Rejected". 
+      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
+      return { error: null, rejectedId: existingRecords[0].id };
+    }
+
+    return { error: null, rejectedId: null }; 
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -171,6 +175,7 @@ export default function ApplicationForm() {
     setMessage("Validating application data...");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
+    // Evaluate duplicates and grab the rejected ID (if it exists)
     const { error: duplicateErrorMsg, rejectedId } = await checkDuplicatesAndRejections();
     if (duplicateErrorMsg) {
       return showError(duplicateErrorMsg); 
@@ -195,6 +200,9 @@ export default function ApplicationForm() {
       
       const timestamp = new Date().toLocaleString();
 
+      // =========================================================================
+      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM
+      // =========================================================================
       const a4Width = 595.28;
       const a4Height = 841.89;
       const formPage = pdfDoc.addPage([a4Width, a4Height]);
@@ -233,7 +241,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Gov ID Number:", "[Redacted]");  
+      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -259,6 +267,10 @@ export default function ApplicationForm() {
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
       formPage.drawText(formStampText, { x: 10, y: 6, size: 7, font: boldFont, color: rgb(1, 1, 1) });
 
+
+      // =========================================================================
+      // 🚀 APPEND KYC DOCUMENTS BEHIND THE A4 FORM
+      // =========================================================================
       const fileArray = [
         { file: files.poi, label: `POI: ${formData.poi_type}` },
         { file: files.poa, label: `POA: ${formData.poa_type}` },
@@ -356,11 +368,15 @@ export default function ApplicationForm() {
         terms_accepted: formData.terms_accepted,
         ip_address: userIp,
         photo_path: savedPhotoPath,
-        status: 'Pending',
-        reject_reason: null
+        status: 'Pending', // Force reset status to Pending
+        reject_reason: null // Clear any old rejection remarks
       };
 
+      // =========================================================================
+      // DYNAMIC UPSERT: Overwrite if they were rejected, otherwise insert new
+      // =========================================================================
       let dbError;
+
       if (rejectedId) {
         const { error } = await supabase.from('pending_applications').update(dbPayload).eq('id', rejectedId);
         dbError = error;
@@ -371,7 +387,7 @@ export default function ApplicationForm() {
       
       if (dbError) {
         if (dbError.code === '23505') {
-          return showError("Database Block: A record with this Email or Mobile already exists securely in the database.");
+          return showError("Database Block: A record with this Email, Mobile, Gov ID, or PAN already exists securely in the database. If you were rejected, ensure you are updating your exact previous application.");
         }
         throw dbError; 
       }
@@ -396,7 +412,7 @@ export default function ApplicationForm() {
   return (
     <div className="min-h-screen bg-slate-100 py-12 px-4 sm:px-6">
       
-      {/* 1. TOP ESCAPE HATCH: Clear exit path before engaging with the form */}
+      {/* 1. TOP ESCAPE HATCH */}
       <div className="max-w-6xl mx-auto mb-4">
         <Link href="/" className="inline-flex items-center gap-2 text-slate-500 font-black tracking-widest uppercase text-xs hover:text-blue-600 transition bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
           <span>&larr;</span> Return to Main Website
@@ -1588,6 +1604,9 @@ export default function PartnerSalesReport() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Mandatory Submission Verification State
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
+
   const [form, setForm] = useState({
     report_date: new Date().toISOString().split("T")[0],
     
@@ -1733,6 +1752,18 @@ export default function PartnerSalesReport() {
     setSubmitting(true);
     
     try {
+      // FRONTEND PRE-FLIGHT CHECK: Block duplicates before database insertion
+      const { data: duplicateCheck } = await supabase
+        .from("daily_sales_reports")
+        .select("id")
+        .eq("partner_id", partner.id)
+        .eq("report_date", form.report_date)
+        .maybeSingle();
+
+      if (duplicateCheck) {
+        throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
+      }
+
       const payload = {
         partner_id: partner.id,
         center_id: partner.center_id,
@@ -1745,9 +1776,7 @@ export default function PartnerSalesReport() {
       const { error } = await supabase.from("daily_sales_reports").insert([payload]);
       
       if (error) {
-        if (error.code === '23505') {
-          throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
-        }
+        if (error.code === '23505') throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
         throw error;
       }
       
@@ -1765,6 +1794,7 @@ export default function PartnerSalesReport() {
 
     if (!partner) return alert("System Error: Partner profile not loaded.");
     if (isBackdateLocked || isTooOld) return alert("System Guardrail Error: Cannot submit locked dates.");
+    if (!confirmSubmit) return alert("Validation Error: Please check the mandatory verification box to confirm your data is accurate.");
     
     // Strict Verification: Prevents blank zero-submissions
     if (isZeroBusiness && !form.zero_business_reason) {
@@ -1775,6 +1805,20 @@ export default function PartnerSalesReport() {
     try {
       // Final backend guardrail to prevent script manipulation
       if (!isEditMode && diffDaysDynamic > 7) throw new Error("You cannot bypass the backdate lock.");
+
+      // FRONTEND PRE-FLIGHT CHECK for standard insertions
+      if (!isEditMode) {
+        const { data: duplicateCheck } = await supabase
+          .from("daily_sales_reports")
+          .select("id")
+          .eq("partner_id", partner.id)
+          .eq("report_date", form.report_date)
+          .maybeSingle();
+
+        if (duplicateCheck) {
+          throw new Error("A sales record for this specific date has already been logged. Please check your dashboard history.");
+        }
+      }
 
       const finalStatus = isZeroBusiness ? 'No Deposit Required' : 'Pending Deposit';
       
@@ -1806,6 +1850,7 @@ export default function PartnerSalesReport() {
         );
       }
       
+      setConfirmSubmit(false); // Reset confirmation state
       router.push("/partner/dashboard");
     } catch (err: any) {
       alert("Error saving report: " + err.message);
@@ -1886,10 +1931,10 @@ export default function PartnerSalesReport() {
           </div>
 
           {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
-          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
             {/* ARCHITECTURAL FIX: Lockdown classes applied ONLY to the left column containing inputs */}
-            <div className="lg:col-span-8 space-y-6">
+            <div className={`lg:col-span-8 space-y-6 ${(isBackdateLocked || isTooOld) ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
               
               {/* --- 1. BSNL CBP HEAD --- */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
@@ -2043,13 +2088,30 @@ export default function PartnerSalesReport() {
                       {submitting ? "Requesting..." : "🔒 Request Backdate Approval"}
                     </button>
                   ) : (
-                    <button 
-                      type="submit" 
-                      disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
-                      className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
-                    >
-                      {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
-                    </button>
+                    <>
+                      {/* MANDATORY CONFIRMATION CHECKBOX */}
+                      <div className="bg-slate-800 p-4 border border-slate-700 rounded-lg flex items-start gap-3 mb-4 animate-in fade-in">
+                        <input 
+                          type="checkbox" 
+                          id="confirmSubmit"
+                          checked={confirmSubmit} 
+                          onChange={(e) => setConfirmSubmit(e.target.checked)}
+                          className="w-5 h-5 accent-green-500 cursor-pointer mt-0.5 shrink-0" 
+                        />
+                        <label htmlFor="confirmSubmit" className="text-[10px] font-bold text-slate-300 cursor-pointer flex-1 leading-relaxed uppercase tracking-wider">
+                          <span className="text-white font-black block mb-0.5">Mandatory Verification *</span>
+                          I confirm the entered sales figures are accurate and verified against physical collections.
+                        </label>
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        disabled={submitting || (isZeroBusiness && !form.zero_business_reason) || !confirmSubmit} 
+                        className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
+                      >
+                        {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
