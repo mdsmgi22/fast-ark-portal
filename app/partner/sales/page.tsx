@@ -79,7 +79,7 @@ export default function PartnerSalesReport() {
 
         setPartner(partnerData);
         
-        // AUTO-DETECT APPROVED EDITS
+        // AUTO-DETECT APPROVED EDITS & APPROVED BACKDATES
         const { data: approvedEdit } = await supabase
           .from("daily_sales_reports")
           .select("*")
@@ -129,31 +129,77 @@ export default function PartnerSalesReport() {
   };
 
   // =====================================================================
+  // DYNAMIC TIME ENGINE: Calculates exact age of selected ledger date
+  // =====================================================================
+  const calculateDiffDays = () => {
+    if (!form.report_date) return 0;
+    const rDate = new Date(form.report_date);
+    const tDate = new Date();
+    // Normalize to midnight to prevent partial day mismatches
+    rDate.setHours(0,0,0,0);
+    tDate.setHours(0,0,0,0);
+    return Math.round((tDate.getTime() - rDate.getTime()) / (1000 * 60 * 60 * 24));
+  };
+
+  const diffDaysDynamic = calculateDiffDays();
+  // If editing an approved backdate request, it is NOT locked
+  const isBackdateLocked = !isEditMode && diffDaysDynamic > 7 && diffDaysDynamic <= 30;
+  const isTooOld = !isEditMode && diffDaysDynamic > 30;
+
+  // =====================================================================
   // DUAL-PLATFORM MATHEMATICAL ENGINE 
   // =====================================================================
-  
-  // 1. BSNL Core Ledgers
   const bsnlCbpCash = form.cbp_landline_amt + form.cbp_gsm_amt;
   const bsnlCtopCash = form.ctop_recharge_amt;
   const bsnlSimCash = form.sim_replacement_amt + form.sim_fancy_amt + form.sim_postpaid_amt + form.frc_amt + form.mnp_amt;
   const bsnlOtherCash = form.other_amt;
   
-  // 2. Total Physical Stock Disbursed
   const totalSimQty = form.sim_new_qty + form.sim_upgrade_qty + form.sim_postpaid_qty + form.sim_replacement_qty + form.sim_fancy_qty + form.frc_qty + form.mnp_qty;
-
-  // 3. Paybull Master Ledger (Isolated)
   const paybullTotalCash = form.pb_cbp_amt + form.pb_ctop_amt + form.pb_frc_amt + form.pb_mnp_amt + form.pb_other_amt;
-
-  // 4. Grand Final Bank Remittance (No Double Counting)
   const grandTotalCashCollection = bsnlCbpCash + bsnlCtopCash + bsnlSimCash + bsnlOtherCash + paybullTotalCash;
 
-  // 5. Zero Entry Blocker Logic
   const isZeroBusiness = grandTotalCashCollection === 0 && totalSimQty === 0 && form.cheque_amt === 0;
+
+  // =====================================================================
+  // THE SKELETON ROW GENERATOR (BACKDATE REQUEST ENGINE)
+  // =====================================================================
+  const handleBackdateRequest = async () => {
+    if (!partner) return alert("System Error: Partner profile not loaded.");
+    setSubmitting(true);
+    
+    try {
+      const payload = {
+        partner_id: partner.id,
+        center_id: partner.center_id,
+        ...form, // ARCHITECTURAL FIX: Ensures all numeric columns safely receive '0'
+        status: 'Pending Deposit', // Standard placeholder to pass DB constraints
+        edit_request_status: 'Pending',
+        edit_request_reason: `BACKDATE REQUEST: Permission required to log missing sales for ${formatToDDMMYYYY(form.report_date)}`
+      };
+
+      const { error } = await supabase.from("daily_sales_reports").insert([payload]);
+      
+      if (error) {
+        if (error.code === '23505') {
+          throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
+        }
+        throw error;
+      }
+      
+      alert("✅ Backdate approval request submitted. The Back-Office will review it shortly. Once approved, you will be prompted to enter the actual sales data.");
+      router.push("/partner/dashboard");
+    } catch (err: any) {
+      alert("Request Error: " + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!partner) return alert("System Error: Partner profile not loaded.");
+    if (isBackdateLocked || isTooOld) return alert("System Guardrail Error: Cannot submit locked dates.");
     
     // Strict Verification: Prevents blank zero-submissions
     if (isZeroBusiness && !form.zero_business_reason) {
@@ -162,11 +208,8 @@ export default function PartnerSalesReport() {
 
     setSubmitting(true);
     try {
-      const reportDate = new Date(form.report_date);
-      const today = new Date();
-      const diffDays = Math.ceil(Math.abs(today.getTime() - reportDate.getTime()) / (1000 * 60 * 60 * 24)); 
-      
-      if (!isEditMode && diffDays > 7) throw new Error("You cannot submit a new report older than 7 days.");
+      // Final backend guardrail to prevent script manipulation
+      if (!isEditMode && diffDaysDynamic > 7) throw new Error("You cannot bypass the backdate lock.");
 
       const finalStatus = isZeroBusiness ? 'No Deposit Required' : 'Pending Deposit';
       
@@ -188,7 +231,10 @@ export default function PartnerSalesReport() {
         alert("✅ Sales Report Corrected Successfully! The ledger has been updated.");
       } else {
         const { error } = await supabase.from("daily_sales_reports").insert([payload]);
-        if (error) throw error;
+        if (error) {
+          if (error.code === '23505') throw new Error("A sales record for this specific date has already been logged. Please check your dashboard history.");
+          throw error;
+        }
         alert(isZeroBusiness 
           ? "✅ Zero Business Day Logged. No deposit required." 
           : "✅ Sales Report Saved! Please proceed to 'Deposit of Sales' to clear your ledger."
@@ -223,7 +269,6 @@ export default function PartnerSalesReport() {
     </div>
   );
 
-  // Mobile Optimized Input Class (Larger padding for touch targets)
   const numInputClass = "w-full border border-slate-300 p-3 rounded-md bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 font-bold text-slate-800 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   return (
@@ -247,6 +292,13 @@ export default function PartnerSalesReport() {
           </div>
         )}
 
+        {isBackdateLocked && (
+          <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
+            <h3 className="font-black text-amber-900 uppercase tracking-widest text-xs flex items-center gap-2"><span>🔒</span> Ledger Locked (Backdate Mode)</h3>
+            <p className="text-amber-800 text-sm font-bold mt-1">The date you selected is older than 7 days. You must request approval from the Corporate Admin before you can type in your sales data.</p>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
           
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center gap-4">
@@ -260,7 +312,7 @@ export default function PartnerSalesReport() {
                 onChange={(e) => setForm({...form, report_date: e.target.value})} 
                 className="w-full border border-slate-300 p-3 rounded-lg font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" 
               />
-              <p className="text-xs text-red-600 font-bold mt-2">Reports older than 3 days may incur a ₹500/day penalty.</p>
+              <p className="text-xs text-red-600 font-bold mt-2">Reports older than 7 days require manual unlock requests.</p>
             </div>
             <div className="flex-1 bg-slate-50 border border-slate-200 p-4 rounded-lg flex items-center justify-between">
               <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Format: DD/MM/YYYY</span>
@@ -268,7 +320,8 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
+          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
             
             <div className="lg:col-span-8 space-y-6">
               
@@ -388,7 +441,7 @@ export default function PartnerSalesReport() {
                   </div>
 
                   {/* ZERO BUSINESS MENU TRIGGER */}
-                  {isZeroBusiness && (
+                  {isZeroBusiness && !isBackdateLocked && (
                     <div className="mt-4 bg-amber-50 p-4 rounded-lg border-2 border-amber-400 animate-in fade-in zoom-in-95">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-amber-900 mb-2">⚠️ '0' Entry Detected - Select Reason *</label>
                       <select 
@@ -409,13 +462,29 @@ export default function PartnerSalesReport() {
                 </div>
 
                 <div className="p-4 bg-slate-950">
-                  <button 
-                    type="submit" 
-                    disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
-                    className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
-                  >
-                    {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
-                  </button>
+                  {isTooOld ? (
+                    <div className="bg-red-900/50 border border-red-500 p-4 rounded-lg text-center">
+                      <p className="text-red-400 font-black uppercase tracking-widest text-sm">System Blocked</p>
+                      <p className="text-red-200 text-xs font-bold mt-1">You cannot submit or request entries older than 30 days.</p>
+                    </div>
+                  ) : isBackdateLocked ? (
+                    <button 
+                      type="button" 
+                      onClick={handleBackdateRequest}
+                      disabled={submitting} 
+                      className="w-full py-4 bg-amber-500 hover:bg-amber-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:opacity-50 uppercase tracking-wider flex justify-center items-center gap-2"
+                    >
+                      {submitting ? "Requesting..." : "🔒 Request Backdate Approval"}
+                    </button>
+                  ) : (
+                    <button 
+                      type="submit" 
+                      disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
+                      className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
+                    >
+                      {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
