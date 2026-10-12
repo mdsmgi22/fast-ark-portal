@@ -23,6 +23,9 @@ export default function PartnerSalesReport() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Mandatory Submission Verification State
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
+
   const [form, setForm] = useState({
     report_date: new Date().toISOString().split("T")[0],
     
@@ -210,6 +213,7 @@ export default function PartnerSalesReport() {
 
     if (!partner) return alert("System Error: Partner profile not loaded.");
     if (isBackdateLocked || isTooOld) return alert("System Guardrail Error: Cannot submit locked dates.");
+    if (!confirmSubmit) return alert("Validation Error: Please check the mandatory verification box to confirm your data is accurate.");
     
     // Strict Verification: Prevents blank zero-submissions
     if (isZeroBusiness && !form.zero_business_reason) {
@@ -265,6 +269,7 @@ export default function PartnerSalesReport() {
         );
       }
       
+      setConfirmSubmit(false); // Reset confirmation state
       router.push("/partner/dashboard");
     } catch (err: any) {
       alert("Error saving report: " + err.message);
@@ -502,13 +507,30 @@ export default function PartnerSalesReport() {
                       {submitting ? "Requesting..." : "🔒 Request Backdate Approval"}
                     </button>
                   ) : (
-                    <button 
-                      type="submit" 
-                      disabled={submitting || (isZeroBusiness && !form.zero_business_reason)} 
-                      className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
-                    >
-                      {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
-                    </button>
+                    <>
+                      {/* MANDATORY CONFIRMATION CHECKBOX */}
+                      <div className="bg-slate-800 p-4 border border-slate-700 rounded-lg flex items-start gap-3 mb-4 animate-in fade-in">
+                        <input 
+                          type="checkbox" 
+                          id="confirmSubmit"
+                          checked={confirmSubmit} 
+                          onChange={(e) => setConfirmSubmit(e.target.checked)}
+                          className="w-5 h-5 accent-green-500 cursor-pointer mt-0.5 shrink-0" 
+                        />
+                        <label htmlFor="confirmSubmit" className="text-[10px] font-bold text-slate-300 cursor-pointer flex-1 leading-relaxed uppercase tracking-wider">
+                          <span className="text-white font-black block mb-0.5">Mandatory Verification *</span>
+                          I confirm the entered sales figures are accurate and verified against physical collections.
+                        </label>
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        disabled={submitting || (isZeroBusiness && !form.zero_business_reason) || !confirmSubmit} 
+                        className="w-full py-4 bg-green-500 hover:bg-green-600 text-slate-900 font-black text-lg rounded-xl transition shadow-md disabled:bg-slate-600 disabled:text-slate-400 uppercase tracking-wider"
+                      >
+                        {submitting ? "Saving Data..." : isEditMode ? "Update Sales Report" : isZeroBusiness ? "Submit Zero Business Day" : "Submit Sales Report"}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
