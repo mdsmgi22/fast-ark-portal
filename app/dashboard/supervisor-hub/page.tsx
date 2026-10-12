@@ -37,8 +37,8 @@ export default function SupervisorHub() {
   const [loading, setLoading] = useState(true);
   const [staffProfile, setStaffProfile] = useState<any>(null);
   
-  // UI State
-  const [activeTab, setActiveTab] = useState<'activity' | 'ledger' | 'compliance'>('activity');
+  // UI State - Upgraded to 4 dedicated professional tabs
+  const [activeTab, setActiveTab] = useState<'activity' | 'sales' | 'deposits' | 'compliance'>('activity');
   const [secureImageUrl, setSecureImageUrl] = useState<string | null>(null);
   const [viewingSlipId, setViewingSlipId] = useState<string | null>(null);
 
@@ -93,15 +93,28 @@ export default function SupervisorHub() {
       const permissionMap: Record<number, any> = {};
       allocations.forEach(a => { permissionMap[a.location_id] = a; });
 
-      // 3. PULL ISOLATED DATASTREAMS (Expanded to grab state and HQ mappings)
+      // 3. PULL ISOLATED DATASTREAMS 
+      // ARCHITECTURAL FIX: Fetch 'state' alongside 'center_name' for HQ State Filtering
       const [locsRes, partnersRes, hqRes] = await Promise.all([
         supabase.from('locations').select('*').in('id', allowedLocIds),
         supabase.from('active_partners').select('*, locations(center_name, state, parent_master_id)').in('center_id', allowedLocIds).eq('status', 'Active'),
-        supabase.from('locations').select('id, center_name').eq('is_master_node', true)
+        supabase.from('locations').select('id, center_name, state').eq('is_master_node', true)
       ]);
 
-      setAllocatedLocations(locsRes.data || []);
-      setMasterHQs(hqRes.data || []);
+      const allocatedLocs = locsRes.data || [];
+      setAllocatedLocations(allocatedLocs);
+      
+      // ARCHITECTURAL FIX: HQ Dropdown Isolation Engine
+      // Only extract HQs that this specific supervisor manages directly, or HQs that are the parents of centers they manage.
+      const relevantHqIds = new Set();
+      allocatedLocs.forEach(loc => {
+        if (loc.parent_master_id) relevantHqIds.add(loc.parent_master_id);
+        if (loc.is_master_node) relevantHqIds.add(loc.id);
+      });
+
+      const rawHqs = hqRes.data || [];
+      const isolatedHQs = rawHqs.filter(hq => relevantHqIds.has(hq.id));
+      setMasterHQs(isolatedHQs);
       
       const rawPartners = partnersRes.data || [];
       
@@ -301,7 +314,7 @@ export default function SupervisorHub() {
   const downloadCSV = (type: 'activity' | 'sales' | 'deposits' | 'compliance') => {
     let headers: string[] = [];
     let csvData: any[] = [];
-    let fileName = `FastArk_${type.toUpperCase()}_${timeFilter}_${getISTDate()}`;
+    let fileName = `FastArk_Supervisor_${type.toUpperCase()}_${timeFilter}_${getISTDate()}`;
 
     if (type === 'activity') {
       headers = ["Partner Name", "Role", "Center", "State", "Activity Status"];
@@ -310,12 +323,29 @@ export default function SupervisorHub() {
         p.hasLoggedActivity ? "Logged" : "Missing"
       ]);
     } else if (type === 'sales') {
-      headers = ["Date", "Partner Name", "Center", "Total Revenue (INR)", "Status"];
+      headers = [
+        "Report Date", "State", "Master HQ", "Center", "Partner Name", 
+        "BSNL CBP Revenue", "BSNL CTOP Revenue", "BSNL SIM Revenue", "Paybull Revenue", 
+        "Total Gross Revenue", "Audit Status"
+      ];
       csvData = filteredSales.map(s => {
-        const total = Number(s.cbp_landline_amt||0) + Number(s.cbp_gsm_amt||0) + Number(s.ctop_recharge_amt||0) + Number(s.sim_replacement_amt||0) + Number(s.sim_fancy_amt||0) + Number(s.sim_postpaid_amt||0) + Number(s.other_amt||0);
+        const cbp = Number(s.cbp_landline_amt||0) + Number(s.cbp_gsm_amt||0);
+        const ctop = Number(s.ctop_recharge_amt||0);
+        const sim = Number(s.sim_replacement_amt||0) + Number(s.sim_fancy_amt||0) + Number(s.sim_postpaid_amt||0) + Number(s.other_amt||0) + Number(s.frc_amt||0) + Number(s.mnp_amt||0);
+        const pb = Number(s.pb_cbp_amt||0) + Number(s.pb_ctop_amt||0) + Number(s.pb_frc_amt||0) + Number(s.pb_mnp_amt||0) + Number(s.pb_other_amt||0);
+        const total = cbp + ctop + sim + pb;
+        
+        // Find HQ Name
+        const hqName = masterHQs.find(h => h.id === s.active_partners?.locations?.parent_master_id)?.center_name || "N/A";
+
         return [
-          s.report_date, sanitizeCSV(s.active_partners?.partner_name), sanitizeCSV(s.active_partners?.locations?.center_name),
-          total, s.status
+          s.report_date,
+          sanitizeCSV(s.active_partners?.locations?.state),
+          sanitizeCSV(hqName),
+          sanitizeCSV(s.active_partners?.locations?.center_name),
+          sanitizeCSV(s.active_partners?.partner_name),
+          cbp, ctop, sim, pb, total,
+          s.is_edited_by_staff ? "Audited/Edited" : "Original"
         ];
       });
     } else if (type === 'deposits') {
@@ -395,7 +425,7 @@ export default function SupervisorHub() {
           </div>
         </div>
 
-        {/* CASCADING FILTER BAR */}
+        {/* CASCADING FILTER BAR (Controls All Tabs) */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div className="flex flex-wrap gap-2 w-full lg:w-auto">
             {['today', 'yesterday', 'week', 'month', 'all'].map(mode => (
@@ -430,8 +460,9 @@ export default function SupervisorHub() {
         {/* TAB NAVIGATION */}
         <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
           <button onClick={() => setActiveTab('activity')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'activity' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Daily Activity Audit</button>
-          <button onClick={() => setActiveTab('ledger')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'ledger' ? 'bg-white text-blue-600 border-t-2 border-l border-r border-blue-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Regional Ledger</button>
-          <button onClick={() => setActiveTab('compliance')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'compliance' ? 'bg-white text-red-600 border-t-2 border-l border-r border-red-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Escalations</button>
+          <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Sales Reports</button>
+          <button onClick={() => setActiveTab('deposits')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'deposits' ? 'bg-white text-blue-600 border-t-2 border-l border-r border-blue-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Deposit Ledger</button>
+          <button onClick={() => setActiveTab('compliance')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'compliance' ? 'bg-white text-red-600 border-t-2 border-l border-r border-red-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Escalations</button>
         </div>
 
         {/* ========================================================== */}
@@ -484,31 +515,59 @@ export default function SupervisorHub() {
         )}
 
         {/* ========================================================== */}
-        {/* MODULE 2: REGIONAL LEDGER & PROOFS (Strictly Read-Only)    */}
+        {/* MODULE 2: REGIONAL SALES REPORTS (Deep Dive)               */}
         {/* ========================================================== */}
-        {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 animate-in fade-in">
-            {/* Sales Ledger */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-fit">
-              <div className="p-4 bg-slate-900 border-b border-slate-800 text-white flex justify-between items-center">
-                <h3 className="font-black tracking-widest uppercase text-sm text-blue-400 flex items-center gap-2"><span>📊</span> Regional Sales Feed</h3>
-                <button onClick={() => downloadCSV('sales')} className="bg-blue-600 hover:bg-blue-500 transition px-3 py-1.5 rounded text-[9px] font-black uppercase tracking-widest shadow-sm">📥 CSV</button>
+        {activeTab === 'sales' && (() => {
+          const totalSalesGross = filteredSales.reduce((acc, s) => acc + Number(s.cbp_landline_amt||0) + Number(s.cbp_gsm_amt||0) + Number(s.ctop_recharge_amt||0) + Number(s.sim_replacement_amt||0) + Number(s.sim_fancy_amt||0) + Number(s.sim_postpaid_amt||0) + Number(s.other_amt||0) + Number(s.frc_amt||0) + Number(s.mnp_amt||0) + Number(s.pb_cbp_amt||0) + Number(s.pb_ctop_amt||0) + Number(s.pb_frc_amt||0) + Number(s.pb_mnp_amt||0) + Number(s.pb_other_amt||0), 0);
+          
+          return (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+              <div className="p-5 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center text-white gap-4">
+                <div>
+                  <h3 className="font-black tracking-widest uppercase text-sm text-indigo-400 flex items-center gap-2"><span>📈</span> Regional Sales Reports</h3>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Detailed breakdown for {timeFilter}</p>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <div className="text-right border-r border-slate-700 pr-4">
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Total Sales</p>
+                    <p className="font-black text-lg text-indigo-400">₹{totalSalesGross.toLocaleString('en-IN')}</p>
+                  </div>
+                  <button onClick={() => downloadCSV('sales')} className="bg-indigo-600 hover:bg-indigo-500 transition px-4 py-2 rounded text-[10px] font-black uppercase tracking-widest shadow-sm">
+                    📥 Export Sales CSV
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto max-h-[600px]">
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
-                    <tr><th className="p-4">Date & Center</th><th className="p-4 text-right">Total Gross</th><th className="p-4 text-right">CBP/CTOP</th></tr>
+                    <tr>
+                      <th className="p-4 font-black">Date & Center</th>
+                      <th className="p-4 font-black text-right border-l">BSNL CBP/CTOP</th>
+                      <th className="p-4 font-black text-right">BSNL SIMs</th>
+                      <th className="p-4 font-black text-right text-indigo-600 bg-indigo-50/30 border-l">Paybull Cash</th>
+                      <th className="p-4 font-black text-right text-slate-800 bg-slate-100 border-l">Total Gross (₹)</th>
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredSales.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No sales logged in your perimeter.</td></tr> :
+                    {filteredSales.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">No sales logged in your perimeter.</td></tr> :
                     filteredSales.map(s => {
-                      const totalCbpCtop = Number(s.cbp_landline_amt||0) + Number(s.cbp_gsm_amt||0) + Number(s.ctop_recharge_amt||0);
-                      const totalGross = totalCbpCtop + Number(s.sim_replacement_amt||0) + Number(s.sim_fancy_amt||0) + Number(s.sim_postpaid_amt||0) + Number(s.other_amt||0);
+                      const cbpCtop = Number(s.cbp_landline_amt||0) + Number(s.cbp_gsm_amt||0) + Number(s.ctop_recharge_amt||0);
+                      const simCash = Number(s.sim_replacement_amt||0) + Number(s.sim_fancy_amt||0) + Number(s.sim_postpaid_amt||0) + Number(s.other_amt||0) + Number(s.frc_amt||0) + Number(s.mnp_amt||0);
+                      const pbCash = Number(s.pb_cbp_amt||0) + Number(s.pb_ctop_amt||0) + Number(s.pb_frc_amt||0) + Number(s.pb_mnp_amt||0) + Number(s.pb_other_amt||0);
+                      const totalGross = cbpCtop + simCash + pbCash;
+                      
                       return (
                         <tr key={s.id} className="hover:bg-slate-50">
-                          <td className="p-4"><p className="font-black text-slate-800">{s.report_date}</p><p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold mt-1 truncate max-w-[150px]">{s.active_partners?.partner_name}</p></td>
-                          <td className="p-4 text-right font-black text-blue-700">₹{totalGross.toLocaleString('en-IN')}</td>
-                          <td className="p-4 text-right font-bold text-slate-600">₹{totalCbpCtop.toLocaleString('en-IN')}</td>
+                          <td className="p-4">
+                            <p className="font-black text-slate-800">{s.report_date}</p>
+                            <p className="font-bold text-slate-600 mt-1 truncate max-w-[200px]">{s.active_partners?.partner_name}</p>
+                            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">📍 {s.active_partners?.locations?.center_name}</p>
+                            {s.is_edited_by_staff && <span className="inline-block mt-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 border border-amber-200 text-[8px] font-black uppercase tracking-widest rounded">Audited / Edited</span>}
+                          </td>
+                          <td className="p-4 text-right font-medium border-l">₹{cbpCtop.toLocaleString('en-IN')}</td>
+                          <td className="p-4 text-right font-medium">₹{simCash.toLocaleString('en-IN')}</td>
+                          <td className="p-4 text-right font-black text-indigo-600 bg-indigo-50/10 border-l">₹{pbCash.toLocaleString('en-IN')}</td>
+                          <td className="p-4 text-right font-black text-slate-800 bg-slate-50 border-l">₹{totalGross.toLocaleString('en-IN')}</td>
                         </tr>
                       );
                     })}
@@ -516,56 +575,75 @@ export default function SupervisorHub() {
                 </table>
               </div>
             </div>
+          );
+        })()}
 
-            {/* Deposits Ledger */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-fit">
-              <div className="p-4 bg-slate-900 border-b border-slate-800 text-white flex justify-between items-center">
-                <h3 className="font-black tracking-widest uppercase text-sm text-emerald-400 flex items-center gap-2"><span>🏦</span> Regional Deposit Feed</h3>
-                <button onClick={() => downloadCSV('deposits')} className="bg-emerald-600 hover:bg-emerald-500 transition px-3 py-1.5 rounded text-[9px] font-black uppercase tracking-widest shadow-sm">📥 CSV</button>
+        {/* ========================================================== */}
+        {/* MODULE 3: REGIONAL DEPOSITS LEDGER                         */}
+        {/* ========================================================== */}
+        {activeTab === 'deposits' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+            <div className="p-5 bg-slate-900 border-b border-slate-800 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="font-black tracking-widest uppercase text-sm text-blue-400 flex items-center gap-2"><span>🏦</span> Regional Deposit Feed</h3>
+                <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Bank Remittances & Proofs</p>
               </div>
-              <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
-                    <tr><th className="p-4">Date & Center</th><th className="p-4 text-right">Amount & Ref</th><th className="p-4 text-right">Bank Proof</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredDeposits.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold">No deposits logged in your perimeter.</td></tr> :
-                    filteredDeposits.map(d => (
-                      <tr key={d.id} className="hover:bg-slate-50">
-                        <td className="p-4">
-                          <p className="font-black text-slate-800">{new Date(d.created_at).toLocaleDateString('en-IN')}</p>
-                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold mt-1 truncate max-w-[150px]">{d.active_partners?.partner_name}</p>
-                        </td>
-                        <td className="p-4 text-right">
-                          <p className={`font-black text-lg ${d.status === 'Discrepancy' ? 'text-slate-400 line-through' : 'text-emerald-700'}`}>₹{Number(d.deposit_amount).toLocaleString('en-IN')}</p>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">{d.deposit_method} / {d.reference_no}</p>
-                        </td>
-                        <td className="p-4 text-right">
-                          {d.is_exempted ? (
-                            <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest">⚠️ Exempted</span>
-                          ) : d.deposit_slip_url ? (
-                            <button 
-                              onClick={() => handleViewSecureSlip(d)} 
-                              disabled={viewingSlipId === d.id}
-                              className="bg-slate-800 hover:bg-slate-700 text-white font-black px-3 py-1.5 rounded shadow-sm text-[9px] uppercase tracking-widest transition disabled:opacity-50"
-                            >
-                              {viewingSlipId === d.id ? "Decrypting..." : "📄 View Slip"}
-                            </button>
-                          ) : (
-                            <span className="text-[9px] text-slate-400 uppercase font-bold">No Proof</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <button onClick={() => downloadCSV('deposits')} className="bg-blue-600 hover:bg-blue-500 transition px-4 py-2 rounded text-[10px] font-black uppercase tracking-widest shadow-sm">
+                📥 Export Deposits CSV
+              </button>
+            </div>
+            <div className="overflow-x-auto max-h-[600px]">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
+                  <tr><th className="p-4">Date & Center</th><th className="p-4 text-right">Amount & Ref</th><th className="p-4 text-center">Status</th><th className="p-4 text-right">Bank Proof</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredDeposits.length === 0 ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold">No deposits logged in your perimeter.</td></tr> :
+                  filteredDeposits.map(d => (
+                    <tr key={d.id} className="hover:bg-slate-50">
+                      <td className="p-4">
+                        <p className="font-black text-slate-800">{new Date(d.created_at).toLocaleDateString('en-IN')}</p>
+                        <p className="font-bold text-slate-600 mt-1 truncate max-w-[200px]">{d.active_partners?.partner_name}</p>
+                        <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">📍 {d.active_partners?.locations?.center_name}</p>
+                      </td>
+                      <td className="p-4 text-right">
+                        <p className={`font-black text-lg ${d.status === 'Discrepancy' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>₹{Number(d.deposit_amount).toLocaleString('en-IN')}</p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">{d.deposit_method} / {d.reference_no}</p>
+                      </td>
+                      <td className="p-4 text-center">
+                         <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
+                           d.status === "Verified" ? "bg-green-100 text-green-700 border-green-200" : 
+                           d.status === "Discrepancy" ? "bg-red-100 text-red-700 border-red-200" : 
+                           "bg-amber-100 text-amber-700 border-amber-200"
+                         }`}>
+                           {d.status}
+                         </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        {d.is_exempted ? (
+                          <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest">⚠️ Exempted</span>
+                        ) : d.deposit_slip_url ? (
+                          <button 
+                            onClick={() => handleViewSecureSlip(d)} 
+                            disabled={viewingSlipId === d.id}
+                            className="bg-slate-800 hover:bg-slate-700 text-white font-black px-3 py-1.5 rounded shadow-sm text-[9px] uppercase tracking-widest transition disabled:opacity-50"
+                          >
+                            {viewingSlipId === d.id ? "Decrypting..." : "📄 View Slip"}
+                          </button>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 uppercase font-bold">No Proof</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
         {/* ========================================================== */}
-        {/* MODULE 3: COMPLIANCE & ESCALATIONS                         */}
+        {/* MODULE 4: COMPLIANCE & ESCALATIONS                         */}
         {/* ========================================================== */}
         {activeTab === 'compliance' && (
           <div className="bg-white rounded-xl shadow-sm border border-red-200 overflow-hidden animate-in fade-in">
