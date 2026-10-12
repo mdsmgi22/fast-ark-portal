@@ -38,7 +38,10 @@ const parseExtractedDate = (text: string): string | null => {
 export default function PartnerDepositPage() {
   const router = useRouter();
   const [partner, setPartner] = useState<any>(null);
-  const [companyBanks, setCompanyBanks] = useState<any[]>([]); 
+  
+  // ARCHITECTURAL FIX: Direct center UPI state mapping
+  const [centerUpi, setCenterUpi] = useState<string>("fastark@upi"); 
+  
   const [loading, setLoading] = useState(true);
   
   // UI States
@@ -105,13 +108,19 @@ export default function PartnerDepositPage() {
         .order("created_at", { ascending: false });
       setDeposits(depData || []);
 
-      const { data: banks } = await supabase
-        .from("company_bank_accounts")
-        .select("upi_id")
-        .eq("is_active", true)
-        .not("upi_id", "is", null)
-        .limit(1);
-      setCompanyBanks(banks || []);
+      // ARCHITECTURAL FIX: Fetch the specific UPI ID assigned to this partner's location in the Banking Hub
+      if (partnerData.center_id) {
+        const { data: upiData } = await supabase
+          .from("upi_ids")
+          .select("upi_id")
+          .eq("assigned_location_id", partnerData.center_id)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (upiData && upiData.upi_id) {
+          setCenterUpi(upiData.upi_id);
+        }
+      }
 
     } catch (err: any) {
       console.error(err.message);
@@ -367,9 +376,11 @@ export default function PartnerDepositPage() {
     </div>
   );
 
+  // =========================================================================
+  // ARCHITECTURAL FIX: QR ENGINE RECONSTRUCTION (NPCI Compliant)
+  // =========================================================================
   const userEnteredValue = parseFloat(form.deposit_amount) || 0;
-  const companyUPI = companyBanks.length > 0 ? companyBanks[0].upi_id : "fastark@upi";
-
+  
   // 1. Force strict 2-decimal formatting mandated by NPCI specs
   const safeAmount = userEnteredValue.toFixed(2);
   
@@ -380,8 +391,8 @@ export default function PartnerDepositPage() {
   const rawNote = `Rolling_${partner?.center_id}`;
   const safeNote = encodeURIComponent(rawNote.substring(0, 48));
 
-  // 4. Safely construct the final deep link
-  const upiString = `upi://pay?pa=${companyUPI}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`;
+  // 4. Safely construct the final deep link using the dynamically mapped centerUpi
+  const upiString = `upi://pay?pa=${centerUpi}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`;
 
   const numInputClass = "w-full border-2 border-slate-200 p-3 rounded-lg outline-none focus:border-blue-500 font-black text-slate-800 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
@@ -652,7 +663,8 @@ export default function PartnerDepositPage() {
                     <QRCodeSVG value={upiString} size={150} level="M" />
                   </div>
                   <p className="text-white font-bold">Fast Ark Pvt Ltd</p>
-                  <p className="text-slate-400 text-xs">
+                  <p className="text-slate-400 text-[10px] uppercase tracking-widest mt-1">Routing to: {centerUpi}</p>
+                  <p className="text-slate-200 font-black mt-2">
                     Amount: ₹{userEnteredValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </p>
                 </div>
