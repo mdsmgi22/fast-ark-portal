@@ -87,31 +87,45 @@ export default function ApplicationForm() {
     }
   };
 
-  const checkDuplicates = async () => {
+  // =========================================================================
+  // SMART OVERWRITE ENGINE: Evaluates status to bypass collision blocks
+  // =========================================================================
+  const checkDuplicatesAndRejections = async () => {
     if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
-      return "Alternative mobile number cannot be the exact same as your primary mobile number.";
+      return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
     const queries = [
-      supabase.from('pending_applications').select('id').ilike('email', formData.email).limit(1),
-      supabase.from('pending_applications').select('id').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
+      supabase.from('pending_applications').select('id, status').ilike('email', formData.email).limit(1),
+      supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile}`).limit(1)
     ];
 
     if (formData.alt_mobile) {
       queries.push(
-        supabase.from('pending_applications').select('id').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
+        supabase.from('pending_applications').select('id, status').or(`mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`).limit(1)
       );
     }
 
     const results = await Promise.all(queries);
 
-    if (results[0].data && results[0].data.length > 0) return `Duplicate Entry: The Email '${formData.email}' is already registered.`;
-    if (results[1].data && results[1].data.length > 0) return `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered.`;
-    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0) {
-      return `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered.`;
+    // Block if collisions exist and are actively pending or approved
+    if (results[0].data && results[0].data.length > 0 && results[0].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Email '${formData.email}' is already registered and under process.`, rejectedId: null };
+    }
+    if (results[1].data && results[1].data.length > 0 && results[1].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Primary Mobile '${formData.mobile}' is already registered and under process.`, rejectedId: null };
+    }
+    if (formData.alt_mobile && results[2] && results[2].data && results[2].data.length > 0 && results[2].data[0].status !== 'Rejected') {
+      return { error: `Duplicate Entry: The Alternative Mobile '${formData.alt_mobile}' is already registered and under process.`, rejectedId: null };
     }
 
-    return null; 
+    // Extract the ID of the strictly rejected record for overwrite mapping
+    let rejectedId = null;
+    if (results[0].data && results[0].data.length > 0) rejectedId = results[0].data[0].id;
+    else if (results[1].data && results[1].data.length > 0) rejectedId = results[1].data[0].id;
+    else if (formData.alt_mobile && results[2].data && results[2].data.length > 0) rejectedId = results[2].data[0].id;
+
+    return { error: null, rejectedId };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -154,7 +168,7 @@ export default function ApplicationForm() {
     setMessage("Validating application data...");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    const duplicateErrorMsg = await checkDuplicates();
+    const { error: duplicateErrorMsg, rejectedId } = await checkDuplicatesAndRejections();
     if (duplicateErrorMsg) {
       return showError(duplicateErrorMsg); 
     }
@@ -178,9 +192,6 @@ export default function ApplicationForm() {
       
       const timestamp = new Date().toLocaleString();
 
-      // =========================================================================
-      // 🚀 GENERATE OFFICIAL A4 APPLICATION FORM
-      // =========================================================================
       const a4Width = 595.28;
       const a4Height = 841.89;
       const formPage = pdfDoc.addPage([a4Width, a4Height]);
@@ -188,7 +199,6 @@ export default function ApplicationForm() {
       formPage.drawText("FAST ARK - PARTNER APPLICATION FORM", { x: 50, y: 790, size: 16, font: boldFont });
       formPage.drawLine({ start: { x: 50, y: 780 }, end: { x: 545, y: 780 }, thickness: 1 });
 
-      // Embed & Glue Photo to Top Right (FIXED MIME PARSER)
       if (files.photo) {
         try {
           const photoBuffer = await files.photo.arrayBuffer();
@@ -208,7 +218,6 @@ export default function ApplicationForm() {
         }
       }
 
-      // Type out Application Details
       let currentY = 750;
       const drawRow = (label: string, value: string) => {
         formPage.drawText(label, { x: 50, y: currentY, size: 10, font: boldFont });
@@ -221,7 +230,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
+      drawRow("Gov ID Number:", "[Redacted]");  
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -243,15 +252,10 @@ export default function ApplicationForm() {
       drawRow("Requested Role:", formData.requested_role);
       drawRow("Requested Center:", formData.center_name.toUpperCase());
 
-      // Form Page Footer
       const formStampText = `APP: ${formData.name.toUpperCase()} | DOC: SYSTEM GENERATED FORM | FILE: A4_APPLICATION.PDF | IP: ${userIp} | TIME: ${timestamp}`;
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
       formPage.drawText(formStampText, { x: 10, y: 6, size: 7, font: boldFont, color: rgb(1, 1, 1) });
 
-
-      // =========================================================================
-      // 🚀 APPEND KYC DOCUMENTS BEHIND THE A4 FORM
-      // =========================================================================
       const fileArray = [
         { file: files.poi, label: `POI: ${formData.poi_type}` },
         { file: files.poa, label: `POA: ${formData.poa_type}` },
@@ -339,19 +343,28 @@ export default function ApplicationForm() {
       setMessage("Saving application record...");
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
-      const { error: dbError } = await supabase
-        .from('pending_applications')
-        .insert([{
-           name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
-           mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
-           qualification: formData.qualification, father_name: combinedGuardian,
-           address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
-           taluk: formData.taluk, dist: formData.dist, state: formData.state,
-           requested_role: formData.requested_role, center_name: formData.center_name,
-           terms_accepted: formData.terms_accepted,
-           ip_address: userIp,
-           photo_path: savedPhotoPath 
-        }]);
+      const dbPayload = {
+        name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
+        mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
+        qualification: formData.qualification, father_name: combinedGuardian,
+        address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
+        taluk: formData.taluk, dist: formData.dist, state: formData.state,
+        requested_role: formData.requested_role, center_name: formData.center_name,
+        terms_accepted: formData.terms_accepted,
+        ip_address: userIp,
+        photo_path: savedPhotoPath,
+        status: 'Pending',
+        reject_reason: null
+      };
+
+      let dbError;
+      if (rejectedId) {
+        const { error } = await supabase.from('pending_applications').update(dbPayload).eq('id', rejectedId);
+        dbError = error;
+      } else {
+        const { error } = await supabase.from('pending_applications').insert([dbPayload]);
+        dbError = error;
+      }
       
       if (dbError) {
         if (dbError.code === '23505') {
