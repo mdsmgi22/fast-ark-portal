@@ -320,11 +320,10 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
-          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
             {/* ARCHITECTURAL FIX: Lockdown classes applied ONLY to the left column containing inputs */}
-            <div className="lg:col-span-8 space-y-6">
+            <div className={`lg:col-span-8 space-y-6 ${(isBackdateLocked || isTooOld) ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
               
               {/* --- 1. BSNL CBP HEAD --- */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
