@@ -168,6 +168,18 @@ export default function PartnerSalesReport() {
     setSubmitting(true);
     
     try {
+      // FRONTEND PRE-FLIGHT CHECK: Block duplicates before database insertion
+      const { data: duplicateCheck } = await supabase
+        .from("daily_sales_reports")
+        .select("id")
+        .eq("partner_id", partner.id)
+        .eq("report_date", form.report_date)
+        .maybeSingle();
+
+      if (duplicateCheck) {
+        throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
+      }
+
       const payload = {
         partner_id: partner.id,
         center_id: partner.center_id,
@@ -180,9 +192,7 @@ export default function PartnerSalesReport() {
       const { error } = await supabase.from("daily_sales_reports").insert([payload]);
       
       if (error) {
-        if (error.code === '23505') {
-          throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
-        }
+        if (error.code === '23505') throw new Error("A ledger entry or pending request for this exact date already exists. Please check your history or wait for admin approval.");
         throw error;
       }
       
@@ -210,6 +220,20 @@ export default function PartnerSalesReport() {
     try {
       // Final backend guardrail to prevent script manipulation
       if (!isEditMode && diffDaysDynamic > 7) throw new Error("You cannot bypass the backdate lock.");
+
+      // FRONTEND PRE-FLIGHT CHECK for standard insertions
+      if (!isEditMode) {
+        const { data: duplicateCheck } = await supabase
+          .from("daily_sales_reports")
+          .select("id")
+          .eq("partner_id", partner.id)
+          .eq("report_date", form.report_date)
+          .maybeSingle();
+
+        if (duplicateCheck) {
+          throw new Error("A sales record for this specific date has already been logged. Please check your dashboard history.");
+        }
+      }
 
       const finalStatus = isZeroBusiness ? 'No Deposit Required' : 'Pending Deposit';
       
@@ -320,10 +344,11 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* DYNAMIC FORM RENDERER: Disable inputs if backdate is locked */}
+          <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 ${isBackdateLocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
             
             {/* ARCHITECTURAL FIX: Lockdown classes applied ONLY to the left column containing inputs */}
-            <div className={`lg:col-span-8 space-y-6 ${(isBackdateLocked || isTooOld) ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+            <div className="lg:col-span-8 space-y-6">
               
               {/* --- 1. BSNL CBP HEAD --- */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
