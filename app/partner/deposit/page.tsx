@@ -41,7 +41,6 @@ export default function PartnerDepositPage() {
   
   // ARCHITECTURAL FIX: Direct center UPI state mapping
   const [centerUpi, setCenterUpi] = useState<string>("fastark@upi"); 
-  
   const [loading, setLoading] = useState(true);
   
   // UI States
@@ -328,7 +327,12 @@ export default function PartnerDepositPage() {
       setRightPanel("ledger");
       initializePortal();
     } catch (err: any) {
-      alert("Error submitting deposit: " + err.message);
+      // Intercept the unique constraint violation (Code 23505) for Fraud Prevention
+      if (err.code === '23505' || err.message.includes('unique_reference_no') || err.message.includes('duplicate key value')) {
+        alert("🚨 FRAUD PREVENTION BLOCK: This UTR / Reference Number has already been submitted and claimed. Duplicate submissions are strictly prohibited.");
+      } else {
+        alert("Error submitting deposit: " + err.message);
+      }
     } finally {
       setIsSubmitting(false);
     }
