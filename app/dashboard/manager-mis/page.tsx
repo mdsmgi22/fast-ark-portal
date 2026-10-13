@@ -14,6 +14,9 @@ import ReportsModule from "../../components/mis/ReportsModule";
 
 export default function ManagerMISDashboard() {
   const router = useRouter();
+  
+  // ARCHITECTURAL FIX: isMounted prevents Next.js SSR Hydration Crashes
+  const [isMounted, setIsMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   
   // Secure Role State
@@ -23,7 +26,7 @@ export default function ManagerMISDashboard() {
   const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'commissions' | 'report'>('balances');
 
   // Shared Entry States for Child Components
-  const [reportingMonth, setReportingMonth] = useState(new Date().toISOString().substring(0, 7)); 
+  const [reportingMonth, setReportingMonth] = useState(""); 
   const [entryMasterLocId, setEntryMasterLocId] = useState("");
   const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
 
@@ -40,6 +43,11 @@ export default function ManagerMISDashboard() {
   const [rawCommissions, setRawCommissions] = useState<any[]>([]);
 
   useEffect(() => { 
+    setIsMounted(true);
+    // Safely generate IST Date on the client side only
+    const istTime = new Date(new Date().getTime() + (330 * 60000));
+    setReportingMonth(istTime.toISOString().substring(0, 7));
+    
     fetchArchitectureAndReports(); 
   }, []);
 
@@ -83,7 +91,8 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  if (loading) return (
+  // Prevent UI rendering until safely hydrated on the client
+  if (!isMounted || loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
     </div>

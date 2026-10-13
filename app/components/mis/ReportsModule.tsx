@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 const sanitizeCSV = (val: unknown): string => {
   let str = String(val || "").replace(/"/g, '""');
@@ -9,9 +9,15 @@ const sanitizeCSV = (val: unknown): string => {
 
 export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases, rawSales, rawCollections, rawBalances, rawCommissions }: any) {
   const [repTimeFilter, setRepTimeFilter] = useState("this_month");
-  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); 
+  const [repMonthFilter, setRepMonthFilter] = useState(""); 
   const [repStateFilter, setRepStateFilter] = useState("ALL");
   const [repMasterFilter, setRepMasterFilter] = useState("ALL");
+
+  // Safely hydrate the date on the client to avoid SSR crashes
+  useEffect(() => {
+    const istTime = new Date(new Date().getTime() + (330 * 60000));
+    setRepMonthFilter(istTime.toISOString().substring(0, 7));
+  }, []);
 
   const getFilteredReports = () => {
     let fPurchases = [...rawPurchases]; 
@@ -20,7 +26,6 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
     let fBalances = [...rawBalances]; 
     let fComms = [...rawCommissions];
     
-    // ARCHITECTURAL FIX: Strict local string formatting prevents IST to UTC offset bugs
     const pad = (n: number) => n.toString().padStart(2, '0');
     let startStr = "2000-01-01";
     let endStr = "2100-01-01";
@@ -28,13 +33,15 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
     if (repTimeFilter === "this_month") {
       const d = new Date();
       startStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
-      const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0); // Last day of current month
+      const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0); 
       endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
-    } else if (repTimeFilter === "specific_month") {
+    } else if (repTimeFilter === "specific_month" && repMonthFilter) {
       startStr = `${repMonthFilter}-01`;
-      const [year, month] = repMonthFilter.split('-');
-      const endD = new Date(parseInt(year), parseInt(month), 0); // Last day of selected month
-      endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
+      const parts = repMonthFilter.split('-');
+      if (parts.length === 2) {
+        const endD = new Date(parseInt(parts[0]), parseInt(parts[1]), 0); 
+        endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
+      }
     }
 
     if (repTimeFilter !== "all") {
@@ -62,7 +69,6 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
       const oBals = hqBals.filter(b => b.entry_type === 'Opening Balance'); 
       const cBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
       
-      // ARCHITECTURAL FIX: Extract single cbp_qty from the mis_balances payload
       const oCBP = oBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0); 
       const cCBP = cBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0);
       
@@ -78,11 +84,8 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
 
       const hqS = fSales.filter(s => s.locations?.parent_master_id === hq.id);
       
-      // NOTE: Sales properly sums the isolated Landline and GSM sales together for unified variance comparison
       const sCBP = hqS.reduce((s, sl) => s + Number(sl.cbp_landline_qty||0) + Number(sl.cbp_gsm_qty||0), 0);
       const sCTOP = hqS.reduce((s, sl) => s + Number(sl.ctop_recharge_cash||sl.ctop_recharge_amt||0), 0);
-      
-      // NOTE: Safely included replacement, MNP, and FRC fields to guarantee physical stock perfectly aligns
       const sSIM = hqS.reduce((s, sl) => s + Number(sl.sim_new_qty||0) + Number(sl.sim_upgrade_qty||0) + Number(sl.sim_replace_qty||sl.sim_replacement_qty||0) + Number(sl.sim_fancy_qty||0) + Number(sl.sim_postpaid_qty||0) + Number(sl.mnp_qty||0) + Number(sl.frc_qty||0), 0);
 
       const hqC = fComms.filter(c => c.location_id === hq.id);
@@ -108,11 +111,9 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
       csvRows.push(`${sanitizeCSV(hq.name)},CTOP Cash,${hq.ctop.open},${hq.ctop.purch},${hq.ctop.comm},${hq.ctop.sales},${hq.ctop.close},${hq.ctop.variance}`);
       csvRows.push(`${sanitizeCSV(hq.name)},SIM Qty,${hq.sim.open},${hq.sim.purch},0,${hq.sim.sales},${hq.sim.close},${hq.sim.variance}`);
     });
+    const istTime = new Date(new Date().getTime() + (330 * 60000)).toISOString().split('T')[0];
     const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a"); 
-    link.href = URL.createObjectURL(blob); 
-    link.download = `FastArk_Reconciliation_${new Date().toISOString().split('T')[0]}.csv`; 
-    link.click();
+    const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `FastArk_Reconciliation_${istTime.replace(/\//g, '-')}.csv`; link.click();
   };
 
   return (
