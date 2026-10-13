@@ -99,18 +99,27 @@ export default function PartnerHelpdesk() {
   const isQuotaLocked = stats.count >= limit;
 
   // =========================================================================
-  // FILE & TEXT HANDLING
+  // SEQUENTIAL FILE ENGINE & TEXT HANDLING
   // =========================================================================
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selected = Array.from(e.target.files);
-      if (selected.length > 4) {
-        alert("Maximum 4 attachments allowed.");
-        setFiles(selected.slice(0, 4));
-      } else {
-        setFiles(selected);
+  const handleFileAppend = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const newFile = e.target.files[0];
+      
+      // 5MB Size Limit
+      if (newFile.size > 5 * 1024 * 1024) {
+        return alert("File size must be under 5MB.");
+      }
+      
+      if (files.length < 4) {
+        setFiles(prev => [...prev, newFile]);
       }
     }
+    // Reset the input value so the same file could be selected again if removed
+    e.target.value = '';
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -129,7 +138,7 @@ export default function PartnerHelpdesk() {
     try {
       let attachmentUrls: string[] = [];
 
-      // Upload Evidence to Supabase Storage if files exist
+      // Upload Evidence to Supabase Storage sequentially
       if (files.length > 0) {
         for (const file of files) {
           const fileExt = file.name.split('.').pop();
@@ -262,29 +271,47 @@ export default function PartnerHelpdesk() {
                 />
               </div>
 
-              {/* ATTACHMENT HANDLER */}
+              {/* SEQUENTIAL ATTACHMENT HANDLER */}
               <div className={isDuplicateLocked || isQuotaLocked ? 'opacity-50 pointer-events-none' : ''}>
-                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Evidence / Attachments</label>
-                <div className="border-2 border-dashed border-slate-300 p-4 rounded-lg bg-slate-50 relative hover:bg-slate-100 transition cursor-pointer">
-                  <input 
-                    type="file" 
-                    multiple 
-                    max={4}
-                    accept="image/*,application/pdf" 
-                    onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <div className="text-center pointer-events-none">
-                    <span className="text-2xl block mb-1">📸</span>
-                    <p className="text-sm font-bold text-slate-700">Tap to upload photos/files</p>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Max 4 files (Images or PDFs)</p>
-                  </div>
-                </div>
+                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Evidence / Attachments (Max 4)</label>
+                
+                {/* List of currently selected files */}
                 {files.length > 0 && (
-                  <p className="text-xs font-bold text-emerald-600 mt-2 bg-emerald-50 inline-block px-2 py-1 rounded">
-                    {files.length} file(s) selected
-                  </p>
+                  <div className="space-y-2 mb-3">
+                    {files.map((file, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-blue-50 border border-blue-200 p-3 rounded-lg text-xs font-bold text-blue-800 shadow-sm animate-in fade-in zoom-in-95">
+                        <span className="truncate pr-4">📎 {file.name}</span>
+                        <button 
+                          type="button" 
+                          onClick={() => removeFile(idx)} 
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50 w-6 h-6 flex items-center justify-center rounded-full font-black text-lg transition"
+                          title="Remove attachment"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
+
+                {/* The Sequential "Add Attachment" Button */}
+                {files.length < 4 && (
+                  <div className="relative overflow-hidden inline-block w-full">
+                    <button 
+                      type="button" 
+                      className="w-full bg-slate-50 hover:bg-slate-100 border-2 border-dashed border-slate-300 text-slate-600 font-black py-4 rounded-lg transition uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-sm hover:shadow"
+                    >
+                      <span className="text-lg">➕</span> Add Attachment {files.length > 0 ? `(${files.length}/4)` : ''}
+                    </button>
+                    <input 
+                      type="file" 
+                      accept="image/*,application/pdf" 
+                      onChange={handleFileAppend}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </div>
+                )}
+                <p className="text-[10px] font-bold text-slate-400 mt-2">Accepted formats: JPG, PNG, PDF (Max 5MB each)</p>
               </div>
 
               {/* LEGAL UNDERTAKING */}
