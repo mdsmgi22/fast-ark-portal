@@ -22,6 +22,9 @@ export default function PartnerDashboard() {
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState("");
   
+  // NEW: Smooth Routing State
+  const [isRouting, setIsRouting] = useState(false);
+  
   // Data States
   const [partner, setPartner] = useState<any>(null);
   const [partnerCtops, setPartnerCtops] = useState<any[]>([]); 
@@ -255,6 +258,13 @@ export default function PartnerDashboard() {
     executePartnerSalesCSVExport(rawSales.filter(s => normalizeToYYYYMMDD(s.report_date) >= startStr), timeFilter);
   };
 
+  // Safe Universal Routing Engine
+  const routeTo = (path: string) => {
+    setIsRouting(true);
+    router.push(path);
+    setTimeout(() => setIsRouting(false), 8000);
+  };
+
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const handleSignOut = async () => { setIsLoggingOut(true); await supabase.auth.signOut(); router.push("/partner/login"); };
 
@@ -267,7 +277,16 @@ export default function PartnerDashboard() {
   const requiredDocs = getRequiredDocuments(partner?.role);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
+    <div className="min-h-screen bg-slate-50 font-sans relative">
+      
+      {/* GLOBAL ROUTING OVERLAY */}
+      {isRouting && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
+          <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">Connecting to Helpdesk...</p>
+        </div>
+      )}
+
       <nav className="bg-blue-600 text-white px-4 md:px-8 py-4 flex justify-between items-center shadow-lg sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center font-black text-2xl text-blue-600 shadow-sm transform -rotate-12">F</div>
@@ -323,6 +342,31 @@ export default function PartnerDashboard() {
         )}
 
         <DashboardQuickActions hasSubmittedToday={hasSubmittedToday} />
+
+        {/* ===================================================================== */}
+        {/* NEW: DEDICATED SUPPORT DESK ENTRY BANNER */}
+        {/* ===================================================================== */}
+        <div 
+          onClick={() => routeTo("/partner/helpdesk")} 
+          className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 cursor-pointer hover:border-blue-500 hover:shadow-xl transition-all group animate-in fade-in"
+        >
+          <div className="flex items-start md:items-center gap-4 md:gap-6">
+            <div className="w-14 h-14 md:w-16 md:h-16 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-3xl shrink-0 group-hover:scale-110 transition-transform shadow-inner">
+              🎧
+            </div>
+            <div>
+              <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2 tracking-wide">
+                Support & Escalation Helpdesk
+              </h2>
+              <p className="text-slate-400 font-medium mt-1 text-sm md:text-base leading-relaxed">
+                Report BSNL infrastructure issues, portal downtime, or company queries. Track your live SLA resolutions.
+              </p>
+            </div>
+          </div>
+          <button className="w-full md:w-auto bg-blue-600 group-hover:bg-blue-500 text-white font-black px-6 py-3.5 rounded-lg shadow-md uppercase tracking-widest text-xs transition-colors shrink-0 flex items-center justify-center gap-2">
+            Open Helpdesk <span>&rarr;</span>
+          </button>
+        </div>
 
         <InfrastructureAccordions partner={partner} partnerCtops={partnerCtops} virtualAccounts={virtualAccounts} upiIds={upiIds} />
         
