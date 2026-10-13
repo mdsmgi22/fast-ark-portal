@@ -11,31 +11,27 @@ import SalesModule from "../../components/mis/SalesModule";
 import CollectionModule from "../../components/mis/CollectionModule";
 import CommissionsModule from "../../components/mis/CommissionsModule";
 import ReportsModule from "../../components/mis/ReportsModule";
+import VerificationModule from "../../components/mis/VerificationModule";
+import ExportModule from "../../components/mis/ExportModule";
 
 export default function ManagerMISDashboard() {
   const router = useRouter();
   
-  // ARCHITECTURAL FIX: isMounted prevents Next.js SSR Hydration Crashes
   const [isMounted, setIsMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   
-  // Secure Role State
   const [userRole, setUserRole] = useState("staff");
   
-  // TIER 1: MAIN NAVIGATION
-  const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'commissions' | 'report'>('balances');
+  const [activeTab, setActiveTab] = useState<'balances' | 'purchase' | 'sales' | 'collection' | 'commissions' | 'report' | 'verification' | 'export'>('balances');
 
-  // Shared Entry States for Child Components
   const [reportingMonth, setReportingMonth] = useState(""); 
   const [entryMasterLocId, setEntryMasterLocId] = useState("");
   const [selectedChildLocKey, setSelectedChildLocKey] = useState("");
 
-  // Architecture Data
   const [allLocations, setAllLocations] = useState<any[]>([]); 
   const [masterCtops, setMasterCtops] = useState<any[]>([]); 
   const [agentMappings, setAgentMappings] = useState<any[]>([]);
 
-  // Raw Database Ledgers
   const [rawBalances, setRawBalances] = useState<any[]>([]);
   const [rawPurchases, setRawPurchases] = useState<any[]>([]);
   const [rawSales, setRawSales] = useState<any[]>([]);
@@ -44,7 +40,6 @@ export default function ManagerMISDashboard() {
 
   useEffect(() => { 
     setIsMounted(true);
-    // Safely generate IST Date on the client side only
     const istTime = new Date(new Date().getTime() + (330 * 60000));
     setReportingMonth(istTime.toISOString().substring(0, 7));
     
@@ -91,14 +86,12 @@ export default function ManagerMISDashboard() {
     }
   };
 
-  // Prevent UI rendering until safely hydrated on the client
   if (!isMounted || loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
     </div>
   );
 
-  // Common Props Engine
   const uniqueStates = Array.from(new Set(allLocations.map(l => l.state).filter(Boolean))).sort();
   const hqLocations = allLocations.filter(l => l.is_master_node);
   const entryFilteredFranchises = allLocations.filter(l => !l.is_master_node && (entryMasterLocId === "" || l.parent_master_id === parseInt(entryMasterLocId)));
@@ -111,7 +104,7 @@ export default function ManagerMISDashboard() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-slate-50 min-h-screen font-sans">
+    <div className="p-4 md:p-8 max-w-[1400px] mx-auto bg-slate-50 min-h-screen font-sans">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-200 pb-6 gap-4">
         <div>
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline mb-2 inline-block text-sm">&larr; Back to Command Center</Link>
@@ -122,14 +115,17 @@ export default function ManagerMISDashboard() {
 
       {/* TIER 1: MAIN NAVIGATION */}
       <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-px">
-        <button onClick={() => setActiveTab('balances')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Balances</button>
+        <button onClick={() => setActiveTab('balances')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'balances' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>1. Balances</button>
         {userRole !== 'staff' && (
           <>
-            <button onClick={() => setActiveTab('purchase')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Procurement</button>
-            <button onClick={() => setActiveTab('sales')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Sales</button>
-            <button onClick={() => setActiveTab('collection')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Collection</button>
-            <button onClick={() => setActiveTab('commissions')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'commissions' ? 'bg-white text-amber-600 border-t-2 border-l border-r border-amber-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>5. Commissions</button>
-            <button onClick={() => setActiveTab('report')} className={`px-5 py-3 font-black text-xs md:text-sm uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>6. Live Reports</button>
+            <button onClick={() => setActiveTab('purchase')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'purchase' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>2. Procurement</button>
+            <button onClick={() => setActiveTab('sales')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'sales' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>3. Sales</button>
+            <button onClick={() => setActiveTab('collection')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'collection' ? 'bg-white text-indigo-600 border-t-2 border-l border-r border-indigo-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>4. Collection</button>
+            <button onClick={() => setActiveTab('commissions')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'commissions' ? 'bg-white text-amber-600 border-t-2 border-l border-r border-amber-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>5. Commissions</button>
+            <button onClick={() => setActiveTab('report')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'report' ? 'bg-white text-emerald-600 border-t-2 border-l border-r border-emerald-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>6. Live Reports</button>
+            
+            <button onClick={() => setActiveTab('verification')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'verification' ? 'bg-white text-red-600 border-t-2 border-l border-r border-red-600 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>7. Audit & Verify</button>
+            <button onClick={() => setActiveTab('export')} className={`px-4 py-3 font-black text-xs uppercase tracking-widest rounded-t-lg transition ${activeTab === 'export' ? 'bg-white text-slate-900 border-t-2 border-l border-r border-slate-900 mb-[-1px]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>8. Corporate Export</button>
           </>
         )}
       </div>
@@ -141,6 +137,10 @@ export default function ManagerMISDashboard() {
       {activeTab === 'collection' && <CollectionModule {...sharedProps} rawCollections={rawCollections} rawSales={rawSales} />}
       {activeTab === 'commissions' && <CommissionsModule {...sharedProps} rawCommissions={rawCommissions} mappedMasterCtopsForComms={masterCtops.filter(m => m.location_id?.toString() === entryMasterLocId)} />}
       {activeTab === 'report' && <ReportsModule {...sharedProps} rawPurchases={rawPurchases} rawSales={rawSales} rawCollections={rawCollections} rawBalances={rawBalances} rawCommissions={rawCommissions} />}
+      
+      {/* ARCHITECTURAL FIX: Removed the conflicting {...sharedProps} so TypeScript stops crashing */}
+      {activeTab === 'verification' && <VerificationModule />}
+      {activeTab === 'export' && <ExportModule rawPurchases={rawPurchases} rawSales={rawSales} rawCollections={rawCollections} rawBalances={rawBalances} rawCommissions={rawCommissions} />}
 
     </div>
   );
