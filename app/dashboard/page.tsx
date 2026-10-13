@@ -8,6 +8,7 @@ import {
 } from 'recharts';
 
 import StaffManagementEngine from "../components/StaffManagementEngine";
+import SupportDeskModule from "../components/mis/SupportDeskModule";
 
 const getLocalDateString = (date: Date) => {
   return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -19,23 +20,32 @@ export default function AdminCommandCenter() {
   const [loading, setLoading] = useState(true);
   const [isRouting, setIsRouting] = useState(false);
   
+  // SUPPORT DESK SPA ENGINE
+  const [activeView, setActiveView] = useState<'dashboard' | 'support'>('dashboard');
+  
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
   const [recentApps, setRecentApps] = useState<any[]>([]);
   const [enquiries, setEnquiries] = useState<any[]>([]);
 
+  // MASTER DIRECTORY STATES
   const [allPartners, setAllPartners] = useState<any[]>([]);
+  const [allLocations, setAllLocations] = useState<any[]>([]);
+  
+  // LIVE REVENUE RAW DATA
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [rawDeposits, setRawDeposits] = useState<any[]>([]);
   
+  // FILTER ENGINE STATES
   const [timeFilter, setTimeFilter] = useState("monthly"); 
-  const [geoFilter, setGeoFilter] = useState({ state: "All", dist: "All", location: "All", partner: "All" });
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date(); d.setDate(1); return getLocalDateString(d);
+  });
+  const [toDate, setToDate] = useState(() => getLocalDateString(new Date()));
   
-  const [dropdowns, setDropdowns] = useState<{
-    states: string[];
-    dists: string[];
-    locations: string[];
-    partners: string[];
-  }>({ states: [], dists: [], locations: [], partners: [] });
+  const [fState, setFState] = useState("ALL");
+  const [fHq, setFHq] = useState("ALL");
+  const [fCenter, setFCenter] = useState("ALL");
+  const [fPartner, setFPartner] = useState("ALL");
   
   const [financials, setFinancials] = useState({ cbp: 0, ctop: 0, sim: 0, cheque: 0, totalSalesCash: 0, totalDeposits: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
@@ -61,16 +71,22 @@ export default function AdminCommandCenter() {
         
       if (staffData) setAdminUser(staffData);
 
-      const rawRole = staffData?.role || '';
-      const safeRole = rawRole.trim().toLowerCase(); 
+      const safeRole = (staffData?.role || '').trim().toLowerCase(); 
 
-      if (['admin', 'manager'].includes(safeRole)) {
-        await fetchOperationalData();
+      const [locRes, partRes] = await Promise.all([
+        supabase.from('locations').select('*').order('center_name'),
+        supabase.from('active_partners').select('id, partner_name, locations(id, state, dist, center_name, parent_master_id)').order('partner_name')
+      ]);
+      
+      const locData = locRes.data || [];
+      setAllLocations(locData);
+      setAllPartners(partRes.data || []);
+
+      if (['admin', 'manager', 'staff'].includes(safeRole)) {
+        await fetchOperationalData(locData);
       }
       
-      if (['admin', 'accountant', 'manager'].includes(safeRole)) {
-        await fetchFinancialData("monthly");
-      } else {
+      if (!['admin', 'accountant', 'manager'].includes(safeRole)) {
         setLoading(false); 
       }
       
@@ -80,14 +96,11 @@ export default function AdminCommandCenter() {
     }
   };
 
-  const fetchOperationalData = async () => {
+  const fetchOperationalData = async (locationsArray: any[]) => {
     try {
       const { data: appsData } = await supabase.from('pending_applications').select('id, name, requested_role, status, created_at').order('created_at', { ascending: false });
-      const { count: locCount } = await supabase.from('locations').select('*', { count: 'exact', head: true }).eq('is_active', true);
       const { data: enqData } = await supabase.from('enquiries').select('*').order('created_at', { ascending: false });
-      const { data: partnersData } = await supabase.from('active_partners').select('id, partner_name, locations(state, dist, center_name)');
 
-      if (partnersData) setAllPartners(partnersData);
       if (enqData) setEnquiries(enqData);
       
       const apps = appsData || [];
@@ -95,7 +108,7 @@ export default function AdminCommandCenter() {
         pending: apps.filter(app => app.status === 'Pending' || !app.status).length,
         approved: apps.filter(app => app.status === 'Approved').length,
         rejected: apps.filter(app => app.status === 'Rejected').length,
-        locations: locCount || 0
+        locations: locationsArray.filter(l => l.is_active).length || 0
       });
       setRecentApps(apps.slice(0, 5));
     } catch (error: any) {
@@ -103,42 +116,23 @@ export default function AdminCommandCenter() {
     }
   };
 
-  const fetchFinancialData = async (timeMode: string) => {
+  useEffect(() => {
+    if (adminUser && ['admin', 'accountant', 'manager'].includes(adminUser.role.trim().toLowerCase())) {
+      fetchFinancialData();
+    }
+  }, [fromDate, toDate, adminUser]);
+
+  const fetchFinancialData = async () => {
     setIsRefreshingFinance(true);
     try {
-      let startDate = new Date();
-      let endDate = new Date();
-
-      if (timeMode === "today") {
-      } else if (timeMode === "yesterday") {
-        startDate.setDate(startDate.getDate() - 1);
-        endDate.setDate(endDate.getDate() - 1);
-      } else if (timeMode === "weekly") {
-        startDate.setDate(startDate.getDate() - 7);
-      } else if (timeMode === "monthly") {
-        startDate.setDate(1); 
-      }
-
-      const startStr = getLocalDateString(startDate);
-      const endStr = getLocalDateString(endDate);
-
+      // OPTIMIZATION: Only fetching Sales and Deposits needed for the Live Revenue Engine.
       const [salesRes, depositsRes] = await Promise.all([
-        supabase.from('daily_sales_reports').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).gte('report_date', startStr).lte('report_date', endStr),
-        supabase.from('partner_deposits').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).neq('status', 'Discrepancy').gte('created_at', `${startStr}T00:00:00+05:30`).lte('created_at', `${endStr}T23:59:59+05:30`)
+        supabase.from('daily_sales_reports').select(`*, active_partners (id, partner_name, locations (id, state, dist, center_name, parent_master_id))`).gte('report_date', fromDate).lte('report_date', toDate),
+        supabase.from('partner_deposits').select(`*, active_partners (id, partner_name, locations (id, state, dist, center_name, parent_master_id))`).neq('status', 'Discrepancy').gte('created_at', `${fromDate}T00:00:00+05:30`).lte('created_at', `${toDate}T23:59:59+05:30`)
       ]);
 
-      const validSales = salesRes.data || [];
-      const validDeposits = depositsRes.data || [];
-
-      setRawSales(validSales);
-      setRawDeposits(validDeposits);
-      
-      extractDropdownOptions(allPartners); 
-      
-      const resetFilters = { state: "All", dist: "All", location: "All", partner: "All" };
-      setGeoFilter(resetFilters);
-      calculateEngine(validSales, validDeposits, allPartners, resetFilters);
-      setTimeFilter(timeMode);
+      setRawSales(salesRes.data || []);
+      setRawDeposits(depositsRes.data || []);
 
     } catch (error: any) {
       console.error("Finance fetch error:", error.message);
@@ -148,37 +142,42 @@ export default function AdminCommandCenter() {
     }
   };
 
-  const extractDropdownOptions = (partners: any[]) => {
-    const states = new Set<string>();
-    const dists = new Set<string>();
-    const locs = new Set<string>();
-    const names = new Set<string>();
+  const handleQuickDate = (mode: string) => {
+    let start = new Date();
+    let end = new Date();
 
-    partners.forEach(p => {
-      names.add(p.partner_name);
-      if (p.locations) {
-        if (p.locations.state) states.add(p.locations.state);
-        if (p.locations.dist) dists.add(p.locations.dist);
-        if (p.locations.center_name) locs.add(p.locations.center_name);
-      }
-    });
-
-    setDropdowns({
-      states: Array.from(states).sort(),
-      dists: Array.from(dists).sort(),
-      locations: Array.from(locs).sort(),
-      partners: Array.from(names).sort()
-    });
+    if (mode === "yesterday") {
+      start.setDate(start.getDate() - 1);
+      end.setDate(end.getDate() - 1);
+    } else if (mode === "weekly") {
+      start.setDate(start.getDate() - 7);
+    } else if (mode === "monthly") {
+      start.setDate(1); 
+    }
+    
+    setTimeFilter(mode);
+    setFromDate(getLocalDateString(start));
+    setToDate(getLocalDateString(end));
   };
 
-  const calculateEngine = (sales: any[], deposits: any[], directory: any[], filters: any) => {
+  useEffect(() => {
+    if (allPartners.length > 0) {
+      calculateEngine(rawSales, rawDeposits, allPartners);
+    }
+  }, [fState, fHq, fCenter, fPartner, rawSales, rawDeposits, allPartners]);
+
+  const calculateEngine = (sales: any[], deposits: any[], directory: any[]) => {
+    
     const applyGeoFilter = (item: any) => {
       const p = item.active_partners || item; 
       const l = p.locations;
-      if (filters.state !== "All" && l?.state !== filters.state) return false;
-      if (filters.dist !== "All" && l?.dist !== filters.dist) return false;
-      if (filters.location !== "All" && l?.center_name !== filters.location) return false;
-      if (filters.partner !== "All" && p?.partner_name !== filters.partner) return false;
+      if (!l) return false;
+
+      if (fState !== "ALL" && l.state !== fState) return false;
+      if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq && l.id?.toString() !== fHq) return false;
+      if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
+      if (fPartner !== "ALL" && p.id?.toString() !== fPartner) return false;
+      
       return true;
     };
 
@@ -226,11 +225,28 @@ export default function AdminCommandCenter() {
     setMissingDeposits(filteredDirectory.filter(p => !partnersWithDeposits.has(p.id)));
   };
 
-  const handleGeoChange = (field: string, value: string) => {
-    const newFilters = { ...geoFilter, [field]: value };
-    setGeoFilter(newFilters);
-    calculateEngine(rawSales, rawDeposits, allPartners, newFilters);
-  };
+  const uniqueStates = Array.from(new Set(allLocations.map(l => l.state).filter(Boolean))).sort();
+  
+  const hqLocations = allLocations.filter(l => 
+    l.is_master_node && 
+    (fState === "ALL" || l.state === fState)
+  ).sort((a,b) => a.center_name.localeCompare(b.center_name));
+  
+  const centerLocations = allLocations.filter(l => 
+    !l.is_master_node && 
+    (fState === "ALL" || l.state === fState) &&
+    (fHq === "ALL" || l.parent_master_id?.toString() === fHq)
+  ).sort((a,b) => a.center_name.localeCompare(b.center_name));
+
+  const filteredPartners = allPartners.filter(p => {
+    const l = p.locations;
+    if (!l) return false;
+    if (fState !== "ALL" && l.state !== fState) return false;
+    if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq && l.id?.toString() !== fHq) return false;
+    if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
+    return true;
+  }).sort((a,b) => a.partner_name.localeCompare(b.partner_name));
+
 
   const handleSignOut = async () => {
     setLoading(true);
@@ -260,6 +276,19 @@ export default function AdminCommandCenter() {
     </div>
   );
 
+  if (activeView === 'support') {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
+        <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
+          <button onClick={() => setActiveView('dashboard')} className="text-blue-600 font-black text-sm hover:underline flex items-center gap-2 mb-4 bg-blue-50 px-4 py-2 rounded shadow-sm border border-blue-200 w-fit transition">
+            <span>&larr;</span> Back to Command Center
+          </button>
+          <SupportDeskModule allLocations={allLocations} currentUserRole={safeRole} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
       
@@ -286,8 +315,8 @@ export default function AdminCommandCenter() {
           <div className="flex gap-3">
             <button 
               onClick={() => { 
-                if(isManagerOrAdmin) fetchOperationalData(); 
-                if(isFinanceTeam || isManagerOrAdmin) fetchFinancialData(timeFilter); 
+                if(isOpsTeam) fetchOperationalData(allLocations); 
+                if(isFinanceTeam || isManagerOrAdmin) fetchFinancialData(); 
               }} 
               className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md font-bold hover:bg-gray-50 shadow-sm transition text-sm"
             >
@@ -308,7 +337,7 @@ export default function AdminCommandCenter() {
                 {['today', 'yesterday', 'weekly', 'monthly'].map(mode => (
                   <button 
                     key={mode} 
-                    onClick={() => fetchFinancialData(mode)} 
+                    onClick={() => handleQuickDate(mode)} 
                     disabled={isRefreshingFinance} 
                     className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition whitespace-nowrap ${timeFilter === mode ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                   >
@@ -318,16 +347,47 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            <div className="p-4 bg-slate-800 border-b border-slate-700 grid grid-cols-2 md:grid-cols-4 gap-4">
-              {(Object.keys(geoFilter) as Array<keyof typeof geoFilter>).map((field) => (
-                <div key={field}>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">{field === 'dist' ? 'District' : field === 'location' ? 'Center' : field}</label>
-                  <select value={geoFilter[field as keyof typeof geoFilter]} onChange={e => handleGeoChange(field, e.target.value)} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500">
-                    <option value="All">All {field}s</option>
-                    {(dropdowns as any)[field + 's']?.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                </div>
-              ))}
+            <div className="p-4 bg-slate-800 border-b border-slate-700 grid grid-cols-2 md:grid-cols-6 gap-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">From Date</label>
+                <input type="date" value={fromDate} onChange={e => {setFromDate(e.target.value); setTimeFilter('custom');}} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">To Date</label>
+                <input type="date" value={toDate} onChange={e => {setToDate(e.target.value); setTimeFilter('custom');}} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition" />
+              </div>
+              
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">State</label>
+                <select value={fState} onChange={e => {setFState(e.target.value); setFHq("ALL"); setFCenter("ALL"); setFPartner("ALL");}} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition">
+                  <option value="ALL">All States</option>
+                  {uniqueStates.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">HQ / Master Node</label>
+                <select value={fHq} onChange={e => {setFHq(e.target.value); setFCenter("ALL"); setFPartner("ALL");}} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition">
+                  <option value="ALL">All HQs</option>
+                  {hqLocations.map(h => <option key={h.id} value={h.id}>{h.center_name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Location / Center</label>
+                <select value={fCenter} onChange={e => {setFCenter(e.target.value); setFPartner("ALL");}} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition">
+                  <option value="ALL">All Locations</option>
+                  {centerLocations.map(c => <option key={c.id} value={c.id}>{c.center_name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Partner</label>
+                <select value={fPartner} onChange={e => setFPartner(e.target.value)} className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded p-2 outline-none focus:border-blue-500 transition">
+                  <option value="ALL">All Partners</option>
+                  {filteredPartners.map(p => <option key={p.id} value={p.id}>{p.partner_name}</option>)}
+                </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-6 gap-px bg-slate-700">
@@ -451,8 +511,16 @@ export default function AdminCommandCenter() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
           
+          {!isAccountant && (
+            <div onClick={() => setActiveView('support')} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md hover:border-red-400 transition-all group block cursor-pointer border-t-4 border-t-red-500">
+              <div className="text-3xl mb-3">🎧</div>
+              <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">Support & Escalation</h3>
+              <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Review partner complaints, escalate issues, and track SLAs.</p>
+            </div>
+          )}
+
           {isManagerOrAdmin && (
-            <div onClick={() => routeTo("/dashboard/compliance")} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600 cursor-pointer">
+            <div onClick={() => routeTo("/dashboard/compliance")} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group block cursor-pointer">
               <div className="flex justify-between items-start mb-3">
                 <div className="text-3xl">🚨</div>
                 <span className="bg-red-100 text-red-700 text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-widest border border-red-200 animate-pulse">
