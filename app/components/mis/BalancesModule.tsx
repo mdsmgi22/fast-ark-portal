@@ -1,6 +1,5 @@
 "use client";
 import React, { useState } from "react";
-import { supabase } from "../../lib/supabase";
 
 const sanitizeCSV = (val: unknown): string => {
   let str = String(val || "").replace(/"/g, '""');
@@ -8,233 +7,222 @@ const sanitizeCSV = (val: unknown): string => {
   return `"${str}"`;
 };
 
-const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases, rawSales, rawCollections, rawBalances, rawCommissions }: any) {
+  const [repTimeFilter, setRepTimeFilter] = useState("this_month");
+  const [repMonthFilter, setRepMonthFilter] = useState(new Date().toISOString().substring(0, 7)); 
+  const [repStateFilter, setRepStateFilter] = useState("ALL");
+  const [repMasterFilter, setRepMasterFilter] = useState("ALL");
 
-export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBalances, fetchArchitectureAndReports }: any) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [editingBalanceId, setEditingBalanceId] = useState<string | null>(null);
-  
-  const [balanceForm, setBalanceForm] = useState({
-    report_date: new Date().toISOString().split('T')[0],
-    location_id: "",
-    master_ctop_id: "",
-    entry_type: "Opening Balance",
-    cbp_landline_qty: "", 
-    cbp_gsm_qty: "",
-    ctop_qty: "",
-    sim_qty: ""
-  });
+  const getFilteredReports = () => {
+    let fPurchases = [...rawPurchases]; 
+    let fSales = [...rawSales]; 
+    let fCollections = [...rawCollections]; 
+    let fBalances = [...rawBalances]; 
+    let fComms = [...rawCommissions];
+    
+    // ARCHITECTURAL FIX: Strict local string formatting prevents IST to UTC offset bugs
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    let startStr = "2000-01-01";
+    let endStr = "2100-01-01";
 
-  const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === '-' || e.key === '+' || e.key === 'e' || e.key === 'E') e.preventDefault();
-  };
-  
-  const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
-    (e.target as HTMLInputElement).blur();
-  };
+    if (repTimeFilter === "this_month") {
+      const d = new Date();
+      startStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
+      const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0); // Last day of current month
+      endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
+    } else if (repTimeFilter === "specific_month") {
+      startStr = `${repMonthFilter}-01`;
+      const [year, month] = repMonthFilter.split('-');
+      const endD = new Date(parseInt(year), parseInt(month), 0); // Last day of selected month
+      endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
+    }
 
-  const handleBalanceSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!balanceForm.location_id || !balanceForm.master_ctop_id) {
-      return alert("You must select both a Master Location and a Master CTOP.");
+    if (repTimeFilter !== "all") {
+      fPurchases = fPurchases.filter(p => p.purchase_date >= startStr && p.purchase_date <= endStr);
+      fSales = fSales.filter(s => s.reporting_month >= startStr && s.reporting_month <= endStr);
+      fCollections = fCollections.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
+      fBalances = fBalances.filter(b => b.report_date >= startStr && b.report_date <= endStr);
+      fComms = fComms.filter(c => c.reporting_month >= startStr && c.reporting_month <= endStr);
     }
     
-    setIsSubmitting(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) throw new Error("Authentication error.");
-
-      const payload = {
-        report_date: balanceForm.report_date,
-        location_id: parseInt(balanceForm.location_id),
-        master_ctop_id: balanceForm.master_ctop_id,
-        entry_type: balanceForm.entry_type,
-        cbp_landline_qty: parseFloat(balanceForm.cbp_landline_qty) || 0,
-        cbp_gsm_qty: parseFloat(balanceForm.cbp_gsm_qty) || 0,
-        ctop_qty: parseFloat(balanceForm.ctop_qty) || 0,
-        sim_qty: parseFloat(balanceForm.sim_qty) || 0,
-        logged_by: user.id
-      };
-
-      if (editingBalanceId) {
-        await supabase.from('mis_balances').update(payload).eq('id', editingBalanceId);
-        await supabase.from('staff_activity_logs').insert([{
-          staff_id: user.id, staff_email: user.email, action_type: 'AUDIT', module: 'MANAGER_MIS',
-          target_id: editingBalanceId, details: `Corrected ${payload.entry_type} for ${payload.report_date}.`
-        }]);
-        alert("✅ Balance Record Successfully Updated.");
-      } else {
-        const { data: insertedRecord, error } = await supabase.from('mis_balances').insert([payload]).select().single();
-        if (error) throw error;
-        await supabase.from('staff_activity_logs').insert([{
-          staff_id: user.id, staff_email: user.email, action_type: 'MIS_ENTRY', module: 'MANAGER_MIS',
-          target_id: insertedRecord.id, details: `Logged ${payload.entry_type} for ${payload.report_date}.`
-        }]);
-        alert("✅ Balance Record Successfully Saved.");
-      }
-
-      setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""});
-      setEditingBalanceId(null);
-      fetchArchitectureAndReports();
-    } catch (err: any) {
-      alert("Error saving balance: " + err.message);
-    } finally {
-      setIsSubmitting(false);
+    if (repMasterFilter !== "ALL") {
+      const mid = parseInt(repMasterFilter);
+      fPurchases = fPurchases.filter(p => p.location_id === mid); 
+      fSales = fSales.filter(s => s.locations?.parent_master_id === mid);
+      fCollections = fCollections.filter(c => c.locations?.parent_master_id === mid); 
+      fBalances = fBalances.filter(b => b.location_id === mid); 
+      fComms = fComms.filter(c => c.location_id === mid);
     }
-  };
 
-  const handleEditBalance = (bal: any) => {
-    setEditingBalanceId(bal.id);
-    setBalanceForm({
-      report_date: bal.report_date,
-      location_id: bal.location_id.toString(),
-      master_ctop_id: bal.master_ctop_id,
-      entry_type: bal.entry_type,
-      cbp_landline_qty: bal.cbp_landline_qty?.toString() || "", 
-      cbp_gsm_qty: bal.cbp_gsm_qty?.toString() || "",
-      ctop_qty: bal.ctop_qty?.toString() || "",
-      sim_qty: bal.sim_qty?.toString() || ""
+    const hqMap: Record<string, any> = {};
+    const filteredHQs = hqLocations.filter((h: any) => (repStateFilter === "ALL" || h.state === repStateFilter) && (repMasterFilter === "ALL" || h.id.toString() === repMasterFilter));
+
+    filteredHQs.forEach((hq: any) => {
+      const hqBals = fBalances.filter(b => b.location_id === hq.id);
+      const oBals = hqBals.filter(b => b.entry_type === 'Opening Balance'); 
+      const cBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
+      
+      const oCBP = oBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0); 
+      const cCBP = cBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0);
+      
+      const oCTOP = oBals.reduce((s, b) => s + Number(b.ctop_qty||0), 0); 
+      const cCTOP = cBals.reduce((s, b) => s + Number(b.ctop_qty||0), 0);
+      const oSIM = oBals.reduce((s, b) => s + Number(b.sim_qty||0), 0); 
+      const cSIM = cBals.reduce((s, b) => s + Number(b.sim_qty||0), 0);
+
+      const hqPur = fPurchases.filter(p => p.location_id === hq.id);
+      const pCBP = hqPur.filter(p => p.product_category === 'CBP').reduce((s, p) => s + Number(p.qty||0), 0);
+      const pCTOP = hqPur.filter(p => p.product_category === 'CTOP').reduce((s, p) => s + Number(p.qty||0), 0);
+      const pSIM = hqPur.filter(p => p.product_category === 'SIM_FREE' || p.product_category === 'SIM_PAID').reduce((s, p) => s + Number(p.qty||0), 0);
+
+      const hqS = fSales.filter(s => s.locations?.parent_master_id === hq.id);
+      
+      const sCBP = hqS.reduce((s, sl) => s + Number(sl.cbp_landline_qty||0) + Number(sl.cbp_gsm_qty||0), 0);
+      const sCTOP = hqS.reduce((s, sl) => s + Number(sl.ctop_recharge_cash||sl.ctop_recharge_amt||0), 0);
+      
+      // ARCHITECTURAL FIX: Safely included MNP and FRC fields to guarantee physical stock variances perfectly align
+      const sSIM = hqS.reduce((s, sl) => s + Number(sl.sim_new_qty||0) + Number(sl.sim_upgrade_qty||0) + Number(sl.sim_replace_qty||sl.sim_replacement_qty||0) + Number(sl.sim_fancy_qty||0) + Number(sl.sim_postpaid_qty||0) + Number(sl.mnp_qty||0) + Number(sl.frc_qty||0), 0);
+
+      const hqC = fComms.filter(c => c.location_id === hq.id);
+      const cInst = hqC.reduce((s, c) => s + Number(c.instant_commission||0), 0); 
+      const cPend = hqC.reduce((s, c) => s + Number(c.pending_commission||0), 0);
+
+      hqMap[hq.id] = {
+        name: hq.center_name,
+        cbp: { open: oCBP, close: cCBP, purch: pCBP, sales: sCBP, variance: (oCBP - cCBP) + pCBP - sCBP },
+        ctop: { open: oCTOP, close: cCTOP, purch: pCTOP, comm: cInst + cPend, sales: sCTOP, variance: (oCTOP - cCTOP) + pCTOP + cInst + cPend - sCTOP },
+        sim: { open: oSIM, close: cSIM, purch: pSIM, sales: sSIM, variance: (oSIM - cSIM) + pSIM - sSIM }
+      };
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return { hqMap };
   };
 
-  const downloadCSV = () => {
-    if (rawBalances.length === 0) return alert("No data available to export.");
-    const csvContent = "Date,Type,Location,CTOP,CBP_Landline_Qty,CBP_GSM_Qty,CTOP_Qty,SIM_Qty\n" + 
-      rawBalances.map((r: any) => 
-      `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_landline_qty},${r.cbp_gsm_qty},${r.ctop_qty},${r.sim_qty}`
-    ).join("\n");
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `FastArk_MIS_Balances_${new Date().toISOString().split('T')[0]}.csv`;
+  const { hqMap } = getFilteredReports();
+
+  const downloadMatrixCSV = () => {
+    const csvRows = ["Location,Item,Opening,Purchases,Commissions,Sales,Closing,Variance"];
+    Object.values(hqMap).forEach((hq: any) => {
+      csvRows.push(`${sanitizeCSV(hq.name)},CBP Qty,${hq.cbp.open},${hq.cbp.purch},0,${hq.cbp.sales},${hq.cbp.close},${hq.cbp.variance}`);
+      csvRows.push(`${sanitizeCSV(hq.name)},CTOP Cash,${hq.ctop.open},${hq.ctop.purch},${hq.ctop.comm},${hq.ctop.sales},${hq.ctop.close},${hq.ctop.variance}`);
+      csvRows.push(`${sanitizeCSV(hq.name)},SIM Qty,${hq.sim.open},${hq.sim.purch},0,${hq.sim.sales},${hq.sim.close},${hq.sim.variance}`);
+    });
+    
+    // ARCHITECTURAL FIX: Force IST Date to prevent UTC rollover bugs in the filename
+    const istTime = new Date(new Date().getTime() + (330 * 60000)).toISOString().split('T')[0];
+    const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a"); 
+    link.href = URL.createObjectURL(blob); 
+    link.download = `FastArk_Reconciliation_${istTime.replace(/\//g, '-')}.csv`; 
     link.click();
   };
 
-  const filteredMasterCtops = mappedMasterCtops.filter((m: any) => m.location_id?.toString() === balanceForm.location_id);
-
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <div className={`p-4 rounded-lg mb-6 flex gap-4 items-center justify-between ${editingBalanceId ? 'bg-amber-100 border border-amber-300' : 'bg-slate-900'}`}>
-          <div className="flex gap-4 items-center">
-            <span className="text-3xl">⚖️</span>
-            <div>
-              <h2 className={`font-black uppercase tracking-widest ${editingBalanceId ? 'text-amber-900' : 'text-white'}`}>
-                {editingBalanceId ? 'Editing Balance Record' : 'Log Daily Balances'}
-              </h2>
-            </div>
-          </div>
-          {editingBalanceId && (
-            <button onClick={() => { setEditingBalanceId(null); setBalanceForm({...balanceForm, cbp_landline_qty: "", cbp_gsm_qty: "", ctop_qty: "", sim_qty: ""}); }} className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition">
-              Cancel Edit
-            </button>
-          )}
+    <div className="space-y-6 animate-in fade-in">
+      <div className="bg-slate-900 p-5 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end shadow-md">
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Time Context</label>
+          <select value={repTimeFilter} onChange={(e) => setRepTimeFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-slate-700 text-white font-bold p-2.5 rounded-lg focus:border-emerald-500 outline-none transition">
+            <option value="this_month">This Month</option>
+            <option value="specific_month">Select Month</option>
+            <option value="all">All Time</option>
+          </select>
         </div>
 
-        <form onSubmit={handleBalanceSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Record Date *</label>
-              <input required type="date" value={balanceForm.report_date} onChange={e => setBalanceForm({...balanceForm, report_date: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">Master Location (Hub) *</label>
-              <select required value={balanceForm.location_id} onChange={e => setBalanceForm({...balanceForm, location_id: e.target.value, master_ctop_id: ""})} className="w-full border-2 border-indigo-200 p-2.5 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50">
-                <option value="" disabled>-- Select HQ --</option>
-                {hqLocations.map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">Master CTOP No. *</label>
-              <select required disabled={!balanceForm.location_id} value={balanceForm.master_ctop_id} onChange={e => setBalanceForm({...balanceForm, master_ctop_id: e.target.value})} className="w-full border-2 border-indigo-200 p-2.5 rounded-lg outline-none font-black text-indigo-900 focus:border-indigo-600 bg-indigo-50 disabled:opacity-50">
-                <option value="" disabled>-- Select Assigned CTOP --</option>
-                {filteredMasterCtops.map((m: any) => <option key={m.id} value={m.id}>{m.master_ctop_no}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Entry Type *</label>
-              <select value={balanceForm.entry_type} onChange={e => setBalanceForm({...balanceForm, entry_type: e.target.value})} className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none font-bold focus:border-indigo-500 bg-slate-50">
-                <option value="Opening Balance">Opening Balance</option>
-                <option value="Closing Balance">Closing Balance</option>
-              </select>
-            </div>
+        {repTimeFilter === "specific_month" && (
+          <div className="animate-in fade-in">
+            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1">Select Month</label>
+            <input type="month" value={repMonthFilter} onChange={(e) => setRepMonthFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-emerald-500 text-white font-bold p-2.5 rounded-lg outline-none transition"/>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-5 bg-slate-50 rounded-xl border border-slate-200">
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP Landline (Qty) *</label>
-              <input required type="number" step="0.01" min="0" value={balanceForm.cbp_landline_qty} onChange={e => setBalanceForm({...balanceForm, cbp_landline_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CBP GSM (Qty) *</label>
-              <input required type="number" step="0.01" min="0" value={balanceForm.cbp_gsm_qty} onChange={e => setBalanceForm({...balanceForm, cbp_gsm_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">CTOP Quantity *</label>
-              <input required type="number" step="0.01" min="0" value={balanceForm.ctop_qty} onChange={e => setBalanceForm({...balanceForm, ctop_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0.00" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">SIM Quantity *</label>
-              <input required type="number" step="0.01" min="0" value={balanceForm.sim_qty} onChange={e => setBalanceForm({...balanceForm, sim_qty: e.target.value})} onKeyDown={preventNegativeScroll} onWheel={handleWheel} className={numInputClass} placeholder="0" />
-            </div>
-          </div>
-          
-          <button type="submit" disabled={isSubmitting} className={`w-full text-white font-black py-4 rounded-xl shadow-md uppercase tracking-widest disabled:opacity-50 transition mt-6 ${editingBalanceId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-900 hover:bg-slate-800'}`}>
-            {isSubmitting ? "Committing..." : editingBalanceId ? "Update Balance Ledger" : "Lock Balance Entry"}
-          </button>
-        </form>
+        <div>
+          <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1">State Filter</label>
+          <select value={repStateFilter} onChange={(e) => { setRepStateFilter(e.target.value); setRepMasterFilter("ALL"); }} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold p-2.5 rounded-lg outline-none focus:border-indigo-400 transition">
+            <option value="ALL">-- All States --</option>
+            {uniqueStates.map((st: string) => <option key={st} value={st}>{st}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1">Master HQ Filter</label>
+          <select value={repMasterFilter} onChange={(e) => setRepMasterFilter(e.target.value)} className="w-full bg-slate-800 border-2 border-indigo-500 text-white font-bold p-2.5 rounded-lg outline-none focus:border-indigo-400 transition">
+            <option value="ALL">-- All HQ Hubs --</option>
+            {hqLocations.filter((h: any) => repStateFilter === "ALL" || h.state === repStateFilter).map((hq: any) => <option key={hq.id} value={hq.id}>{hq.center_name}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
-          <h3 className="font-black tracking-widest uppercase text-xs">Recent Master Balances</h3>
-          <button onClick={downloadCSV} className="bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded text-[10px] font-bold shadow transition">📥 Export CSV</button>
+          <h3 className="font-black uppercase text-sm tracking-widest flex items-center gap-2"><span>🧮</span> Master Reconciliation Matrix</h3>
+          <button onClick={downloadMatrixCSV} className="bg-emerald-600 hover:bg-emerald-700 transition px-4 py-1.5 rounded font-black text-xs uppercase tracking-widest shadow-sm">📥 Download Matrix CSV</button>
         </div>
-        <div className="overflow-x-auto">
+        
+        <div className="overflow-x-auto max-h-[700px]">
           <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
+            <thead className="bg-slate-100 text-[10px] uppercase tracking-widest text-slate-600 border-b border-slate-300 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="p-4 font-black">Date & Type</th>
-                <th className="p-4 font-black">Master Location & CTOP</th>
-                <th className="p-4 font-black text-right">CBP Landline (Qty)</th>
-                <th className="p-4 font-black text-right">CBP GSM (Qty)</th>
-                <th className="p-4 font-black text-right">CTOP (Qty)</th>
-                <th className="p-4 font-black text-right">SIM (Qty)</th>
-                <th className="p-4 font-black text-right">Action</th>
+                <th className="p-4 font-black">Location (HQ)</th>
+                <th className="p-4 font-black">Ledger Item</th>
+                <th className="p-4 font-black text-right text-slate-400">Opening (+)</th>
+                <th className="p-4 font-black text-right text-slate-400">Purchases (+)</th>
+                <th className="p-4 font-black text-right text-slate-400">Commissions (+)</th>
+                <th className="p-4 font-black text-right text-red-400">Total Sales (-)</th>
+                <th className="p-4 font-black text-right text-red-400">Closing (-)</th>
+                <th className="p-4 font-black text-right bg-emerald-50 text-emerald-800 border-l border-slate-300">Variance (=)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rawBalances.length === 0 ? (
-                <tr><td colSpan={7} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
+            <tbody className="divide-y divide-slate-200">
+              {Object.keys(hqMap).length === 0 ? (
+                <tr><td colSpan={8} className="p-8 text-center text-slate-500 font-bold">No data matches the selected filters.</td></tr>
               ) : (
-                rawBalances.slice(0, 50).map((bal: any) => (
-                  <tr key={bal.id} className={`transition ${editingBalanceId === bal.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
-                    <td className="p-4">
-                      <p className="font-black text-slate-900">{bal.report_date}</p>
-                      <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border inline-block mt-1 ${bal.entry_type === 'Opening Balance' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
-                        {bal.entry_type}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <p className="font-bold text-indigo-700">{bal.locations?.center_name}</p>
-                      <p className="text-xs font-bold text-slate-500">CTOP: {bal.master_ctop_accounts?.master_ctop_no}</p>
-                    </td>
-                    <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_landline_qty || 0).toLocaleString('en-IN')}</td>
-                    <td className="p-4 text-right font-black text-slate-800">{Number(bal.cbp_gsm_qty || 0).toLocaleString('en-IN')}</td>
-                    <td className="p-4 text-right font-black text-slate-800">{Number(bal.ctop_qty || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                    <td className="p-4 text-right font-black text-slate-800">{Number(bal.sim_qty || 0).toLocaleString('en-IN')}</td>
-                    <td className="p-4 text-right">
-                      <button onClick={() => handleEditBalance(bal)} disabled={isSubmitting} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black px-4 py-1.5 rounded border border-slate-300 text-[10px] uppercase tracking-widest transition shadow-sm">
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
+                Object.values(hqMap).map((hq: any, idx) => (
+                  <React.Fragment key={idx}>
+                    {/* CBP ROW */}
+                    <tr className="hover:bg-slate-50 transition">
+                      <td className="p-4 font-black text-slate-900 border-b-0" rowSpan={3}>{hq.name}</td>
+                      <td className="p-4 font-bold text-slate-700 bg-slate-50">CBP Qty</td>
+                      <td className="p-4 text-right font-medium">{hq.cbp.open}</td>
+                      <td className="p-4 text-right font-medium">{hq.cbp.purch}</td>
+                      <td className="p-4 text-right font-medium text-slate-300">-</td>
+                      <td className="p-4 text-right font-medium text-red-500">{hq.cbp.sales}</td>
+                      <td className="p-4 text-right font-medium">{hq.cbp.close}</td>
+                      <td className={`p-4 text-right font-black border-l border-slate-200 ${hq.cbp.variance === 0 ? 'text-emerald-600 bg-emerald-50/30' : 'text-red-600 bg-red-50/30'}`}>
+                        {hq.cbp.variance}
+                      </td>
+                    </tr>
+                    {/* CTOP ROW */}
+                    <tr className="hover:bg-slate-50 transition">
+                      <td className="p-4 font-bold text-blue-700 bg-blue-50/30 border-y border-slate-100">CTOP Cash</td>
+                      <td className="p-4 text-right font-medium border-y border-slate-100">₹{hq.ctop.open.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-medium border-y border-slate-100">₹{hq.ctop.purch.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-medium border-y border-slate-100">₹{hq.ctop.comm.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-medium border-y border-slate-100 text-red-500">₹{hq.ctop.sales.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className="p-4 text-right font-medium border-y border-slate-100">₹{hq.ctop.close.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                      <td className={`p-4 text-right font-black border-l border-slate-200 border-y border-y-slate-100 ${hq.ctop.variance === 0 ? 'text-emerald-600 bg-emerald-50/30' : 'text-red-600 bg-red-50/30'}`}>
+                        ₹{hq.ctop.variance.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                      </td>
+                    </tr>
+                    {/* SIM ROW */}
+                    <tr className="border-b-4 border-slate-300 hover:bg-slate-50 transition">
+                      <td className="p-4 font-bold text-slate-700 bg-slate-50">SIM Qty</td>
+                      <td className="p-4 text-right font-medium">{hq.sim.open}</td>
+                      <td className="p-4 text-right font-medium">{hq.sim.purch}</td>
+                      <td className="p-4 text-right font-medium text-slate-300">-</td>
+                      <td className="p-4 text-right font-medium text-red-500">{hq.sim.sales}</td>
+                      <td className="p-4 text-right font-medium">{hq.sim.close}</td>
+                      <td className={`p-4 text-right font-black border-l border-slate-200 ${hq.sim.variance === 0 ? 'text-emerald-600 bg-emerald-50/30' : 'text-red-600 bg-red-50/30'}`}>
+                        {hq.sim.variance}
+                      </td>
+                    </tr>
+                  </React.Fragment>
                 ))
               )}
             </tbody>
           </table>
+        </div>
+        <div className="bg-emerald-50 p-4 border-t border-emerald-200 text-center">
+          <p className="text-[10px] text-emerald-800 font-bold uppercase tracking-widest">Formula applied: (Open - Close) + Purchase + Commissions - Sales = Variance</p>
         </div>
       </div>
     </div>

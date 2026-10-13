@@ -20,19 +20,22 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
     let fBalances = [...rawBalances]; 
     let fComms = [...rawCommissions];
     
-    let startDate = new Date("2000-01-01"); 
-    let endDate = new Date("2100-01-01");
-    
-    if (repTimeFilter === "this_month") { 
-        startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1); 
-    } else if (repTimeFilter === "specific_month") { 
-        const sm = new Date(`${repMonthFilter}-01`); 
-        startDate = sm; 
-        endDate = new Date(sm.getFullYear(), sm.getMonth() + 1, 0); 
+    // ARCHITECTURAL FIX: Strict local string formatting prevents IST to UTC offset bugs
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    let startStr = "2000-01-01";
+    let endStr = "2100-01-01";
+
+    if (repTimeFilter === "this_month") {
+      const d = new Date();
+      startStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
+      const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0); // Last day of current month
+      endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
+    } else if (repTimeFilter === "specific_month") {
+      startStr = `${repMonthFilter}-01`;
+      const [year, month] = repMonthFilter.split('-');
+      const endD = new Date(parseInt(year), parseInt(month), 0); // Last day of selected month
+      endStr = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}`;
     }
-    
-    const startStr = startDate.toISOString().split('T')[0]; 
-    const endStr = endDate.toISOString().split('T')[0];
 
     if (repTimeFilter !== "all") {
       fPurchases = fPurchases.filter(p => p.purchase_date >= startStr && p.purchase_date <= endStr);
@@ -58,8 +61,11 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
       const hqBals = fBalances.filter(b => b.location_id === hq.id);
       const oBals = hqBals.filter(b => b.entry_type === 'Opening Balance'); 
       const cBals = hqBals.filter(b => b.entry_type === 'Closing Balance');
-      const oCBP = oBals.reduce((s, b) => s + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0); 
-      const cCBP = cBals.reduce((s, b) => s + Number(b.cbp_landline_qty||0) + Number(b.cbp_gsm_qty||0), 0);
+      
+      // ARCHITECTURAL FIX: Extract single cbp_qty from the mis_balances payload
+      const oCBP = oBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0); 
+      const cCBP = cBals.reduce((s, b) => s + Number(b.cbp_qty||0), 0);
+      
       const oCTOP = oBals.reduce((s, b) => s + Number(b.ctop_qty||0), 0); 
       const cCTOP = cBals.reduce((s, b) => s + Number(b.ctop_qty||0), 0);
       const oSIM = oBals.reduce((s, b) => s + Number(b.sim_qty||0), 0); 
@@ -71,9 +77,13 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
       const pSIM = hqPur.filter(p => p.product_category === 'SIM_FREE' || p.product_category === 'SIM_PAID').reduce((s, p) => s + Number(p.qty||0), 0);
 
       const hqS = fSales.filter(s => s.locations?.parent_master_id === hq.id);
+      
+      // NOTE: Sales properly sums the isolated Landline and GSM sales together for unified variance comparison
       const sCBP = hqS.reduce((s, sl) => s + Number(sl.cbp_landline_qty||0) + Number(sl.cbp_gsm_qty||0), 0);
-      const sCTOP = hqS.reduce((s, sl) => s + Number(sl.ctop_recharge_cash||0), 0);
-      const sSIM = hqS.reduce((s, sl) => s + Number(sl.sim_new_qty||0) + Number(sl.sim_upgrade_qty||0) + Number(sl.sim_replace_qty||0) + Number(sl.sim_fancy_qty||0) + Number(sl.sim_postpaid_qty||0), 0);
+      const sCTOP = hqS.reduce((s, sl) => s + Number(sl.ctop_recharge_cash||sl.ctop_recharge_amt||0), 0);
+      
+      // NOTE: Safely included replacement, MNP, and FRC fields to guarantee physical stock perfectly aligns
+      const sSIM = hqS.reduce((s, sl) => s + Number(sl.sim_new_qty||0) + Number(sl.sim_upgrade_qty||0) + Number(sl.sim_replace_qty||sl.sim_replacement_qty||0) + Number(sl.sim_fancy_qty||0) + Number(sl.sim_postpaid_qty||0) + Number(sl.mnp_qty||0) + Number(sl.frc_qty||0), 0);
 
       const hqC = fComms.filter(c => c.location_id === hq.id);
       const cInst = hqC.reduce((s, c) => s + Number(c.instant_commission||0), 0); 
@@ -99,7 +109,10 @@ export default function ReportsModule({ uniqueStates, hqLocations, rawPurchases,
       csvRows.push(`${sanitizeCSV(hq.name)},SIM Qty,${hq.sim.open},${hq.sim.purch},0,${hq.sim.sales},${hq.sim.close},${hq.sim.variance}`);
     });
     const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `FastArk_Reconciliation_${new Date().toISOString().split('T')[0]}.csv`; link.click();
+    const link = document.createElement("a"); 
+    link.href = URL.createObjectURL(blob); 
+    link.download = `FastArk_Reconciliation_${new Date().toISOString().split('T')[0]}.csv`; 
+    link.click();
   };
 
   return (
