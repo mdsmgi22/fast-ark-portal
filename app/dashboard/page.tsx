@@ -69,7 +69,8 @@ export default function AdminCommandCenter() {
         await fetchOperationalData();
       }
       
-      if (['admin', 'accountant'].includes(safeRole)) {
+      // ARCHITECTURAL FIX: Included 'manager' so the Defaulter Engine and Financial Dash load properly for them
+      if (['admin', 'accountant', 'manager'].includes(safeRole)) {
         await fetchFinancialData("monthly");
       } else {
         setLoading(false); 
@@ -297,7 +298,7 @@ export default function AdminCommandCenter() {
             <button 
               onClick={() => { 
                 if(isManagerOrAdmin) fetchOperationalData(); 
-                if(isFinanceTeam) fetchFinancialData(timeFilter); 
+                if(isFinanceTeam || isManagerOrAdmin) fetchFinancialData(timeFilter); 
               }} 
               className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md font-bold hover:bg-gray-50 shadow-sm transition text-sm"
             >
@@ -310,7 +311,8 @@ export default function AdminCommandCenter() {
         </div>
 
         {/* --- SECTION 1: LIVE FINANCIAL ENGINE --- */}
-        {isFinanceTeam && (
+        {/* ARCHITECTURAL FIX: Allowed Managers to view the live revenue engine since they now load the financial data */}
+        {(isFinanceTeam || isManagerOrAdmin) && (
           <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden animate-in fade-in">
             
             <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-col lg:flex-row justify-between items-center gap-4">
@@ -479,8 +481,9 @@ export default function AdminCommandCenter() {
             </div>
           )}
 
-          {/* FINANCE TEAM ONLY */}
-          {isFinanceTeam && (
+          {/* FINANCE & MANAGER SHARED MODULES */}
+          {/* ARCHITECTURAL FIX: Moved out of the restricted Finance block so Managers can click them */}
+          {(isFinanceTeam || isManagerOrAdmin) && (
             <>
               <div onClick={() => routeTo("/dashboard/reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📈</div>
@@ -488,19 +491,22 @@ export default function AdminCommandCenter() {
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Generate filtered Excel/CSV reports for sales and deposits.</p>
               </div>
               
+              <div onClick={() => routeTo("/dashboard/sales-verification")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
+                <div className="text-3xl mb-3">⚖</div>
+                <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
+                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
+              </div>
+            </>
+          )}
+
+          {/* FINANCE TEAM ONLY (Strictly Accountant/Admin) */}
+          {isFinanceTeam && (
+            <>
               <div onClick={() => routeTo("/dashboard/accounts")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">🏦</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Accountant Portal</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Verify partner cash deposits, OCR slips, and clear ledgers.</p>
               </div>
-
-              <div onClick={() => routeTo("/dashboard/sales-verification")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
-                <div className="text-3xl mb-3">⚖️️</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
-                <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
-              </div>
-
-
             </>
           )}
 
