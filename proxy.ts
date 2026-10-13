@@ -43,7 +43,19 @@ export function proxy(request: NextRequest) {
 
       const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
       const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
-      const managerRoutes = [...opsRoutes, '/dashboard/compliance', '/dashboard/locations', '/dashboard/messages', '/dashboard/partners', '/dashboard/banking'];
+      
+      // ARCHITECTURAL FIX: Added the missing routes to the Manager's authorized array
+      const managerRoutes = [
+        ...opsRoutes, 
+        '/dashboard/compliance', 
+        '/dashboard/locations', 
+        '/dashboard/messages', 
+        '/dashboard/partners', 
+        '/dashboard/banking',
+        '/dashboard/reports',            // <-- Explicitly permitted
+        '/dashboard/sales-verification'  // <-- Explicitly permitted
+      ];
+      
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
       const supervisorRoutes = ['/dashboard/supervisor-hub'];
 

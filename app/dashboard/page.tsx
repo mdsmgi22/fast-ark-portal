@@ -8,9 +8,6 @@ import {
 } from 'recharts';
 
 import StaffManagementEngine from "../components/StaffManagementEngine";
-// ARCHITECTURAL FIX 1: Import the modules directly into the Command Center
-import VerificationModule from "../components/mis/VerificationModule";
-import ExportModule from "../components/mis/ExportModule";
 
 const getLocalDateString = (date: Date) => {
   return date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -20,9 +17,6 @@ export default function AdminCommandCenter() {
   const router = useRouter();
   const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  
-  // ARCHITECTURAL FIX 2: Added State Engine to swap views without triggering Next.js Middleware blocks
-  const [activeView, setActiveView] = useState<'dashboard' | 'verification' | 'export'>('dashboard');
   const [isRouting, setIsRouting] = useState(false);
   
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
@@ -32,12 +26,6 @@ export default function AdminCommandCenter() {
   const [allPartners, setAllPartners] = useState<any[]>([]);
   const [rawSales, setRawSales] = useState<any[]>([]);
   const [rawDeposits, setRawDeposits] = useState<any[]>([]);
-  
-  // ARCHITECTURAL FIX 3: Centralized Ledger State for the Export Module
-  const [rawPurchases, setRawPurchases] = useState<any[]>([]);
-  const [rawCollections, setRawCollections] = useState<any[]>([]);
-  const [rawBalances, setRawBalances] = useState<any[]>([]);
-  const [rawCommissions, setRawCommissions] = useState<any[]>([]);
   
   const [timeFilter, setTimeFilter] = useState("monthly"); 
   const [geoFilter, setGeoFilter] = useState({ state: "All", dist: "All", location: "All", partner: "All" });
@@ -134,14 +122,9 @@ export default function AdminCommandCenter() {
       const startStr = getLocalDateString(startDate);
       const endStr = getLocalDateString(endDate);
 
-      // ARCHITECTURAL FIX 4: Concurrently fetch all master ledgers needed for the Export Module
-      const [salesRes, depositsRes, purRes, colRes, balRes, commRes] = await Promise.all([
+      const [salesRes, depositsRes] = await Promise.all([
         supabase.from('daily_sales_reports').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).gte('report_date', startStr).lte('report_date', endStr),
-        supabase.from('partner_deposits').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).neq('status', 'Discrepancy').gte('created_at', `${startStr}T00:00:00+05:30`).lte('created_at', `${endStr}T23:59:59+05:30`),
-        supabase.from("mis_purchases").select("*, master_ctop_accounts(master_ctop_no, location_id)").order("purchase_date", {ascending: false}),
-        supabase.from("mis_monthly_collections").select("*, locations(center_name, parent_master_id)").order("reporting_month", {ascending: false}),
-        supabase.from("mis_balances").select("*, locations(center_name), master_ctop_accounts(master_ctop_no)").order("report_date", {ascending: false}),
-        supabase.from("mis_commissions").select("*, locations(center_name), master_ctop_accounts(master_ctop_no)").order("reporting_month", {ascending: false})
+        supabase.from('partner_deposits').select(`*, active_partners (id, partner_name, locations (state, dist, center_name))`).neq('status', 'Discrepancy').gte('created_at', `${startStr}T00:00:00+05:30`).lte('created_at', `${endStr}T23:59:59+05:30`)
       ]);
 
       const validSales = salesRes.data || [];
@@ -149,10 +132,6 @@ export default function AdminCommandCenter() {
 
       setRawSales(validSales);
       setRawDeposits(validDeposits);
-      setRawPurchases(purRes.data || []);
-      setRawCollections(colRes.data || []);
-      setRawBalances(balRes.data || []);
-      setRawCommissions(commRes.data || []);
       
       extractDropdownOptions(allPartners); 
       
@@ -281,38 +260,6 @@ export default function AdminCommandCenter() {
     </div>
   );
 
-  // =========================================================================
-  // ARCHITECTURAL FIX 5: Dynamic Render Engine overrides Middleware routing
-  // =========================================================================
-  if (activeView === 'verification') {
-    return (
-      <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
-        <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
-          <button onClick={() => setActiveView('dashboard')} className="text-blue-600 font-black text-sm hover:underline flex items-center gap-2 mb-4 bg-blue-50 px-4 py-2 rounded shadow-sm border border-blue-200 w-fit transition">
-            <span>&larr;</span> Back to Command Center
-          </button>
-          <VerificationModule />
-        </div>
-      </div>
-    );
-  }
-
-  if (activeView === 'export') {
-    return (
-      <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans">
-        <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
-          <button onClick={() => setActiveView('dashboard')} className="text-blue-600 font-black text-sm hover:underline flex items-center gap-2 mb-4 bg-blue-50 px-4 py-2 rounded shadow-sm border border-blue-200 w-fit transition">
-            <span>&larr;</span> Back to Command Center
-          </button>
-          <ExportModule rawPurchases={rawPurchases} rawSales={rawSales} rawCollections={rawCollections} rawBalances={rawBalances} rawCommissions={rawCommissions} />
-        </div>
-      </div>
-    );
-  }
-
-  // =========================================================================
-  // MASTER DASHBOARD VIEW
-  // =========================================================================
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-8 font-sans relative">
       
@@ -325,7 +272,6 @@ export default function AdminCommandCenter() {
 
       <div className="max-w-7xl mx-auto space-y-8">
         
-        {/* --- HEADER --- */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-4">
           <div>
             <h1 className="text-4xl font-black text-slate-900">
@@ -353,7 +299,6 @@ export default function AdminCommandCenter() {
           </div>
         </div>
 
-        {/* --- SECTION 1: LIVE FINANCIAL ENGINE --- */}
         {(isFinanceTeam || isManagerOrAdmin) && (
           <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden animate-in fade-in">
             
@@ -431,7 +376,6 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 2: DEFAULTER TRACKING --- */}
         {(isFinanceTeam || isManagerOrAdmin) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-sm border border-red-200 overflow-hidden">
@@ -474,7 +418,6 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 3: OPERATIONAL METRICS --- */}
         {isManagerOrAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in">
             <div onClick={() => routeTo("/dashboard/applications")} className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer">
@@ -502,14 +445,12 @@ export default function AdminCommandCenter() {
           </div>
         )}
 
-        {/* --- SECTION 4: ENTERPRISE MODULES GRID --- */}
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
           {isAccountant ? "Financial Modules" : isStaff ? "Assigned Tasks" : "Enterprise Modules"}
         </h2>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
           
-          {/* MANAGER & ADMIN ONLY */}
           {isManagerOrAdmin && (
             <div onClick={() => routeTo("/dashboard/compliance")} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all hover:border-red-500 hover:-translate-y-1 group block border-t-4 border-t-red-600 cursor-pointer">
               <div className="flex justify-between items-start mb-3">
@@ -523,17 +464,15 @@ export default function AdminCommandCenter() {
             </div>
           )}
 
-          {/* FINANCE & MANAGER SHARED MODULES */}
           {(isFinanceTeam || isManagerOrAdmin) && (
             <>
-              {/* ARCHITECTURAL FIX 6: Replaced router.push with setActiveView to bypass Middleware blocks */}
-              <div onClick={() => setActiveView('export')} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
+              <div onClick={() => routeTo('/dashboard/reports')} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">📈</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">Corporate MIS Export</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Generate filtered Excel/CSV reports for sales and deposits.</p>
               </div>
               
-              <div onClick={() => setActiveView('verification')} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
+              <div onClick={() => routeTo('/dashboard/sales-verification')} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
                 <div className="text-3xl mb-3">⚖</div>
                 <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Sales Correction Audit</h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">Audit raw partner sales data and enforce financial overrides.</p>
@@ -541,7 +480,6 @@ export default function AdminCommandCenter() {
             </>
           )}
 
-          {/* FINANCE TEAM ONLY (Strictly Accountant/Admin) */}
           {isFinanceTeam && (
             <>
               <div onClick={() => routeTo("/dashboard/accounts")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer">
@@ -552,7 +490,6 @@ export default function AdminCommandCenter() {
             </>
           )}
 
-          {/* GENERAL OPS */}
           {!isAccountant && (
             <>
               <div onClick={() => routeTo("/dashboard/manager-mis")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer">
@@ -596,7 +533,6 @@ export default function AdminCommandCenter() {
             </>
           )}
 
-          {/* SUPER ADMIN EXCLUSIVES */}
           {isGodMode && (
             <>
               <div onClick={() => routeTo("/dashboard/staff-reports")} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer">
@@ -608,7 +544,6 @@ export default function AdminCommandCenter() {
           )}
         </div>
 
-        {/* --- SECTION 5: RECENT ACTIVITY --- */}
         {isManagerOrAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4 animate-in fade-in">
             
