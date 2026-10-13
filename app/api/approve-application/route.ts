@@ -46,7 +46,26 @@ export async function POST(request: Request) {
     const tempPassword = `FA@${Math.random().toString(36).slice(-6)}${new Date().getFullYear()}`;
 
     // =========================================================================
-    // 3. Automated User Provisioning (Smart Recovery Engine)
+    // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
+    // Executed FIRST to verify the application has not been processed yet
+    // =========================================================================
+    const { data: updatedQueue, error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Approved' }) 
+      .eq('id', appId)
+      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .select()
+      .single();
+
+    if (updateError) {
+      if (updateError.code === 'PGRST116') {
+        throw new Error("Double Approval Prevented: This application has already been processed by another manager.");
+      }
+      throw new Error(`Trigger Crash - Failed to update pending queue: ${updateError.message}`);
+    }
+
+    // =========================================================================
+    // 4. Automated User Provisioning (Smart Recovery Engine)
     // =========================================================================
     let authUserId = null;
 
@@ -88,25 +107,17 @@ export async function POST(request: Request) {
         }
 
         if (!authUserId) {
+          // Rollback the DB status to Pending if ghost recovery failed completely
+          await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
           throw new Error(`Ghost Auth Recovery Failed: Could not locate the hidden user for ${cleanEmail}`);
         }
       } else {
+        // Rollback the DB status to Pending on random auth crash
+        await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
         throw new Error(`Auth Creation Failed: ${authError.message}`);
       }
     } else {
       authUserId = authData.user?.id;
-    }
-
-    // =========================================================================
-    // 4. TRIGGER COLLISION FIX: Update Pending Queue FIRST
-    // =========================================================================
-    const { error: updateError } = await supabaseAdmin
-      .from('pending_applications')
-      .update({ status: 'Approved' }) 
-      .eq('id', appId);
-
-    if (updateError) {
-      throw new Error(`Trigger Crash - Failed to update pending queue: ${updateError.message}`);
     }
 
     // =========================================================================

@@ -30,6 +30,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Missing required application data' }, { status: 400 });
     }
 
+    // =========================================================================
+    // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
+    // Ensure the application wasn't approved by someone else while this manager typed their reason
+    // =========================================================================
+    const { data: updatedQueue, error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Rejected', reject_reason: rejectReason })
+      .eq('id', appId)
+      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .select()
+      .single();
+
+    if (updateError) {
+      if (updateError.code === 'PGRST116') {
+        throw new Error("Double Processing Prevented: This application was already processed by another manager.");
+      }
+      throw new Error(`Failed to update pending queue: ${updateError.message}`);
+    }
+
+
+    // 4. Download KYC Files to Server Memory
     const safeName = applicantName.replace(/[^a-zA-Z0-9]/g, '_');
     const { data: files, error: searchError } = await supabaseAdmin.storage
       .from('application_documents')
@@ -37,7 +58,6 @@ export async function POST(request: Request) {
 
     if (searchError) throw searchError;
 
-    // 3. Download KYC Files to Server Memory
     const attachments = [];
     const filesToDelete = [];
     
@@ -53,7 +73,7 @@ export async function POST(request: Request) {
     const senderEmail = 'updates@fastark.in';
     const cleanEmail = applicantEmail.trim().toLowerCase();
 
-    // 4. Communication Dispatch
+    // 5. Communication Dispatch
     await resend.emails.send({
       from: `Fast Ark Updates <${senderEmail}>`,
       to: cleanEmail,
@@ -69,18 +89,13 @@ export async function POST(request: Request) {
       attachments: attachments,
     });
 
-    // 5. Data Privacy Wipe & App Status Update
+    // 6. Data Privacy Wipe
     if (filesToDelete.length > 0) {
       await supabaseAdmin.storage.from('application_documents').remove(filesToDelete);
     }
 
-    await supabaseAdmin
-      .from('pending_applications')
-      .update({ status: 'Rejected', reject_reason: rejectReason })
-      .eq('id', appId);
-
     // =========================================================================
-    // 6. THE KILL-SWITCH: Sever Ghost Access
+    // 7. THE KILL-SWITCH: Sever Ghost Access
     // =========================================================================
     
     // Suspend the database profile aggressively

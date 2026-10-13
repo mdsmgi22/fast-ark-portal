@@ -108,6 +108,11 @@ export default function ApplicationReview() {
   };
 
   const handleApprove = async () => {
+    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
+    if (app.status !== 'Pending') {
+      return alert("This application has already been processed.");
+    }
+    
     if (!selectedLocation) {
       return alert("Mandatory: You must assign an official infrastructure location to approve this applicant.");
     }
@@ -153,11 +158,18 @@ export default function ApplicationReview() {
     } catch (error: any) {
       console.error(error);
       alert("❌ Error approving application: " + error.message);
+      // Ensure we unlock the UI if the backend request fails
       setIsProcessing(false); 
+      fetchDetails(); // Refresh to get the latest status
     }
   };
 
   const handleReject = async () => {
+    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
+    if (app.status !== 'Pending') {
+      return alert("This application has already been processed.");
+    }
+
     if (!rejectReason.trim()) {
       return alert("You must provide a reason for rejecting the application.");
     }
@@ -202,6 +214,7 @@ export default function ApplicationReview() {
       console.error(error);
       alert("❌ Error rejecting application: " + error.message);
       setIsProcessing(false);
+      fetchDetails();
     }
   };
 
@@ -240,7 +253,7 @@ export default function ApplicationReview() {
                   <p className="text-sm text-gray-500 font-bold mt-1">Submitted from IP: {app.ip_address || "Unknown"}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <span className={`font-bold px-4 py-1 rounded-full text-sm uppercase tracking-widest ${app.status === 'Rejected' ? 'bg-red-100 text-red-800 border border-red-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
+                  <span className={`font-bold px-4 py-1 rounded-full text-sm uppercase tracking-widest ${app.status === 'Rejected' ? 'bg-red-100 text-red-800 border border-red-200' : app.status === 'Approved' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
                     Status: {app.status || 'Pending'}
                   </span>
                   <button onClick={handleViewKYC} className="text-sm bg-slate-800 text-white px-4 py-2 rounded font-bold shadow hover:bg-slate-700 transition flex items-center gap-2">
@@ -324,7 +337,7 @@ export default function ApplicationReview() {
                       className="w-full border-2 border-blue-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
                       value={selectedLocation}
                       onChange={(e) => setSelectedLocation(e.target.value)}
-                      disabled={isProcessing}
+                      disabled={isProcessing || app.status !== 'Pending'}
                     >
                       <option value="" disabled>-- Select Official Center --</option>
                       {availableCenters.map((loc) => (
@@ -342,9 +355,10 @@ export default function ApplicationReview() {
                   </p>
                 )}
 
+                {/* OPTIMISTIC LOCKING SHIELD */}
                 <button 
                   onClick={handleApprove}
-                  disabled={isProcessing || !selectedLocation}
+                  disabled={isProcessing || !selectedLocation || app.status !== 'Pending'}
                   className="w-full bg-slate-900 text-white py-3.5 rounded-lg font-black hover:bg-slate-800 transition-colors shadow-md disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                 >
                   {isProcessing ? (
@@ -352,6 +366,8 @@ export default function ApplicationReview() {
                       <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin"></div>
                       Provisioning Auth...
                     </>
+                  ) : app.status === 'Approved' ? (
+                    "✅ Already Approved"
                   ) : (
                     "✅ Approve & Provision Partner"
                   )}
@@ -360,8 +376,10 @@ export default function ApplicationReview() {
                 {!showRejectForm ? (
                   <button 
                     onClick={() => setShowRejectForm(true)}
-                    disabled={isProcessing}
-                    className="w-full bg-red-50 text-red-700 py-3 rounded-lg font-bold mt-3 hover:bg-red-100 transition-colors border border-red-100 disabled:opacity-50"
+                    disabled={isProcessing || app.status !== 'Pending'}
+                    className={`w-full py-3 rounded-lg font-bold mt-3 transition-colors border ${
+                      app.status !== 'Pending' ? 'hidden' : 'bg-red-50 text-red-700 hover:bg-red-100 border-red-100 disabled:opacity-50'
+                    }`}
                   >
                     Decline Application
                   </button>
