@@ -88,7 +88,7 @@ export default function ApplicationForm() {
   };
 
   // =========================================================================
-  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE 
+  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE (Clean PostgREST Syntax)
   // Evaluates database constraints to see if the user was previously rejected
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
@@ -96,14 +96,14 @@ export default function ApplicationForm() {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // Safely formatted PostgREST query to prevent 400 Bad Request crashes
-    let orQuery = `email.eq."${formData.email}",mobile.eq."${formData.mobile}",alt_mobile.eq."${formData.mobile}",gov_id_number.eq."${formData.gov_id_number}"`;
+    // Clean syntax without double quotes prevents the 400 Bad Request URL parsing crash
+    let orQuery = `email.eq.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
     
     if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
-      orQuery += `,mobile.eq."${formData.alt_mobile}",alt_mobile.eq."${formData.alt_mobile}"`;
+      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
     }
     if (formData.pan_number && formData.pan_number.trim() !== "") {
-      orQuery += `,pan_number.eq."${formData.pan_number}"`;
+      orQuery += `,pan_number.eq.${formData.pan_number}`;
     }
 
     const { data: existingRecords, error } = await supabase
@@ -113,7 +113,7 @@ export default function ApplicationForm() {
 
     if (error) {
       console.error("Collision check error:", error);
-      return { error: "Database verification failed. Please try again.", rejectedId: null };
+      return { error: "Database verification failed. Ensure your database tables have all required columns.", rejectedId: null };
     }
 
     if (existingRecords && existingRecords.length > 0) {
@@ -124,8 +124,7 @@ export default function ApplicationForm() {
         return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
       }
 
-      // If we reach here, it means all colliding records are "Rejected". 
-      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
+      // Extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate
       return { error: null, rejectedId: existingRecords[0].id };
     }
 
@@ -355,15 +354,12 @@ export default function ApplicationForm() {
       setMessage("Saving application record...");
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
-      // =========================================================================
-      // DYNAMIC PAYLOAD FIX: The pan_number is now strictly included in the payload
-      // =========================================================================
       const dbPayload = {
         name: formData.name, 
         dob: formData.dob, 
         gender: formData.gender, 
         gov_id_number: formData.gov_id_number,
-        pan_number: formData.pan_number || null, // FIXED: Now writing to the database
+        pan_number: formData.pan_number || null,
         mobile: formData.mobile, 
         alt_mobile: formData.alt_mobile, 
         email: formData.email,
