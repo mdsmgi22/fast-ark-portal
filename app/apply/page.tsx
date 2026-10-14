@@ -88,8 +88,9 @@ export default function ApplicationForm() {
   };
 
   // =========================================================================
-  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE (Clean PostgREST Syntax)
-  // Evaluates database constraints to see if the user was previously rejected
+  // ARCHITECTURAL FIX: BULLETPROOF OVERWRITE ENGINE
+  // Uses parallel asynchronous lookups to bypass PostgREST string parsing bugs
+  // and safely ignores missing columns due to stale schema caches.
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
     const cleanMobile = formData.mobile.trim();
@@ -102,52 +103,61 @@ export default function ApplicationForm() {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // Build the query dynamically without quotes to prevent literal string matching failures
-    const conditions = [];
-    
-    if (cleanEmail) conditions.push(`email.eq.${cleanEmail}`);
-    if (cleanGovId) conditions.push(`gov_id_number.eq.${cleanGovId}`);
-    
-    if (cleanMobile) {
-      conditions.push(`mobile.eq.${cleanMobile}`);
-      conditions.push(`alt_mobile.eq.${cleanMobile}`);
-    }
-    
-    if (cleanAltMobile) {
-      conditions.push(`mobile.eq.${cleanAltMobile}`);
-      conditions.push(`alt_mobile.eq.${cleanAltMobile}`);
-    }
-    
-    if (cleanPan) {
-      conditions.push(`pan_number.eq.${cleanPan}`);
-    }
+    try {
+      // 1. Build an array of isolated database checks
+      const lookups = [
+        supabase.from('pending_applications').select('id, status').eq('email', cleanEmail),
+        supabase.from('pending_applications').select('id, status').eq('mobile', cleanMobile),
+        supabase.from('pending_applications').select('id, status').eq('gov_id_number', cleanGovId)
+      ];
 
-    const orQuery = conditions.join(',');
-
-    const { data: existingRecords, error } = await supabase
-      .from('pending_applications')
-      .select('id, status')
-      .or(orQuery);
-
-    if (error) {
-      console.error("Collision check error:", error);
-      return { error: "Database verification failed. Ensure your database tables have all required columns.", rejectedId: null };
-    }
-
-    if (existingRecords && existingRecords.length > 0) {
-      // If ANY colliding record is currently Active or Pending, block the submission
-      const hasActiveCollision = existingRecords.some(r => r.status !== 'Rejected');
-      
-      if (hasActiveCollision) {
-        return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
+      if (cleanAltMobile) {
+        lookups.push(supabase.from('pending_applications').select('id, status').eq('alt_mobile', cleanAltMobile));
+        lookups.push(supabase.from('pending_applications').select('id, status').eq('mobile', cleanAltMobile));
       }
 
-      // If we reach here, it means all colliding records are "Rejected". 
-      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
-      return { error: null, rejectedId: existingRecords[0].id };
-    }
+      if (cleanPan) {
+        lookups.push(supabase.from('pending_applications').select('id, status').eq('pan_number', cleanPan));
+      }
 
-    return { error: null, rejectedId: null }; 
+      // 2. Execute all checks simultaneously
+      const results = await Promise.all(lookups);
+      let allMatchedRecords: any[] = [];
+
+      for (const res of results) {
+        // If an error occurs, explicitly check if it's the 42703 (missing pan_number) bug.
+        // If it is, we safely ignore it to prevent the entire app from crashing.
+        if (res.error) {
+          if (res.error.code !== '42703') {
+            console.error("Collision check error:", res.error);
+            return { error: "Database verification failed. Please try again.", rejectedId: null };
+          }
+        }
+        
+        // Aggregate all found records
+        if (res.data && res.data.length > 0) {
+          allMatchedRecords = [...allMatchedRecords, ...res.data];
+        }
+      }
+
+      // 3. Evaluate the aggregated results
+      if (allMatchedRecords.length > 0) {
+        const hasActiveCollision = allMatchedRecords.some(r => r.status !== 'Rejected');
+        
+        if (hasActiveCollision) {
+          return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
+        }
+
+        // If ALL found records are 'Rejected', return the ID of the first one to overwrite
+        return { error: null, rejectedId: allMatchedRecords[0].id };
+      }
+
+      return { error: null, rejectedId: null }; 
+
+    } catch (err) {
+      console.error("Unexpected error in collision check:", err);
+      return { error: "System verification failed. Please try again.", rejectedId: null };
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -91,23 +91,41 @@ export default function ApplicationForm() {
   };
 
   // =========================================================================
-  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE 
+  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE (Clean PostgREST Syntax)
   // Evaluates database constraints to see if the user was previously rejected
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
-    if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
+    const cleanMobile = formData.mobile.trim();
+    const cleanAltMobile = formData.alt_mobile.trim();
+    const cleanEmail = formData.email.trim().toLowerCase();
+    const cleanGovId = formData.gov_id_number.trim();
+    const cleanPan = formData.pan_number.trim();
+
+    if (cleanAltMobile && cleanMobile === cleanAltMobile) {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // Build a single comprehensive OR query to find ALL collisions across unique identifiers
-    let orQuery = `email.ilike.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
+    // Build the query dynamically without quotes to prevent literal string matching failures
+    const conditions = [];
     
-    if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
-      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
+    if (cleanEmail) conditions.push(`email.eq.${cleanEmail}`);
+    if (cleanGovId) conditions.push(`gov_id_number.eq.${cleanGovId}`);
+    
+    if (cleanMobile) {
+      conditions.push(`mobile.eq.${cleanMobile}`);
+      conditions.push(`alt_mobile.eq.${cleanMobile}`);
     }
-    if (formData.pan_number && formData.pan_number.trim() !== "") {
-      orQuery += `,pan_number.eq.${formData.pan_number}`;
+    
+    if (cleanAltMobile) {
+      conditions.push(`mobile.eq.${cleanAltMobile}`);
+      conditions.push(`alt_mobile.eq.${cleanAltMobile}`);
     }
+    
+    if (cleanPan) {
+      conditions.push(`pan_number.eq.${cleanPan}`);
+    }
+
+    const orQuery = conditions.join(',');
 
     const { data: existingRecords, error } = await supabase
       .from('pending_applications')
@@ -116,7 +134,7 @@ export default function ApplicationForm() {
 
     if (error) {
       console.error("Collision check error:", error);
-      return { error: "Database verification failed. Please try again.", rejectedId: null };
+      return { error: "Database verification failed. Ensure your database tables have all required columns.", rejectedId: null };
     }
 
     if (existingRecords && existingRecords.length > 0) {
@@ -359,17 +377,29 @@ export default function ApplicationForm() {
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
       const dbPayload = {
-        name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
-        mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
-        qualification: formData.qualification, father_name: combinedGuardian,
-        address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
-        taluk: formData.taluk, dist: formData.dist, state: formData.state,
-        requested_role: formData.requested_role, center_name: formData.center_name,
+        name: formData.name, 
+        dob: formData.dob, 
+        gender: formData.gender, 
+        gov_id_number: formData.gov_id_number,
+        pan_number: formData.pan_number || null, 
+        mobile: formData.mobile, 
+        alt_mobile: formData.alt_mobile, 
+        email: formData.email.trim().toLowerCase(),
+        qualification: formData.qualification, 
+        father_name: combinedGuardian,
+        address_1: formData.address_1, 
+        address_2: formData.address_2, 
+        pin_code: formData.pin_code,
+        taluk: formData.taluk, 
+        dist: formData.dist, 
+        state: formData.state,
+        requested_role: formData.requested_role, 
+        center_name: formData.center_name,
         terms_accepted: formData.terms_accepted,
         ip_address: userIp,
         photo_path: savedPhotoPath,
-        status: 'Pending', // Force reset status to Pending
-        reject_reason: null // Clear any old rejection remarks
+        status: 'Pending', 
+        reject_reason: null 
       };
 
       // =========================================================================
@@ -7822,6 +7852,11 @@ export default function ApplicationReview() {
   };
 
   const handleApprove = async () => {
+    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
+    if (app.status !== 'Pending') {
+      return alert("This application has already been processed.");
+    }
+    
     if (!selectedLocation) {
       return alert("Mandatory: You must assign an official infrastructure location to approve this applicant.");
     }
@@ -7867,11 +7902,18 @@ export default function ApplicationReview() {
     } catch (error: any) {
       console.error(error);
       alert("❌ Error approving application: " + error.message);
+      // Ensure we unlock the UI if the backend request fails
       setIsProcessing(false); 
+      fetchDetails(); // Refresh to get the latest status
     }
   };
 
   const handleReject = async () => {
+    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
+    if (app.status !== 'Pending') {
+      return alert("This application has already been processed.");
+    }
+
     if (!rejectReason.trim()) {
       return alert("You must provide a reason for rejecting the application.");
     }
@@ -7916,6 +7958,7 @@ export default function ApplicationReview() {
       console.error(error);
       alert("❌ Error rejecting application: " + error.message);
       setIsProcessing(false);
+      fetchDetails();
     }
   };
 
@@ -7954,7 +7997,7 @@ export default function ApplicationReview() {
                   <p className="text-sm text-gray-500 font-bold mt-1">Submitted from IP: {app.ip_address || "Unknown"}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <span className={`font-bold px-4 py-1 rounded-full text-sm uppercase tracking-widest ${app.status === 'Rejected' ? 'bg-red-100 text-red-800 border border-red-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
+                  <span className={`font-bold px-4 py-1 rounded-full text-sm uppercase tracking-widest ${app.status === 'Rejected' ? 'bg-red-100 text-red-800 border border-red-200' : app.status === 'Approved' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
                     Status: {app.status || 'Pending'}
                   </span>
                   <button onClick={handleViewKYC} className="text-sm bg-slate-800 text-white px-4 py-2 rounded font-bold shadow hover:bg-slate-700 transition flex items-center gap-2">
@@ -8038,7 +8081,7 @@ export default function ApplicationReview() {
                       className="w-full border-2 border-blue-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
                       value={selectedLocation}
                       onChange={(e) => setSelectedLocation(e.target.value)}
-                      disabled={isProcessing}
+                      disabled={isProcessing || app.status !== 'Pending'}
                     >
                       <option value="" disabled>-- Select Official Center --</option>
                       {availableCenters.map((loc) => (
@@ -8056,9 +8099,10 @@ export default function ApplicationReview() {
                   </p>
                 )}
 
+                {/* OPTIMISTIC LOCKING SHIELD */}
                 <button 
                   onClick={handleApprove}
-                  disabled={isProcessing || !selectedLocation}
+                  disabled={isProcessing || !selectedLocation || app.status !== 'Pending'}
                   className="w-full bg-slate-900 text-white py-3.5 rounded-lg font-black hover:bg-slate-800 transition-colors shadow-md disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                 >
                   {isProcessing ? (
@@ -8066,6 +8110,8 @@ export default function ApplicationReview() {
                       <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin"></div>
                       Provisioning Auth...
                     </>
+                  ) : app.status === 'Approved' ? (
+                    "✅ Already Approved"
                   ) : (
                     "✅ Approve & Provision Partner"
                   )}
@@ -8074,8 +8120,10 @@ export default function ApplicationReview() {
                 {!showRejectForm ? (
                   <button 
                     onClick={() => setShowRejectForm(true)}
-                    disabled={isProcessing}
-                    className="w-full bg-red-50 text-red-700 py-3 rounded-lg font-bold mt-3 hover:bg-red-100 transition-colors border border-red-100 disabled:opacity-50"
+                    disabled={isProcessing || app.status !== 'Pending'}
+                    className={`w-full py-3 rounded-lg font-bold mt-3 transition-colors border ${
+                      app.status !== 'Pending' ? 'hidden' : 'bg-red-50 text-red-700 hover:bg-red-100 border-red-100 disabled:opacity-50'
+                    }`}
                   >
                     Decline Application
                   </button>
@@ -15383,7 +15431,26 @@ export async function POST(request: Request) {
     const tempPassword = `FA@${Math.random().toString(36).slice(-6)}${new Date().getFullYear()}`;
 
     // =========================================================================
-    // 3. Automated User Provisioning (Smart Recovery Engine)
+    // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
+    // Executed FIRST to verify the application has not been processed yet
+    // =========================================================================
+    const { data: updatedQueue, error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Approved' }) 
+      .eq('id', appId)
+      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .select()
+      .single();
+
+    if (updateError) {
+      if (updateError.code === 'PGRST116') {
+        throw new Error("Double Approval Prevented: This application has already been processed by another manager.");
+      }
+      throw new Error(`Trigger Crash - Failed to update pending queue: ${updateError.message}`);
+    }
+
+    // =========================================================================
+    // 4. Automated User Provisioning (Smart Recovery Engine)
     // =========================================================================
     let authUserId = null;
 
@@ -15425,25 +15492,17 @@ export async function POST(request: Request) {
         }
 
         if (!authUserId) {
+          // Rollback the DB status to Pending if ghost recovery failed completely
+          await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
           throw new Error(`Ghost Auth Recovery Failed: Could not locate the hidden user for ${cleanEmail}`);
         }
       } else {
+        // Rollback the DB status to Pending on random auth crash
+        await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
         throw new Error(`Auth Creation Failed: ${authError.message}`);
       }
     } else {
       authUserId = authData.user?.id;
-    }
-
-    // =========================================================================
-    // 4. TRIGGER COLLISION FIX: Update Pending Queue FIRST
-    // =========================================================================
-    const { error: updateError } = await supabaseAdmin
-      .from('pending_applications')
-      .update({ status: 'Approved' }) 
-      .eq('id', appId);
-
-    if (updateError) {
-      throw new Error(`Trigger Crash - Failed to update pending queue: ${updateError.message}`);
     }
 
     // =========================================================================
@@ -15697,6 +15756,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Missing required application data' }, { status: 400 });
     }
 
+    // =========================================================================
+    // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
+    // Ensure the application wasn't approved by someone else while this manager typed their reason
+    // =========================================================================
+    const { data: updatedQueue, error: updateError } = await supabaseAdmin
+      .from('pending_applications')
+      .update({ status: 'Rejected', reject_reason: rejectReason })
+      .eq('id', appId)
+      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .select()
+      .single();
+
+    if (updateError) {
+      if (updateError.code === 'PGRST116') {
+        throw new Error("Double Processing Prevented: This application was already processed by another manager.");
+      }
+      throw new Error(`Failed to update pending queue: ${updateError.message}`);
+    }
+
+
+    // 4. Download KYC Files to Server Memory
     const safeName = applicantName.replace(/[^a-zA-Z0-9]/g, '_');
     const { data: files, error: searchError } = await supabaseAdmin.storage
       .from('application_documents')
@@ -15704,7 +15784,6 @@ export async function POST(request: Request) {
 
     if (searchError) throw searchError;
 
-    // 3. Download KYC Files to Server Memory
     const attachments = [];
     const filesToDelete = [];
     
@@ -15720,7 +15799,7 @@ export async function POST(request: Request) {
     const senderEmail = 'updates@fastark.in';
     const cleanEmail = applicantEmail.trim().toLowerCase();
 
-    // 4. Communication Dispatch
+    // 5. Communication Dispatch
     await resend.emails.send({
       from: `Fast Ark Updates <${senderEmail}>`,
       to: cleanEmail,
@@ -15736,18 +15815,13 @@ export async function POST(request: Request) {
       attachments: attachments,
     });
 
-    // 5. Data Privacy Wipe & App Status Update
+    // 6. Data Privacy Wipe
     if (filesToDelete.length > 0) {
       await supabaseAdmin.storage.from('application_documents').remove(filesToDelete);
     }
 
-    await supabaseAdmin
-      .from('pending_applications')
-      .update({ status: 'Rejected', reject_reason: rejectReason })
-      .eq('id', appId);
-
     // =========================================================================
-    // 6. THE KILL-SWITCH: Sever Ghost Access
+    // 7. THE KILL-SWITCH: Sever Ghost Access
     // =========================================================================
     
     // Suspend the database profile aggressively
