@@ -96,8 +96,7 @@ export default function ApplicationForm() {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // BUG FIX: PostgREST requires string values to be wrapped in double quotes 
-    // within an .or() string, otherwise it throws a 400 Bad Request parsing error.
+    // Safely formatted PostgREST query to prevent 400 Bad Request crashes
     let orQuery = `email.eq."${formData.email}",mobile.eq."${formData.mobile}",alt_mobile.eq."${formData.mobile}",gov_id_number.eq."${formData.gov_id_number}"`;
     
     if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
@@ -356,18 +355,33 @@ export default function ApplicationForm() {
       setMessage("Saving application record...");
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
+      // =========================================================================
+      // DYNAMIC PAYLOAD FIX: The pan_number is now strictly included in the payload
+      // =========================================================================
       const dbPayload = {
-        name: formData.name, dob: formData.dob, gender: formData.gender, gov_id_number: formData.gov_id_number,
-        mobile: formData.mobile, alt_mobile: formData.alt_mobile, email: formData.email,
-        qualification: formData.qualification, father_name: combinedGuardian,
-        address_1: formData.address_1, address_2: formData.address_2, pin_code: formData.pin_code,
-        taluk: formData.taluk, dist: formData.dist, state: formData.state,
-        requested_role: formData.requested_role, center_name: formData.center_name,
+        name: formData.name, 
+        dob: formData.dob, 
+        gender: formData.gender, 
+        gov_id_number: formData.gov_id_number,
+        pan_number: formData.pan_number || null, // FIXED: Now writing to the database
+        mobile: formData.mobile, 
+        alt_mobile: formData.alt_mobile, 
+        email: formData.email,
+        qualification: formData.qualification, 
+        father_name: combinedGuardian,
+        address_1: formData.address_1, 
+        address_2: formData.address_2, 
+        pin_code: formData.pin_code,
+        taluk: formData.taluk, 
+        dist: formData.dist, 
+        state: formData.state,
+        requested_role: formData.requested_role, 
+        center_name: formData.center_name,
         terms_accepted: formData.terms_accepted,
         ip_address: userIp,
         photo_path: savedPhotoPath,
-        status: 'Pending', // Force reset status to Pending
-        reject_reason: null // Clear any old rejection remarks
+        status: 'Pending', 
+        reject_reason: null 
       };
 
       // =========================================================================
