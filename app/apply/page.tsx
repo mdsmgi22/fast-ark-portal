@@ -92,19 +92,37 @@ export default function ApplicationForm() {
   // Evaluates database constraints to see if the user was previously rejected
   // =========================================================================
   const checkDuplicatesAndRejections = async () => {
-    if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
+    const cleanMobile = formData.mobile.trim();
+    const cleanAltMobile = formData.alt_mobile.trim();
+    const cleanEmail = formData.email.trim().toLowerCase();
+    const cleanGovId = formData.gov_id_number.trim();
+    const cleanPan = formData.pan_number.trim();
+
+    if (cleanAltMobile && cleanMobile === cleanAltMobile) {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // Clean syntax without double quotes prevents the 400 Bad Request URL parsing crash
-    let orQuery = `email.eq.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
+    // Build the query dynamically without quotes to prevent literal string matching failures
+    const conditions = [];
     
-    if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
-      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
+    if (cleanEmail) conditions.push(`email.eq.${cleanEmail}`);
+    if (cleanGovId) conditions.push(`gov_id_number.eq.${cleanGovId}`);
+    
+    if (cleanMobile) {
+      conditions.push(`mobile.eq.${cleanMobile}`);
+      conditions.push(`alt_mobile.eq.${cleanMobile}`);
     }
-    if (formData.pan_number && formData.pan_number.trim() !== "") {
-      orQuery += `,pan_number.eq.${formData.pan_number}`;
+    
+    if (cleanAltMobile) {
+      conditions.push(`mobile.eq.${cleanAltMobile}`);
+      conditions.push(`alt_mobile.eq.${cleanAltMobile}`);
     }
+    
+    if (cleanPan) {
+      conditions.push(`pan_number.eq.${cleanPan}`);
+    }
+
+    const orQuery = conditions.join(',');
 
     const { data: existingRecords, error } = await supabase
       .from('pending_applications')
@@ -124,7 +142,8 @@ export default function ApplicationForm() {
         return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
       }
 
-      // Extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate
+      // If we reach here, it means all colliding records are "Rejected". 
+      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
       return { error: null, rejectedId: existingRecords[0].id };
     }
 
@@ -359,10 +378,10 @@ export default function ApplicationForm() {
         dob: formData.dob, 
         gender: formData.gender, 
         gov_id_number: formData.gov_id_number,
-        pan_number: formData.pan_number || null,
+        pan_number: formData.pan_number || null, 
         mobile: formData.mobile, 
         alt_mobile: formData.alt_mobile, 
-        email: formData.email,
+        email: formData.email.trim().toLowerCase(),
         qualification: formData.qualification, 
         father_name: combinedGuardian,
         address_1: formData.address_1, 
