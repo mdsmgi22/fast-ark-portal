@@ -96,14 +96,15 @@ export default function ApplicationForm() {
       return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
     }
 
-    // Build a single comprehensive OR query to find ALL collisions across unique identifiers
-    let orQuery = `email.ilike.${formData.email},mobile.eq.${formData.mobile},alt_mobile.eq.${formData.mobile},gov_id_number.eq.${formData.gov_id_number}`;
+    // BUG FIX: PostgREST requires string values to be wrapped in double quotes 
+    // within an .or() string, otherwise it throws a 400 Bad Request parsing error.
+    let orQuery = `email.eq."${formData.email}",mobile.eq."${formData.mobile}",alt_mobile.eq."${formData.mobile}",gov_id_number.eq."${formData.gov_id_number}"`;
     
     if (formData.alt_mobile && formData.alt_mobile.trim() !== "") {
-      orQuery += `,mobile.eq.${formData.alt_mobile},alt_mobile.eq.${formData.alt_mobile}`;
+      orQuery += `,mobile.eq."${formData.alt_mobile}",alt_mobile.eq."${formData.alt_mobile}"`;
     }
     if (formData.pan_number && formData.pan_number.trim() !== "") {
-      orQuery += `,pan_number.eq.${formData.pan_number}`;
+      orQuery += `,pan_number.eq."${formData.pan_number}"`;
     }
 
     const { data: existingRecords, error } = await supabase
