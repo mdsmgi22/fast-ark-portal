@@ -10,10 +10,15 @@ const sanitizeCSV = (val: unknown): string => {
 
 const numInputClass = "w-full border border-slate-300 p-2.5 rounded-lg font-bold outline-none focus:ring-2 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
-export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBalances, fetchArchitectureAndReports }: any) {
+export default function BalancesModule({ hqLocations, uniqueStates, mappedMasterCtops, rawBalances, fetchArchitectureAndReports }: any) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingBalanceId, setEditingBalanceId] = useState<string | null>(null);
   
+  // Cascade Filter States for Ledger View
+  const [balMonthFilter, setBalMonthFilter] = useState("");
+  const [balStateFilter, setBalStateFilter] = useState("ALL");
+  const [balHqFilter, setBalHqFilter] = useState("ALL");
+
   const [balanceForm, setBalanceForm] = useState({
     report_date: "",
     location_id: "",
@@ -28,6 +33,7 @@ export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBala
   useEffect(() => {
     const istTime = new Date(new Date().getTime() + (330 * 60000));
     setBalanceForm(prev => ({...prev, report_date: istTime.toISOString().split('T')[0]}));
+    setBalMonthFilter(istTime.toISOString().substring(0, 7));
   }, []);
 
   const preventNegativeScroll = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -102,10 +108,18 @@ export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBala
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // --- NEW: CASCADE FILTER ENGINE ---
+  const filteredBalances = rawBalances.filter((b: any) => {
+    let mMatch = balMonthFilter === "ALL" || b.report_date.startsWith(balMonthFilter);
+    let sMatch = balStateFilter === "ALL" || b.locations?.state === balStateFilter;
+    let hMatch = balHqFilter === "ALL" || b.location_id?.toString() === balHqFilter;
+    return mMatch && sMatch && hMatch;
+  });
+
   const downloadCSV = () => {
-    if (rawBalances.length === 0) return alert("No data available to export.");
+    if (filteredBalances.length === 0) return alert("No data available to export.");
     const csvContent = "Date,Type,Location,CTOP,CBP_Qty,CTOP_Qty,SIM_Qty\n" + 
-      rawBalances.map((r: any) => 
+      filteredBalances.map((r: any) => 
       `${r.report_date},${r.entry_type},${sanitizeCSV(r.locations?.center_name)},${r.master_ctop_accounts?.master_ctop_no},${r.cbp_qty},${r.ctop_qty},${r.sim_qty}`
     ).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -187,13 +201,27 @@ export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBala
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
-          <h3 className="font-black tracking-widest uppercase text-xs">Recent Master Balances</h3>
-          <button onClick={downloadCSV} className="bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded text-[10px] font-bold shadow transition">📥 Export CSV</button>
+        <div className="p-4 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-white">
+          <h3 className="font-black tracking-widest uppercase text-xs">Master Balances Ledger</h3>
+          
+          {/* --- NEW: CASCADE FILTER ENGINE --- */}
+          <div className="flex flex-wrap gap-3 w-full md:w-auto">
+            <select value={balStateFilter} onChange={(e) => { setBalStateFilter(e.target.value); setBalHqFilter("ALL"); }} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-indigo-400 transition">
+              <option value="ALL">All States</option>
+              {uniqueStates?.map((st: string) => <option key={st} value={st}>{st}</option>)}
+            </select>
+            <select value={balHqFilter} onChange={(e) => setBalHqFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded max-w-[200px] outline-none focus:border-indigo-400 transition">
+              <option value="ALL">All HQ Hubs</option>
+              {hqLocations.filter((h: any) => balStateFilter === "ALL" || h.state === balStateFilter).map((h: any) => <option key={h.id} value={h.id}>{h.center_name}</option>)}
+            </select>
+            <input type="month" value={balMonthFilter} onChange={(e) => setBalMonthFilter(e.target.value)} className="bg-slate-800 border border-slate-700 text-white text-xs font-bold p-2 rounded outline-none focus:border-indigo-400 transition" />
+            <button onClick={downloadCSV} className="bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded text-[10px] font-black text-white uppercase shadow transition ml-auto">📥 Export CSV</button>
+          </div>
         </div>
-        <div className="overflow-x-auto">
+        
+        <div className="overflow-x-auto max-h-[600px]">
           <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
+            <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 sticky top-0 z-10 border-b border-slate-200">
               <tr>
                 <th className="p-4 font-black">Date & Type</th>
                 <th className="p-4 font-black">Master Location & CTOP</th>
@@ -204,10 +232,10 @@ export default function BalancesModule({ hqLocations, mappedMasterCtops, rawBala
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rawBalances.length === 0 ? (
-                <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold">No balance records logged yet.</td></tr>
+              {filteredBalances.length === 0 ? (
+                <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold">No balance records logged for this filter.</td></tr>
               ) : (
-                rawBalances.slice(0, 50).map((bal: any) => (
+                filteredBalances.map((bal: any) => (
                   <tr key={bal.id} className={`transition ${editingBalanceId === bal.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
                     <td className="p-4">
                       <p className="font-black text-slate-900">{bal.report_date}</p>
