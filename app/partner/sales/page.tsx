@@ -254,7 +254,8 @@ export default function PartnerSalesReport() {
         }
       }
 
-      const finalStatus = isZeroBusiness ? 'No Deposit Required' : 'Pending Deposit';
+      // FIX: Always use the DB-compliant status. Zero business is tracked via the reason column.
+      const finalStatus = 'Pending Deposit';
       
       const payload = {
         partner_id: partner.id,

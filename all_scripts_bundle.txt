@@ -90,69 +90,6 @@ export default function ApplicationForm() {
     }
   };
 
-  // =========================================================================
-  // ARCHITECTURAL FIX: SMART OVERWRITE ENGINE (Clean PostgREST Syntax)
-  // Evaluates database constraints to see if the user was previously rejected
-  // =========================================================================
-  const checkDuplicatesAndRejections = async () => {
-    const cleanMobile = formData.mobile.trim();
-    const cleanAltMobile = formData.alt_mobile.trim();
-    const cleanEmail = formData.email.trim().toLowerCase();
-    const cleanGovId = formData.gov_id_number.trim();
-    const cleanPan = formData.pan_number.trim();
-
-    if (cleanAltMobile && cleanMobile === cleanAltMobile) {
-      return { error: "Alternative mobile number cannot be the exact same as your primary mobile number.", rejectedId: null };
-    }
-
-    // Build the query dynamically without quotes to prevent literal string matching failures
-    const conditions = [];
-    
-    if (cleanEmail) conditions.push(`email.eq.${cleanEmail}`);
-    if (cleanGovId) conditions.push(`gov_id_number.eq.${cleanGovId}`);
-    
-    if (cleanMobile) {
-      conditions.push(`mobile.eq.${cleanMobile}`);
-      conditions.push(`alt_mobile.eq.${cleanMobile}`);
-    }
-    
-    if (cleanAltMobile) {
-      conditions.push(`mobile.eq.${cleanAltMobile}`);
-      conditions.push(`alt_mobile.eq.${cleanAltMobile}`);
-    }
-    
-    if (cleanPan) {
-      conditions.push(`pan_number.eq.${cleanPan}`);
-    }
-
-    const orQuery = conditions.join(',');
-
-    const { data: existingRecords, error } = await supabase
-      .from('pending_applications')
-      .select('id, status')
-      .or(orQuery);
-
-    if (error) {
-      console.error("Collision check error:", error);
-      return { error: "Database verification failed. Ensure your database tables have all required columns.", rejectedId: null };
-    }
-
-    if (existingRecords && existingRecords.length > 0) {
-      // If ANY colliding record is currently Active or Pending, block the submission
-      const hasActiveCollision = existingRecords.some(r => r.status !== 'Rejected');
-      
-      if (hasActiveCollision) {
-        return { error: `Database Block: A record with this Email, Mobile, Gov ID, or PAN is already registered and under process.`, rejectedId: null };
-      }
-
-      // If we reach here, it means all colliding records are "Rejected". 
-      // We extract the ID of the first match so we can OVERWRITE it instead of inserting a duplicate!
-      return { error: null, rejectedId: existingRecords[0].id };
-    }
-
-    return { error: null, rejectedId: null }; 
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const formElement = e.currentTarget as HTMLFormElement;
@@ -178,6 +115,10 @@ export default function ApplicationForm() {
     if (formData.mobile.length !== 10) return showError("Validation Error: Primary Mobile Number must be exactly 10 digits.");
     if (formData.alt_mobile && formData.alt_mobile.length !== 10) return showError("Validation Error: Alternative Mobile Number must be exactly 10 digits.");
     
+    if (formData.alt_mobile && formData.mobile === formData.alt_mobile) {
+      return showError("Validation Error: Alternative mobile number cannot be the exact same as your primary mobile number.");
+    }
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(formData.email)) return showError("Validation Error: Please enter a valid lowercase Email Address.");
 
@@ -190,13 +131,33 @@ export default function ApplicationForm() {
     if (!files.photo) return showError("Please upload your Passport Size Photo.");
     
     setLoading(true);
-    setMessage("Validating application data...");
+    setMessage("Verifying application identity via secure backend...");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    // Evaluate duplicates and grab the rejected ID (if it exists)
-    const { error: duplicateErrorMsg, rejectedId } = await checkDuplicatesAndRejections();
-    if (duplicateErrorMsg) {
-      return showError(duplicateErrorMsg); 
+    // =========================================================================
+    // 1. SECURE PRE-FLIGHT CHECK (Bypasses RLS limits)
+    // =========================================================================
+    let rejectedIdToUse = null;
+    try {
+      const verifyRes = await fetch('/api/verify-applicant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: formData.email.trim().toLowerCase(),
+          mobile: formData.mobile.trim(),
+          alt_mobile: formData.alt_mobile.trim(),
+          gov_id_number: formData.gov_id_number.trim(),
+          pan_number: formData.pan_number.trim()
+        })
+      });
+      
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok) {
+        return showError(verifyData.error || "Identity verification failed.");
+      }
+      rejectedIdToUse = verifyData.rejectedId;
+    } catch (err) {
+      return showError("Network error during security verification. Please try again.");
     }
 
     try {
@@ -285,7 +246,6 @@ export default function ApplicationForm() {
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
       formPage.drawText(formStampText, { x: 10, y: 6, size: 7, font: boldFont, color: rgb(1, 1, 1) });
 
-
       // =========================================================================
       // 🚀 APPEND KYC DOCUMENTS BEHIND THE A4 FORM
       // =========================================================================
@@ -351,7 +311,7 @@ export default function ApplicationForm() {
       const safeName = formData.name.replace(/[^a-zA-Z0-9]/g, '_');
       const pdfFileName = `${safeName}_${Date.now()}_KYC.pdf`;
 
-      setMessage("Uploading secure KYC PDF...");
+      setMessage("Uploading secure KYC PDF to the Vault...");
       const { error: uploadError } = await supabase.storage
         .from('application_documents')
         .upload(pdfFileName, mergedPdfBytes, { contentType: 'application/pdf' });
@@ -373,7 +333,7 @@ export default function ApplicationForm() {
         savedPhotoPath = photoData.path; 
       }
 
-      setMessage("Saving application record...");
+      setMessage("Committing application record securely...");
       const combinedGuardian = `${formData.guardian_relation}: ${formData.guardian_name}`;
 
       const dbPayload = {
@@ -403,23 +363,17 @@ export default function ApplicationForm() {
       };
 
       // =========================================================================
-      // DYNAMIC UPSERT: Overwrite if they were rejected, otherwise insert new
+      // 2. SECURE POST-FLIGHT COMMIT (Bypasses RLS limits)
       // =========================================================================
-      let dbError;
-
-      if (rejectedId) {
-        const { error } = await supabase.from('pending_applications').update(dbPayload).eq('id', rejectedId);
-        dbError = error;
-      } else {
-        const { error } = await supabase.from('pending_applications').insert([dbPayload]);
-        dbError = error;
-      }
+      const submitRes = await fetch('/api/submit-application', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dbPayload, rejectedId: rejectedIdToUse })
+      });
       
-      if (dbError) {
-        if (dbError.code === '23505') {
-          return showError("Database Block: A record with this Email, Mobile, Gov ID, or PAN already exists securely in the database. If you were rejected, ensure you are updating your exact previous application.");
-        }
-        throw dbError; 
+      const submitData = await submitRes.json();
+      if (!submitRes.ok) {
+        return showError(submitData.error || "Database commit failed. Please try again.");
       }
 
       setFormData(initialFormState);
@@ -2203,6 +2157,7 @@ export default function PartnerSalesReport() {
     </div>
   );
 }
+
 
 ================================================================================
 FILE PATH: ./app/partner/terms/page.tsx
@@ -15201,6 +15156,69 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
 });
 
 ================================================================================
+FILE PATH: ./app/api/verify-applicant/route.ts
+================================================================================
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+export async function POST(request: Request) {
+  try {
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const payload = await request.json();
+
+    // 1. Parallel Lookups bypass the buggy .or() string parser
+    const lookups = [
+      supabaseAdmin.from('pending_applications').select('id, status').eq('email', payload.email),
+      supabaseAdmin.from('pending_applications').select('id, status').eq('mobile', payload.mobile),
+      supabaseAdmin.from('pending_applications').select('id, status').eq('gov_id_number', payload.gov_id_number)
+    ];
+    
+    if (payload.alt_mobile) {
+      lookups.push(supabaseAdmin.from('pending_applications').select('id, status').eq('alt_mobile', payload.alt_mobile));
+      lookups.push(supabaseAdmin.from('pending_applications').select('id, status').eq('mobile', payload.alt_mobile));
+    }
+    
+    if (payload.pan_number) {
+      lookups.push(supabaseAdmin.from('pending_applications').select('id, status').eq('pan_number', payload.pan_number));
+    }
+
+    const results = await Promise.all(lookups);
+    let allMatchedRecords: any[] = [];
+
+    for (const res of results) {
+      // Safely ignore missing column errors if the DB schema hasn't fully updated
+      if (res.error && res.error.code !== '42703') {
+        throw new Error("Database lookup failed.");
+      }
+      if (res.data && res.data.length > 0) {
+        allMatchedRecords = [...allMatchedRecords, ...res.data];
+      }
+    }
+
+    if (allMatchedRecords.length > 0) {
+      // If ANY record is NOT 'Rejected', block it
+      const hasActiveCollision = allMatchedRecords.some((r: any) => r.status !== 'Rejected');
+      if (hasActiveCollision) {
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Database Block: A record with this Identity (Email/Mobile/ID) is already registered and under process.' 
+        }, { status: 409 });
+      }
+      
+      // If ALL collisions are 'Rejected', return the ID to overwrite
+      return NextResponse.json({ success: true, rejectedId: allMatchedRecords[0].id });
+    }
+
+    return NextResponse.json({ success: true, rejectedId: null });
+  } catch (error: any) {
+     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+================================================================================
 FILE PATH: ./app/api/create-staff/route.ts
 ================================================================================
 import { NextResponse } from 'next/server';
@@ -15853,6 +15871,42 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error('API Error:', error);
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+================================================================================
+FILE PATH: ./app/api/submit-application/route.ts
+================================================================================
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+export async function POST(request: Request) {
+  try {
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    const { dbPayload, rejectedId } = await request.json();
+
+    if (rejectedId) {
+      // Securely overwrite the previously rejected record
+      const { error } = await supabaseAdmin.from('pending_applications').update(dbPayload).eq('id', rejectedId);
+      if (error) throw error;
+    } else {
+      // Insert a brand new applicant
+      const { error } = await supabaseAdmin.from('pending_applications').insert([dbPayload]);
+      if (error) {
+        if (error.code === '23505') {
+           return NextResponse.json({ success: false, error: 'Database Block: A record with this identity already exists securely in the database.' }, { status: 409 });
+        }
+        throw error;
+      }
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
