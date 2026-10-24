@@ -1,4 +1,4 @@
-\// FILE PATH: ./app/api/reject-application/route.ts
+// FILE PATH: ./app/api/reject-application/route.ts
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
@@ -12,9 +12,7 @@ export async function POST(request: Request) {
   try {
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // =========================================================================
     // 1. CRITICAL SECURITY GATE: Verify Token & Active Ops/Admin Role
-    // =========================================================================
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
       return NextResponse.json(
@@ -36,7 +34,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify Active Back-Office Staff Clearance (Admin / Manager / Staff)
     const { data: staffCheck } = await supabaseAdmin
       .from('back_office_staff')
       .select('id, email, role, status')
@@ -58,9 +55,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // =========================================================================
     // 2. DATA EXTRACTION & VALIDATION
-    // =========================================================================
     const { appId, applicantName, applicantEmail, rejectReason } = await request.json();
 
     if (!appId || !applicantName || !applicantEmail || !rejectReason?.trim()) {
@@ -76,15 +71,12 @@ export async function POST(request: Request) {
     const cleanEmail = String(applicantEmail).trim().toLowerCase();
     const cleanReason = String(rejectReason).trim();
 
-    // =========================================================================
     // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
-    // Ensure the application wasn't approved/rejected by another manager simultaneously
-    // =========================================================================
     const { data: updatedQueue, error: updateError } = await supabaseAdmin
       .from('pending_applications')
       .update({ status: 'Rejected', reject_reason: cleanReason })
       .eq('id', appId)
-      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .eq('status', 'Pending')
       .select()
       .single();
 
@@ -102,9 +94,7 @@ export async function POST(request: Request) {
       throw new Error(`Queue update failed: ${updateError.message}`);
     }
 
-    // =========================================================================
-    // 4. DOWNLOAD KYC FILES TO SERVER MEMORY (STRICT PREFIX MATCH TO PREVENT COLLISIONS)
-    // =========================================================================
+    // 4. DOWNLOAD KYC FILES TO SERVER MEMORY (STRICT PREFIX MATCH)
     const safeName = String(applicantName).replace(/[^a-zA-Z0-9]/g, '_');
     const expectedPrefix = `${safeName}_`;
 
@@ -114,7 +104,6 @@ export async function POST(request: Request) {
 
     if (searchError) throw searchError;
 
-    // Strictly filter so "RAM_" never accidentally matches "RAMESH_"
     const matchedApplicantFiles = (files || []).filter(
       (f) =>
         f.name.startsWith(expectedPrefix) ||
@@ -136,9 +125,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // =========================================================================
-    // 5. COMMUNICATION DISPATCH (FAULT-TOLERANT SO KILL-SWITCH ALWAYS EXECUTES)
-    // =========================================================================
+    // 5. COMMUNICATION DISPATCH (FAULT-TOLERANT)
     const senderEmail = 'updates@fastark.in';
     let emailWarning = '';
 
@@ -162,16 +149,12 @@ export async function POST(request: Request) {
       emailWarning = ' (Note: Email notification encountered a delivery warning.)';
     }
 
-    // =========================================================================
     // 6. DATA PRIVACY WIPE
-    // =========================================================================
     if (filesToDelete.length > 0) {
       await supabaseAdmin.storage.from('application_documents').remove(filesToDelete);
     }
 
-    // =========================================================================
-    // 7. THE KILL-SWITCH: Sever Ghost Access (Exact Email Match + Auth Pagination)
-    // =========================================================================
+    // 7. THE KILL-SWITCH: Sever Ghost Access
     await supabaseAdmin
       .from('active_partners')
       .update({ status: 'Suspended' })
@@ -199,9 +182,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // =========================================================================
     // 8. IMMUTABLE SERVER-SIDE AUDIT TELEMETRY
-    // =========================================================================
     try {
       await Promise.all([
         supabaseAdmin.from('staff_activity_logs').insert([

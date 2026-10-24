@@ -19,12 +19,6 @@ import {
   getISTDateString,
 } from "../../lib/aadhaarEngine";
 
-const getLocalDateString = (date: Date) => {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-    .toISOString()
-    .split("T")[0];
-};
-
 export default function PartnerDepositPage() {
   const router = useRouter();
   const [partner, setPartner] = useState<any>(null);
@@ -60,11 +54,8 @@ export default function PartnerDepositPage() {
     deposit_method: "UPI",
     utr_number: "",
     transaction_id: "",
-    reference_code: generateSystemReferenceCode(
-      "FA-DEP",
-      getLocalDateString(new Date())
-    ),
-    deposit_date: getLocalDateString(new Date()),
+    reference_code: generateSystemReferenceCode("FA-DEP", getISTDateString(0)),
+    deposit_date: getISTDateString(0),
   });
 
   // Slip, Exemption, Preset & OCR States
@@ -318,7 +309,6 @@ export default function PartnerDepositPage() {
     setIsSubmitting(true);
     setStatusBanner(null);
     try {
-      // Pre-flight global duplicate UTR check across both Telecom and Aadhaar
       const { data: dupCheck } = await supabase
         .from("partner_deposits")
         .select("id, reference_code")
@@ -404,7 +394,7 @@ export default function PartnerDepositPage() {
         },
       });
 
-      const todayStr = getLocalDateString(new Date());
+      const todayStr = getISTDateString(0);
       setForm({
         deposit_amount: "",
         deposit_method: "UPI",
@@ -445,7 +435,7 @@ export default function PartnerDepositPage() {
     }
   };
 
-  // --- EDIT / CORRECTION ENGINE (WITH DUPLICATE UTR GUARD) ---
+  // --- EDIT / CORRECTION ENGINE (WITH DUPLICATE UTR GUARD & MOBILE SUPPORT) ---
   const startEditing = (dep: any) => {
     setEditingId(dep.id);
     setEditForm({
@@ -545,7 +535,7 @@ export default function PartnerDepositPage() {
     });
   }, [salesList, filterFromDate, filterToDate]);
 
-  // REQUIREMENT #4: Total Collection Deducted from Deposit = Balance Payable
+  // Total Collection Deducted from Deposit = Balance Payable
   const reconciliationMetrics = useMemo(() => {
     const calcSaleRow = (s: any) =>
       Number(s.cbp_landline_amt || 0) +
@@ -662,7 +652,7 @@ export default function PartnerDepositPage() {
           </div>
         )}
 
-        {/* REQUIREMENT #4: COLLECTION DEDUCTED FROM DEPOSIT = BALANCE PAYABLE BANNER */}
+        {/* COLLECTION DEDUCTED FROM DEPOSIT = BALANCE PAYABLE BANNER */}
         <div className="bg-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <div className="bg-slate-800/90 p-3.5 rounded-xl border border-slate-700">
             <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">
@@ -784,7 +774,7 @@ export default function PartnerDepositPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* LEFT: SUBMISSION FORM (Responsive on Mobile, Sticky on Desktop) */}
+          {/* LEFT: SUBMISSION FORM */}
           <div
             className={`bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6 lg:sticky lg:top-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto ${
               mobileTab === "form" ? "block" : "hidden lg:block"
@@ -800,7 +790,6 @@ export default function PartnerDepositPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* SLIP FORMAT SELECTOR */}
               <div>
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
                   Receipt Format Preset
@@ -819,7 +808,6 @@ export default function PartnerDepositPage() {
                 </select>
               </div>
 
-              {/* SLIP UPLOAD & EXEMPTION */}
               <div className="space-y-3 pt-1 border-t border-slate-100">
                 <label className="flex items-center gap-3 cursor-pointer bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <input
@@ -924,7 +912,6 @@ export default function PartnerDepositPage() {
                 )}
               </div>
 
-              {/* OCR PROGRESS */}
               {isScanning && !isExempted && (
                 <div className="p-4 bg-blue-50 rounded-xl border border-blue-200 text-center space-y-2">
                   <div className="flex items-center justify-center gap-2 text-blue-700 font-black text-xs uppercase tracking-wider">
@@ -940,7 +927,6 @@ export default function PartnerDepositPage() {
                 </div>
               )}
 
-              {/* OCR EXTRACTION SUMMARY & MANDATORY VERIFICATION GATE */}
               {!isScanning && !isExempted && slipImage && detectedPlatform && (
                 <div className="bg-slate-900 text-white rounded-xl p-4 space-y-3 border-2 border-slate-800">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -1000,7 +986,6 @@ export default function PartnerDepositPage() {
                 </div>
               )}
 
-              {/* INPUT FIELDS: AMOUNT, DATE, METHOD & 3 IDENTIFIERS */}
               <div>
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
                   1. Deposit Amount (₹) *
@@ -1115,7 +1100,6 @@ export default function PartnerDepositPage() {
                 </div>
               </div>
 
-              {/* QR CODE GENERATOR + MOBILE TAP-TO-PAY DEEP LINK */}
               {form.deposit_method === "UPI" && userEnteredValue > 0 && (
                 <div className="bg-slate-900 rounded-xl p-5 text-center border-2 border-slate-800 shadow-inner flex flex-col items-center animate-in fade-in mt-2">
                   <p className="text-blue-400 font-black uppercase tracking-widest text-xs mb-3">
@@ -1171,7 +1155,6 @@ export default function PartnerDepositPage() {
                 : "hidden lg:flex"
             }`}
           >
-            {/* DYNAMIC HEADER TABS + WEEK / MONTH / CUSTOM FILTER BAR */}
             <div className="p-4 bg-slate-900 border-b border-slate-800 text-white rounded-t-2xl space-y-3 shrink-0">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
@@ -1179,8 +1162,8 @@ export default function PartnerDepositPage() {
                     Remittance Verification &amp; Ledger History
                   </h3>
                   <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                    Filter by Week / Month / Custom Date Range ({filteredDeposits.length}{" "}
-                    Records)
+                    Filter by Week / Month / Custom Date Range (
+                    {filteredDeposits.length} Records)
                   </p>
                 </div>
                 <div className="hidden lg:flex bg-slate-800 p-1 rounded-lg">
@@ -1209,7 +1192,6 @@ export default function PartnerDepositPage() {
                 </div>
               </div>
 
-              {/* REQUIREMENT #3: WEEK / MONTH / CUSTOM FILTER BAR FOR PARTNER DEPOSITS */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-xs">
                 <div>
                   <label className="text-[9px] font-black uppercase text-indigo-400 block mb-1">
@@ -1262,7 +1244,6 @@ export default function PartnerDepositPage() {
               </div>
             </div>
 
-            {/* PANEL CONTENT AREA */}
             <div className="flex-1 overflow-y-auto bg-slate-50">
               {rightPanel === "viewer" || mobileTab === "viewer" ? (
                 <div className="p-5 flex flex-col items-center justify-start min-h-full">
@@ -1310,7 +1291,7 @@ export default function PartnerDepositPage() {
                 </div>
               ) : (
                 <>
-                  {/* MOBILE CARD FEED (VISIBLE ON PHONES < MD) */}
+                  {/* MOBILE CARD FEED WITH INLINE EDIT FORM (FIX #6) */}
                   <div className="md:hidden divide-y divide-slate-200">
                     {filteredDeposits.length === 0 ? (
                       <div className="p-10 text-center text-slate-400 font-bold bg-white">
@@ -1318,6 +1299,7 @@ export default function PartnerDepositPage() {
                       </div>
                     ) : (
                       filteredDeposits.map((dep) => {
+                        const isEditing = editingId === dep.id;
                         const cleanUtr =
                           dep.utr_number || dep.reference_no || "N/A";
                         const cleanTxn = dep.transaction_id || cleanUtr;
@@ -1330,7 +1312,9 @@ export default function PartnerDepositPage() {
                         return (
                           <div
                             key={dep.id}
-                            className="p-4 bg-white space-y-2.5"
+                            className={`p-4 space-y-2.5 ${
+                              isEditing ? "bg-amber-50/60" : "bg-white"
+                            }`}
                           >
                             <div className="flex justify-between items-start">
                               <div>
@@ -1374,61 +1358,160 @@ export default function PartnerDepositPage() {
                               </div>
                             </div>
 
-                            <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs space-y-1">
-                              <div className="flex justify-between">
-                                <span className="text-slate-400 font-bold">
-                                  Method:
-                                </span>
-                                <span className="font-black text-blue-600">
-                                  {dep.deposit_method}
-                                </span>
+                            {isEditing ? (
+                              <div className="bg-white p-3 rounded-xl border-2 border-amber-300 space-y-2.5 text-xs">
+                                <div>
+                                  <label className="text-[9px] font-black uppercase text-slate-500 block mb-1">
+                                    Deposit Amount (₹)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={editForm.deposit_amount}
+                                    onChange={(e) =>
+                                      setEditForm({
+                                        ...editForm,
+                                        deposit_amount: e.target.value,
+                                      })
+                                    }
+                                    className="w-full border border-amber-300 p-2 rounded-lg font-black text-slate-900"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black uppercase text-slate-500 block mb-1">
+                                    Method
+                                  </label>
+                                  <select
+                                    value={editForm.deposit_method}
+                                    onChange={(e) =>
+                                      setEditForm({
+                                        ...editForm,
+                                        deposit_method: e.target.value,
+                                      })
+                                    }
+                                    className="w-full border border-amber-300 p-2 rounded-lg font-bold bg-white"
+                                  >
+                                    <option value="UPI">UPI</option>
+                                    <option value="NEFT/RTGS">NEFT/RTGS</option>
+                                    <option value="IMPS">IMPS</option>
+                                    <option value="Cash Deposit">
+                                      Cash Deposit
+                                    </option>
+                                    <option value="Cheque">Cheque</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black uppercase text-slate-500 block mb-1">
+                                    Unique UTR Number
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editForm.utr_number}
+                                    onChange={(e) =>
+                                      setEditForm({
+                                        ...editForm,
+                                        utr_number: e.target.value.toUpperCase(),
+                                      })
+                                    }
+                                    className="w-full border border-amber-300 p-2 rounded-lg font-black uppercase"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black uppercase text-slate-500 block mb-1">
+                                    Transaction ID
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editForm.transaction_id}
+                                    onChange={(e) =>
+                                      setEditForm({
+                                        ...editForm,
+                                        transaction_id:
+                                          e.target.value.toUpperCase(),
+                                      })
+                                    }
+                                    className="w-full border border-amber-300 p-2 rounded-lg font-bold uppercase"
+                                  />
+                                </div>
+                                <div className="flex gap-2 pt-1">
+                                  <button
+                                    type="button"
+                                    disabled={isSubmitting}
+                                    onClick={() => handleEditSubmit(dep.id)}
+                                    className="flex-1 bg-green-600 text-white font-black py-2 rounded-lg uppercase text-[10px]"
+                                  >
+                                    💾 Save Changes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingId(null)}
+                                    className="flex-1 bg-slate-200 text-slate-800 font-black py-2 rounded-lg uppercase text-[10px]"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
                               </div>
-                              <div className="flex justify-between">
-                                <span className="text-slate-400 font-bold">
-                                  Unique UTR:
-                                </span>
-                                <span className="font-black text-slate-800">
-                                  {cleanUtr}
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-slate-400 font-bold">
-                                  Txn ID:
-                                </span>
-                                <span className="font-bold text-slate-600">
-                                  {cleanTxn}
-                                </span>
-                              </div>
-                            </div>
+                            ) : (
+                              <>
+                                <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400 font-bold">
+                                      Method:
+                                    </span>
+                                    <span className="font-black text-blue-600">
+                                      {dep.deposit_method}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400 font-bold">
+                                      Unique UTR:
+                                    </span>
+                                    <span className="font-black text-slate-800">
+                                      {cleanUtr}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400 font-bold">
+                                      Txn ID:
+                                    </span>
+                                    <span className="font-bold text-slate-600">
+                                      {cleanTxn}
+                                    </span>
+                                  </div>
+                                </div>
 
-                            <div className="flex justify-between items-center pt-1">
-                              {dep.deposit_slip_url ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleViewSecureSlip(dep.deposit_slip_url)
-                                  }
-                                  className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200"
-                                >
-                                  📎 View Slip
-                                </button>
-                              ) : (
-                                <span className="text-[10px] font-bold text-amber-600 uppercase">
-                                  ⚠️ Exempted
-                                </span>
-                              )}
+                                <div className="flex justify-between items-center pt-1">
+                                  {dep.deposit_slip_url ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleViewSecureSlip(
+                                          dep.deposit_slip_url
+                                        )
+                                      }
+                                      className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200"
+                                    >
+                                      📎 View Slip
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] font-bold text-amber-600 uppercase">
+                                      ⚠️ Exempted
+                                    </span>
+                                  )}
 
-                              {(dep.status === "Pending" ||
-                                dep.status === "Pending Verification") && (
-                                <button
-                                  type="button"
-                                  onClick={() => startEditing(dep)}
-                                  className="text-xs font-black text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200"
-                                >
-                                  ✏️ Edit
-                                </button>
-                              )}
-                            </div>
+                                  {(dep.status === "Pending" ||
+                                    dep.status === "Pending Verification") && (
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditing(dep)}
+                                      className="text-xs font-black text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200"
+                                    >
+                                      ✏️ Edit
+                                    </button>
+                                  )}
+                                </div>
+                              </>
+                            )}
                           </div>
                         );
                       })

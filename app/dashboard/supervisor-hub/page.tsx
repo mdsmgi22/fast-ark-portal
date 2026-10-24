@@ -1,3 +1,4 @@
+// FILE PATH: ./app/dashboard/supervisor-hub/page.tsx
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
@@ -32,7 +33,9 @@ export default function SupervisorHub() {
   const [staffProfile, setStaffProfile] = useState<any>(null);
 
   // UI State - 5 dedicated tabs including Aadhaar Kendra Audit
-  const [activeTab, setActiveTab] = useState<"activity" | "sales" | "aadhaar" | "deposits" | "compliance">("activity");
+  const [activeTab, setActiveTab] = useState<
+    "activity" | "sales" | "aadhaar" | "deposits" | "compliance"
+  >("activity");
   const [viewingSlipId, setViewingSlipId] = useState<string | null>(null);
 
   // Architecture & Raw Data State
@@ -49,8 +52,12 @@ export default function SupervisorHub() {
 
   // --- 4-TIER CASCADING FILTER + 7-PRESET DATE DROPDOWN STATE ---
   const [datePreset, setDatePreset] = useState<DatePresetMode>("today");
-  const [fromDate, setFromDate] = useState<string>(() => getDateRangeFromPreset("today").start);
-  const [toDate, setToDate] = useState<string>(() => getDateRangeFromPreset("today").end);
+  const [fromDate, setFromDate] = useState<string>(
+    () => getDateRangeFromPreset("today").start
+  );
+  const [toDate, setToDate] = useState<string>(
+    () => getDateRangeFromPreset("today").end
+  );
 
   const [stateFilter, setStateFilter] = useState("ALL");
   const [hqFilter, setHqFilter] = useState("ALL");
@@ -72,7 +79,9 @@ export default function SupervisorHub() {
 
   const initializeSupervisorEngine = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
       const { data: staff } = await supabase
@@ -88,7 +97,9 @@ export default function SupervisorHub() {
 
       const { data: allocations } = await supabase
         .from("supervisor_allocations")
-        .select("location_id, manage_cm, manage_ocsc, manage_aadhaar, manage_partner")
+        .select(
+          "location_id, manage_cm, manage_ocsc, manage_aadhaar, manage_partner"
+        )
         .eq("supervisor_id", staff.auth_id);
 
       if (!allocations || allocations.length === 0) {
@@ -106,10 +117,15 @@ export default function SupervisorHub() {
         supabase.from("locations").select("*").in("id", allowedLocIds),
         supabase
           .from("active_partners")
-          .select("*, locations(id, center_name, center_code, state, parent_master_id)")
+          .select(
+            "*, locations(id, center_name, center_code, state, parent_master_id)"
+          )
           .in("center_id", allowedLocIds)
           .eq("status", "Active"),
-        supabase.from("locations").select("id, center_name, state").eq("is_master_node", true),
+        supabase
+          .from("locations")
+          .select("id, center_name, state")
+          .eq("is_master_node", true),
       ]);
 
       const allocatedLocs = locsRes.data || [];
@@ -135,8 +151,10 @@ export default function SupervisorHub() {
         const r = (p.role || "").toUpperCase();
         if (r.includes("CM") && rules.manage_cm) return true;
         if (r.includes("OCSC") && rules.manage_ocsc) return true;
-        if ((r.includes("AADHAAR") || p.role_aadhaar) && rules.manage_aadhaar) return true;
-        if ((r === "PARTNER" || r.includes("IRCTC")) && rules.manage_partner) return true;
+        if ((r.includes("AADHAAR") || p.role_aadhaar) && rules.manage_aadhaar)
+          return true;
+        if ((r === "PARTNER" || r.includes("IRCTC")) && rules.manage_partner)
+          return true;
 
         return false;
       });
@@ -146,17 +164,23 @@ export default function SupervisorHub() {
       const [salesRes, depositsRes, aadhaarRes, penRes] = await Promise.all([
         supabase
           .from("daily_sales_reports")
-          .select("*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))")
+          .select(
+            "*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))"
+          )
           .in("partner_id", permittedPartnerIds)
           .order("report_date", { ascending: false }),
         supabase
           .from("partner_deposits")
-          .select("*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))")
+          .select(
+            "*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))"
+          )
           .in("partner_id", permittedPartnerIds)
           .order("created_at", { ascending: false }),
         supabase
           .from("aadhaar_daily_reports")
-          .select("*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))")
+          .select(
+            "*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))"
+          )
           .in("partner_id", permittedPartnerIds)
           .order("report_date", { ascending: false }),
         supabase
@@ -170,7 +194,9 @@ export default function SupervisorHub() {
       setRegionalSales(salesRes.data || []);
       setRegionalDeposits(depositsRes.data || []);
       setRegionalAadhaar(aadhaarRes.data || []);
-      setRegionalPenalties(penRes.data || []);
+      setRegionalPenalties(
+        (penRes.data || []).filter((p: any) => !p.is_waived)
+      );
     } catch (err: any) {
       console.error("Supervisor Init Error:", err.message);
     } finally {
@@ -205,14 +231,22 @@ export default function SupervisorHub() {
 
   const handleViewAadhaarVaultFile = async (path: string | null) => {
     if (!path) return alert("No file attached (Manual / Exemption record).");
-    const { data, error } = await supabase.storage.from("aadhaar-reports").createSignedUrl(path, 120);
-    if (error || !data?.signedUrl) return alert("Error generating secure download link.");
+    const { data, error } = await supabase.storage
+      .from("aadhaar-reports")
+      .createSignedUrl(path, 120);
+    if (error || !data?.signedUrl)
+      return alert("Error generating secure download link.");
     window.open(data.signedUrl, "_blank");
   };
 
   // --- DISPATCH NUDGE ENGINE ---
   const handleRegionalNudge = async (partner: any, issueType: string) => {
-    if (!confirm(`Dispatch an official regional alert to ${partner.partner_name}?`)) return;
+    if (
+      !confirm(
+        `Dispatch an official regional alert to ${partner.partner_name}?`
+      )
+    )
+      return;
 
     setIsNudging(partner.id);
     try {
@@ -263,12 +297,20 @@ export default function SupervisorHub() {
 
   // --- 4-TIER CASCADING FILTER LOGIC ---
   const uniqueStates = useMemo(
-    () => Array.from(new Set(regionalPartners.map((p) => p.locations?.state).filter(Boolean))).sort(),
+    () =>
+      Array.from(
+        new Set(
+          regionalPartners.map((p) => p.locations?.state).filter(Boolean)
+        )
+      ).sort(),
     [regionalPartners]
   );
 
   const cascadeHQs = useMemo(
-    () => masterHQs.filter((hq) => stateFilter === "ALL" || hq.state === stateFilter),
+    () =>
+      masterHQs.filter(
+        (hq) => stateFilter === "ALL" || hq.state === stateFilter
+      ),
     [masterHQs, stateFilter]
   );
 
@@ -288,8 +330,16 @@ export default function SupervisorHub() {
       regionalPartners.filter((p) => {
         const loc = p.locations;
         if (stateFilter !== "ALL" && loc?.state !== stateFilter) return false;
-        if (hqFilter !== "ALL" && loc?.parent_master_id?.toString() !== hqFilter) return false;
-        if (centerFilter !== "ALL" && p.center_id?.toString() !== centerFilter && loc?.id?.toString() !== centerFilter)
+        if (
+          hqFilter !== "ALL" &&
+          loc?.parent_master_id?.toString() !== hqFilter
+        )
+          return false;
+        if (
+          centerFilter !== "ALL" &&
+          p.center_id?.toString() !== centerFilter &&
+          loc?.id?.toString() !== centerFilter
+        )
           return false;
         return true;
       }),
@@ -297,14 +347,18 @@ export default function SupervisorHub() {
   );
 
   const filteredPartners = useMemo(() => {
-    return cascadeOperators.filter((p) => operatorFilter === "ALL" || p.id === operatorFilter);
+    return cascadeOperators.filter(
+      (p) => operatorFilter === "ALL" || p.id === operatorFilter
+    );
   }, [cascadeOperators, operatorFilter]);
 
   const filteredSales = useMemo(() => {
     return regionalSales.filter((s) => {
       const d = normalizeToYYYYMMDD(s.report_date);
       const isTimeMatch = d >= fromDate && d <= toDate;
-      const isPartnerMatch = filteredPartners.some((p) => p.id === s.partner_id);
+      const isPartnerMatch = filteredPartners.some(
+        (p) => p.id === s.partner_id
+      );
       return isTimeMatch && isPartnerMatch;
     });
   }, [regionalSales, filteredPartners, fromDate, toDate]);
@@ -313,7 +367,9 @@ export default function SupervisorHub() {
     return regionalAadhaar.filter((a) => {
       const d = normalizeToYYYYMMDD(a.report_date);
       const isTimeMatch = d >= fromDate && d <= toDate;
-      const isPartnerMatch = filteredPartners.some((p) => p.id === a.partner_id);
+      const isPartnerMatch = filteredPartners.some(
+        (p) => p.id === a.partner_id
+      );
       return isTimeMatch && isPartnerMatch;
     });
   }, [regionalAadhaar, filteredPartners, fromDate, toDate]);
@@ -322,29 +378,42 @@ export default function SupervisorHub() {
     return regionalDeposits.filter((d) => {
       const date = normalizeToYYYYMMDD(d.deposit_date || d.created_at);
       const isTimeMatch = date >= fromDate && date <= toDate;
-      const isPartnerMatch = filteredPartners.some((p) => p.id === d.partner_id);
+      const isPartnerMatch = filteredPartners.some(
+        (p) => p.id === d.partner_id
+      );
       return isTimeMatch && isPartnerMatch;
     });
   }, [regionalDeposits, filteredPartners, fromDate, toDate]);
 
   // Compute Compliance & Activity Audit Matrix (Includes BOTH Telecom and Aadhaar)
   const complianceMatrix = useMemo(() => {
+    const isAadhaarDep = (d: any) =>
+      d.deposit_stream === "AADHAAR" ||
+      String(d.reference_no || "")
+        .toUpperCase()
+        .startsWith("AADHAAR_");
+
     return filteredPartners.map((p) => {
       const pSalesTime = filteredSales.filter((s) => s.partner_id === p.id);
-      const pAadhaarTime = filteredAadhaar.filter((a) => a.partner_id === p.id);
-      const hasLoggedActivity = pSalesTime.length > 0 || pAadhaarTime.length > 0;
+      const pAadhaarTime = filteredAadhaar.filter(
+        (a) => a.partner_id === p.id
+      );
+      const hasLoggedActivity =
+        pSalesTime.length > 0 || pAadhaarTime.length > 0;
 
       const pSalesLifetime = regionalSales.filter((s) => s.partner_id === p.id);
-      const pTelecomDeposits = regionalDeposits.filter(
-        (d) =>
-          d.partner_id === p.id &&
-          d.status !== "Discrepancy" &&
-          !String(d.reference_no || "").toUpperCase().startsWith("AADHAAR_")
+      const pValidDeposits = regionalDeposits.filter(
+        (d) => d.partner_id === p.id && d.status !== "Discrepancy"
       );
-      const pAadhaarUnsettled = regionalAadhaar.filter(
-        (a) => a.partner_id === p.id && a.deposit_status === "Pending Deposit"
+      const pTelecomDeposits = pValidDeposits.filter((d) => !isAadhaarDep(d));
+      const pAadhaarDeposits = pValidDeposits.filter((d) => isAadhaarDep(d));
+
+      const pAadhaarLifetime = regionalAadhaar.filter(
+        (a) => a.partner_id === p.id
       );
-      const pPenaltiesUnsettled = regionalPenalties.filter((pen) => pen.partner_id === p.id);
+      const pPenaltiesUnsettled = regionalPenalties.filter(
+        (pen) => pen.partner_id === p.id && !pen.is_waived
+      );
 
       let lifetimeTelecomCash = 0;
       pSalesLifetime.forEach((s) => {
@@ -365,16 +434,33 @@ export default function SupervisorHub() {
           Number(s.pb_other_amt || 0);
       });
 
-      let lifetimeTelecomDep = 0;
-      pTelecomDeposits.forEach((d) => {
-        lifetimeTelecomDep += Number(d.deposit_amount || 0);
-      });
+      const lifetimeTelecomDep = pTelecomDeposits.reduce(
+        (sum, d) => sum + Number(d.deposit_amount || 0),
+        0
+      );
 
-      const aadhaarCashDue = pAadhaarUnsettled.reduce((sum, a) => sum + Number(a.total_cash_collected || 0), 0);
-      const aadhaarPenaltyDue = pPenaltiesUnsettled.reduce((sum, pen) => sum + Number(pen.penalty_amount || 0), 0);
+      const lifetimeAadhaarCash = pAadhaarLifetime.reduce(
+        (sum, a) => sum + Number(a.total_cash_collected || 0),
+        0
+      );
+      const lifetimeAadhaarDep = pAadhaarDeposits.reduce(
+        (sum, d) => sum + Number(d.deposit_amount || 0),
+        0
+      );
+
+      const aadhaarCashDue = Math.max(
+        0,
+        lifetimeAadhaarCash - lifetimeAadhaarDep
+      );
+      const aadhaarPenaltyDue = pPenaltiesUnsettled.reduce(
+        (sum, pen) => sum + Number(pen.penalty_amount || 0),
+        0
+      );
 
       const pendingBalance =
-        Math.max(0, lifetimeTelecomCash - lifetimeTelecomDep) + aadhaarCashDue + aadhaarPenaltyDue;
+        Math.max(0, lifetimeTelecomCash - lifetimeTelecomDep) +
+        aadhaarCashDue +
+        aadhaarPenaltyDue;
 
       return {
         ...p,
@@ -383,19 +469,35 @@ export default function SupervisorHub() {
         isDefaulter: pendingBalance > 1000 || !hasLoggedActivity,
       };
     });
-  }, [filteredPartners, filteredSales, filteredAadhaar, regionalSales, regionalDeposits, regionalAadhaar, regionalPenalties]);
+  }, [
+    filteredPartners,
+    filteredSales,
+    filteredAadhaar,
+    regionalSales,
+    regionalDeposits,
+    regionalAadhaar,
+    regionalPenalties,
+  ]);
 
   // --- CSV EXPORT ENGINE ---
-  const downloadCSV = (type: "activity" | "sales" | "deposits" | "compliance") => {
+  const downloadCSV = (
+    type: "activity" | "sales" | "deposits" | "compliance"
+  ) => {
     let headers: string[] = [];
     let csvData: any[] = [];
-    let fileName = `FastArk_Supervisor_${type.toUpperCase()}_${formatToDDMMYYYY(fromDate).replace(
-      /\//g,
-      "-"
-    )}_to_${formatToDDMMYYYY(toDate).replace(/\//g, "-")}`;
+    const fileName = `FastArk_Supervisor_${type.toUpperCase()}_${formatToDDMMYYYY(
+      fromDate
+    ).replace(/\//g, "-")}_to_${formatToDDMMYYYY(toDate).replace(/\//g, "-")}`;
 
     if (type === "activity") {
-      headers = ["Partner Name", "Role", "Center Code", "Center Name", "State", "Activity Status"];
+      headers = [
+        "Partner Name",
+        "Role",
+        "Center Code",
+        "Center Name",
+        "State",
+        "Activity Status",
+      ];
       csvData = complianceMatrix.map((p) => [
         sanitizeCSV(p.partner_name),
         sanitizeCSV(p.role),
@@ -420,7 +522,8 @@ export default function SupervisorHub() {
         "Audit Status",
       ];
       csvData = filteredSales.map((s) => {
-        const cbp = Number(s.cbp_landline_amt || 0) + Number(s.cbp_gsm_amt || 0);
+        const cbp =
+          Number(s.cbp_landline_amt || 0) + Number(s.cbp_gsm_amt || 0);
         const ctop = Number(s.ctop_recharge_amt || 0);
         const sim =
           Number(s.sim_replacement_amt || 0) +
@@ -437,7 +540,9 @@ export default function SupervisorHub() {
           Number(s.pb_other_amt || 0);
         const total = cbp + ctop + sim + pb;
         const hqName =
-          masterHQs.find((h) => h.id === s.active_partners?.locations?.parent_master_id)?.center_name || "N/A";
+          masterHQs.find(
+            (h) => h.id === s.active_partners?.locations?.parent_master_id
+          )?.center_name || "N/A";
 
         return [
           formatToDDMMYYYY(s.report_date),
@@ -455,16 +560,45 @@ export default function SupervisorHub() {
         ];
       });
     } else if (type === "deposits") {
-      headers = ["Date (DD/MM/YYYY)", "Partner Name", "Center Code", "Method", "Ref No", "Amount (INR)", "Status"];
-      csvData = filteredDeposits.map((d) => [
-        formatToDDMMYYYY(normalizeToYYYYMMDD(d.deposit_date || d.created_at)),
-        sanitizeCSV(d.active_partners?.partner_name),
-        sanitizeCSV(d.active_partners?.locations?.center_code || "NO-CODE"),
-        d.deposit_method,
-        sanitizeCSV(d.reference_no),
-        d.deposit_amount,
-        d.status,
-      ]);
+      headers = [
+        "Date (DD/MM/YYYY)",
+        "System Reference Code",
+        "Partner Name",
+        "Center Code",
+        "Method",
+        "Unique UTR No",
+        "Transaction ID",
+        "Amount (INR)",
+        "Status",
+      ];
+      csvData = filteredDeposits.map((d) => {
+        const isAadhaar =
+          d.deposit_stream === "AADHAAR" ||
+          String(d.reference_no || "")
+            .toUpperCase()
+            .startsWith("AADHAAR_");
+        const cleanUtr =
+          d.utr_number ||
+          String(d.reference_no || "").replace(/^AADHAAR_/i, "");
+        const cleanTxn = d.transaction_id || cleanUtr;
+        const refCode =
+          d.reference_code ||
+          `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(d.id || "")
+            .slice(0, 6)
+            .toUpperCase()}`;
+
+        return [
+          formatToDDMMYYYY(normalizeToYYYYMMDD(d.deposit_date || d.created_at)),
+          sanitizeCSV(refCode),
+          sanitizeCSV(d.active_partners?.partner_name),
+          sanitizeCSV(d.active_partners?.locations?.center_code || "NO-CODE"),
+          d.deposit_method,
+          sanitizeCSV(cleanUtr),
+          sanitizeCSV(cleanTxn),
+          d.deposit_amount,
+          d.status,
+        ];
+      });
     } else if (type === "compliance") {
       headers = [
         "Flagged Partner",
@@ -483,12 +617,17 @@ export default function SupervisorHub() {
         p.hasLoggedActivity ? "Logged" : "Missing",
         p.pendingBalance,
       ]);
-      if (defaulters.length === 0) return alert("No defaulters found to export.");
+      if (defaulters.length === 0)
+        return alert("No defaulters found to export.");
     }
 
-    if (csvData.length === 0) return alert("No data available to export for current filters.");
+    if (csvData.length === 0)
+      return alert("No data available to export for current filters.");
 
-    const csvContent = [headers.join(","), ...csvData.map((row) => row.join(","))].join("\n");
+    const csvContent = [
+      headers.join(","),
+      ...csvData.map((row) => row.join(",")),
+    ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -508,9 +647,12 @@ export default function SupervisorHub() {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
         <div className="bg-white p-12 rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full text-center">
           <div className="text-6xl mb-6">🗺️</div>
-          <h2 className="text-2xl font-black text-slate-900 mb-2">No Territory Allocated</h2>
+          <h2 className="text-2xl font-black text-slate-900 mb-2">
+            No Territory Allocated
+          </h2>
           <p className="text-slate-500 font-medium mb-8">
-            Your account is active, but the corporate office has not yet assigned any centers to your regional perimeter.
+            Your account is active, but the corporate office has not yet
+            assigned any centers to your regional perimeter.
           </p>
           <button
             onClick={handleSignOut}
@@ -532,7 +674,10 @@ export default function SupervisorHub() {
               <span className="text-4xl">🔭</span> Field Supervisor Hub
             </h1>
             <p className="text-slate-500 mt-2 font-medium">
-              Regional Command Desk for: <span className="font-black text-slate-800">{staffProfile?.name}</span>
+              Regional Command Desk for:{" "}
+              <span className="font-black text-slate-800">
+                {staffProfile?.name}
+              </span>
             </p>
             <div className="mt-3 flex gap-2">
               <span className="text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded shadow-sm tracking-widest">
@@ -561,7 +706,6 @@ export default function SupervisorHub() {
 
         {/* 4-TIER CASCADING FILTER + 7-OPTION DATE PRESET BAR (CONTROLS ALL TABS) */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
-          {/* ROW 1: 4-TIER GEOGRAPHIC & ASSOCIATE CASCADE */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">
@@ -638,17 +782,21 @@ export default function SupervisorHub() {
                 onChange={(e) => setOperatorFilter(e.target.value)}
                 className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-slate-800"
               >
-                <option value="ALL">All Associates ({cascadeOperators.length})</option>
+                <option value="ALL">
+                  All Associates ({cascadeOperators.length})
+                </option>
                 {cascadeOperators.map((op) => (
                   <option key={op.id} value={op.id}>
-                    {op.partner_name} {op.aadhaar_station_id ? `(Stn: ${op.aadhaar_station_id})` : ""}
+                    {op.partner_name}{" "}
+                    {op.aadhaar_station_id
+                      ? `(Stn: ${op.aadhaar_station_id})`
+                      : ""}
                   </option>
                 ))}
               </select>
             </div>
           </div>
 
-          {/* ROW 2: 7-OPTION DATE PRESET DROPDOWN + CUSTOM DATES (DD/MM/YYYY) */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
             <div>
               <label className="text-[9px] font-black text-indigo-600 uppercase tracking-widest block mb-1">
@@ -656,12 +804,18 @@ export default function SupervisorHub() {
               </label>
               <select
                 value={datePreset}
-                onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
+                onChange={(e) =>
+                  handlePresetChange(e.target.value as DatePresetMode)
+                }
                 className="w-full bg-indigo-50 border-2 border-indigo-200 text-indigo-950 font-black text-xs rounded-lg p-2.5 outline-none focus:border-indigo-600"
               >
-                <option value="today">1. Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
+                <option value="today">
+                  1. Today (
+                  {formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
+                </option>
                 <option value="yesterday">
-                  2. Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                  2. Yesterday (
+                  {formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
                 </option>
                 <option value="current_week">3. Current Week</option>
                 <option value="current_month">4. Current Month</option>
@@ -765,10 +919,12 @@ export default function SupervisorHub() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
             <div className="p-5 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center text-white gap-4">
               <div>
-                <h3 className="font-black tracking-widest uppercase text-sm">Daily Activity Audit</h3>
+                <h3 className="font-black tracking-widest uppercase text-sm">
+                  Daily Activity Audit
+                </h3>
                 <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">
-                  Cross-referencing Telecom &amp; Aadhaar submissions ({formatToDDMMYYYY(fromDate)} to{" "}
-                  {formatToDDMMYYYY(toDate)})
+                  Cross-referencing Telecom &amp; Aadhaar submissions (
+                  {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)})
                 </p>
               </div>
               <button
@@ -783,9 +939,12 @@ export default function SupervisorHub() {
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="p-4 font-black">Associate &amp; Mapped Center Code</th>
+                    <th className="p-4 font-black">
+                      Associate &amp; Mapped Center Code
+                    </th>
                     <th className="p-4 font-black text-center border-l border-slate-200">
-                      Activity Status ({formatToDDMMYYYY(fromDate)} - {formatToDDMMYYYY(toDate)})
+                      Activity Status ({formatToDDMMYYYY(fromDate)} -{" "}
+                      {formatToDDMMYYYY(toDate)})
                     </th>
                   </tr>
                 </thead>
@@ -794,18 +953,22 @@ export default function SupervisorHub() {
                     <tr key={p.id} className="transition hover:bg-slate-50">
                       <td className="p-4">
                         <div className="flex items-start gap-2.5 flex-wrap">
-                          <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                          <p className="font-black text-slate-900 text-base">
+                            {p.partner_name}
+                          </p>
                           <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded mt-0.5">
                             {p.role}
                           </span>
                           {(p.role_aadhaar || p.aadhaar_station_id) && (
                             <span className="text-[9px] font-black uppercase text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded mt-0.5">
-                              🆔 Op: {p.aadhaar_operator_id || "N/A"} | Stn: {p.aadhaar_station_id || "N/A"}
+                              🆔 Op: {p.aadhaar_operator_id || "N/A"} | Stn:{" "}
+                              {p.aadhaar_station_id || "N/A"}
                             </span>
                           )}
                         </div>
                         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-                          📍 [{p.locations?.center_code || "NO-CODE"}] {p.locations?.center_name} ({p.locations?.state})
+                          📍 [{p.locations?.center_code || "NO-CODE"}]{" "}
+                          {p.locations?.center_name} ({p.locations?.state})
                         </p>
                       </td>
                       <td className="p-4 text-center border-l border-slate-100">
@@ -823,8 +986,12 @@ export default function SupervisorHub() {
                   ))}
                   {complianceMatrix.length === 0 && (
                     <tr>
-                      <td colSpan={2} className="p-12 text-center font-bold text-slate-400">
-                        No active associates found matching your cascading filters.
+                      <td
+                        colSpan={2}
+                        className="p-12 text-center font-bold text-slate-400"
+                      >
+                        No active associates found matching your cascading
+                        filters.
                       </td>
                     </tr>
                   )}
@@ -867,13 +1034,18 @@ export default function SupervisorHub() {
                       <span>📈</span> Regional Sales Reports
                     </h3>
                     <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">
-                      Window: {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}
+                      Window: {formatToDDMMYYYY(fromDate)} to{" "}
+                      {formatToDDMMYYYY(toDate)}
                     </p>
                   </div>
                   <div className="flex gap-4 items-center">
                     <div className="text-right border-r border-slate-700 pr-4">
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Total Sales</p>
-                      <p className="font-black text-lg text-indigo-400">₹{totalSalesGross.toLocaleString("en-IN")}</p>
+                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                        Total Sales
+                      </p>
+                      <p className="font-black text-lg text-indigo-400">
+                        ₹{totalSalesGross.toLocaleString("en-IN")}
+                      </p>
                     </div>
                     <button
                       onClick={() => downloadCSV("sales")}
@@ -887,8 +1059,12 @@ export default function SupervisorHub() {
                   <table className="w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
                       <tr>
-                        <th className="p-4 font-black">Date &amp; Center [Code]</th>
-                        <th className="p-4 font-black text-right border-l">BSNL CBP/CTOP</th>
+                        <th className="p-4 font-black">
+                          Date &amp; Center [Code]
+                        </th>
+                        <th className="p-4 font-black text-right border-l">
+                          BSNL CBP/CTOP
+                        </th>
                         <th className="p-4 font-black text-right">BSNL SIMs</th>
                         <th className="p-4 font-black text-right text-indigo-600 bg-indigo-50/30 border-l">
                           Paybull Cash
@@ -901,7 +1077,10 @@ export default function SupervisorHub() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredSales.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="p-8 text-center text-slate-400 font-bold">
+                          <td
+                            colSpan={5}
+                            className="p-8 text-center text-slate-400 font-bold"
+                          >
                             No sales logged in your perimeter for this period.
                           </td>
                         </tr>
@@ -929,13 +1108,17 @@ export default function SupervisorHub() {
                           return (
                             <tr key={s.id} className="hover:bg-slate-50">
                               <td className="p-4">
-                                <p className="font-black text-slate-800">{formatToDDMMYYYY(s.report_date)}</p>
+                                <p className="font-black text-slate-800">
+                                  {formatToDDMMYYYY(s.report_date)}
+                                </p>
                                 <p className="font-bold text-slate-600 mt-1 truncate max-w-[200px]">
                                   {s.active_partners?.partner_name}
                                 </p>
                                 <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">
-                                  📍 [{s.active_partners?.locations?.center_code || "NO-CODE"}]{" "}
-                                  {s.active_partners?.locations?.center_name}
+                                  📍 [
+                                  {s.active_partners?.locations?.center_code ||
+                                    "NO-CODE"}
+                                  ] {s.active_partners?.locations?.center_name}
                                 </p>
                                 {s.is_edited_by_staff && (
                                   <span className="inline-block mt-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 border border-amber-200 text-[8px] font-black uppercase tracking-widest rounded">
@@ -946,7 +1129,9 @@ export default function SupervisorHub() {
                               <td className="p-4 text-right font-medium border-l">
                                 ₹{cbpCtop.toLocaleString("en-IN")}
                               </td>
-                              <td className="p-4 text-right font-medium">₹{simCash.toLocaleString("en-IN")}</td>
+                              <td className="p-4 text-right font-medium">
+                                ₹{simCash.toLocaleString("en-IN")}
+                              </td>
                               <td className="p-4 text-right font-black text-indigo-600 bg-indigo-50/10 border-l">
                                 ₹{pbCash.toLocaleString("en-IN")}
                               </td>
@@ -978,20 +1163,31 @@ export default function SupervisorHub() {
                 <div className="p-5 bg-slate-900 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center text-white gap-4">
                   <div>
                     <h3 className="font-black tracking-widest uppercase text-sm text-amber-400 flex items-center gap-2">
-                      <span>🆔</span> Regional Aadhaar Kendra Reports &amp; File Vault
+                      <span>🆔</span> Regional Aadhaar Kendra Reports &amp; File
+                      Vault
                     </h3>
                     <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">
-                      5-Category Enrolment &amp; Cash Audit ({formatToDDMMYYYY(fromDate)} to{" "}
-                      {formatToDDMMYYYY(toDate)})
+                      5-Category Enrolment &amp; Cash Audit (
+                      {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}
+                      )
                     </p>
                   </div>
                   <div className="flex gap-4 items-center">
                     <div className="text-right border-r border-slate-700 pr-4">
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Aadhaar Cash</p>
-                      <p className="font-black text-lg text-amber-400">₹{totalAadhaarCash.toLocaleString("en-IN")}</p>
+                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                        Aadhaar Cash
+                      </p>
+                      <p className="font-black text-lg text-amber-400">
+                        ₹{totalAadhaarCash.toLocaleString("en-IN")}
+                      </p>
                     </div>
                     <button
-                      onClick={() => downloadAadhaarCSVReport(filteredAadhaar, `Supervisor_${datePreset}`)}
+                      onClick={() =>
+                        downloadAadhaarCSVReport(
+                          filteredAadhaar,
+                          `Supervisor_${datePreset}`
+                        )
+                      }
                       className="bg-amber-500 hover:bg-amber-400 text-slate-950 transition px-4 py-2 rounded text-[10px] font-black uppercase tracking-widest shadow-sm"
                     >
                       📥 Export Aadhaar CSV
@@ -1003,45 +1199,75 @@ export default function SupervisorHub() {
                     <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
                       <tr>
                         <th className="p-4 font-black">Date (DD/MM/YYYY)</th>
-                        <th className="p-4 font-black">Operator, Station &amp; Center Code</th>
+                        <th className="p-4 font-black">
+                          Operator, Station &amp; Center Code
+                        </th>
                         <th className="p-4 font-black text-center">New</th>
                         <th className="p-4 font-black text-center">MBU(F)</th>
                         <th className="p-4 font-black text-center">MBU(P)</th>
                         <th className="p-4 font-black text-center">Demo</th>
                         <th className="p-4 font-black text-center">Bio</th>
-                        <th className="p-4 font-black text-center">Total Pkts</th>
+                        <th className="p-4 font-black text-center">
+                          Total Pkts
+                        </th>
                         <th className="p-4 font-black text-right">Cash (₹)</th>
                         <th className="p-4 font-black text-center">Status</th>
-                        <th className="p-4 font-black text-center">Vault Files</th>
+                        <th className="p-4 font-black text-center">
+                          Vault Files
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredAadhaar.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="p-8 text-center text-slate-400 font-bold">
-                            No Aadhaar reports logged in your territory for this period.
+                          <td
+                            colSpan={11}
+                            className="p-8 text-center text-slate-400 font-bold"
+                          >
+                            No Aadhaar reports logged in your territory for this
+                            period.
                           </td>
                         </tr>
                       ) : (
                         filteredAadhaar.map((a) => (
                           <tr key={a.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-black text-slate-900">{formatToDDMMYYYY(a.report_date)}</td>
+                            <td className="p-4 font-black text-slate-900">
+                              {formatToDDMMYYYY(a.report_date)}
+                            </td>
                             <td className="p-4">
-                              <p className="font-black text-slate-800">{a.active_partners?.partner_name}</p>
+                              <p className="font-black text-slate-800">
+                                {a.active_partners?.partner_name}
+                              </p>
                               <p className="text-[10px] font-bold text-slate-500">
                                 {a.operator_id} | Stn: {a.station_id} | [
-                                {a.active_partners?.locations?.center_code || "NO-CODE"}]{" "}
-                                {a.active_partners?.locations?.center_name}
+                                {a.active_partners?.locations?.center_code ||
+                                  "NO-CODE"}
+                                ] {a.active_partners?.locations?.center_name}
                               </p>
                             </td>
-                            <td className="p-4 text-center font-bold">{a.cat1_new_qty}</td>
-                            <td className="p-4 text-center font-bold">{a.cat2_mbu_free_qty}</td>
-                            <td className="p-4 text-center font-bold">{a.cat3_mbu_chargeable_qty}</td>
-                            <td className="p-4 text-center font-bold">{a.cat4_demographic_qty}</td>
-                            <td className="p-4 text-center font-bold">{a.cat5_biometric_qty}</td>
-                            <td className="p-4 text-center font-black">{a.total_packets_qty}</td>
+                            <td className="p-4 text-center font-bold">
+                              {a.cat1_new_qty}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {a.cat2_mbu_free_qty}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {a.cat3_mbu_chargeable_qty}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {a.cat4_demographic_qty}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {a.cat5_biometric_qty}
+                            </td>
+                            <td className="p-4 text-center font-black">
+                              {a.total_packets_qty}
+                            </td>
                             <td className="p-4 text-right font-black text-slate-900">
-                              ₹{Number(a.total_cash_collected).toLocaleString("en-IN")}
+                              ₹
+                              {Number(a.total_cash_collected).toLocaleString(
+                                "en-IN"
+                              )}
                             </td>
                             <td className="p-4 text-center">
                               <span
@@ -1058,13 +1284,19 @@ export default function SupervisorHub() {
                               {a.has_files ? (
                                 <div className="flex justify-center gap-1">
                                   <button
-                                    onClick={() => handleViewAadhaarVaultFile(a.csv_file_url)}
+                                    onClick={() =>
+                                      handleViewAadhaarVaultFile(a.csv_file_url)
+                                    }
                                     className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                                   >
                                     CSV
                                   </button>
                                   <button
-                                    onClick={() => handleViewAadhaarVaultFile(a.html_file_url)}
+                                    onClick={() =>
+                                      handleViewAadhaarVaultFile(
+                                        a.html_file_url
+                                      )
+                                    }
                                     className="bg-indigo-600 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                                   >
                                     HTML
@@ -1097,7 +1329,8 @@ export default function SupervisorHub() {
                   <span>🏦</span> Regional Deposit Feed
                 </h3>
                 <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">
-                  Bank Remittances &amp; Proofs ({formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)})
+                  Bank Remittances, Ref Codes, Unique UTRs &amp; Proofs (
+                  {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)})
                 </p>
               </div>
               <button
@@ -1111,8 +1344,9 @@ export default function SupervisorHub() {
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200 sticky top-0 shadow-sm z-10">
                   <tr>
-                    <th className="p-4">Date &amp; Center [Code]</th>
-                    <th className="p-4 text-right">Amount &amp; Ref</th>
+                    <th className="p-4">Date, Ref Code &amp; Center [Code]</th>
+                    <th className="p-4">Method, Unique UTR &amp; Txn ID</th>
+                    <th className="p-4 text-right">Amount (₹)</th>
                     <th className="p-4 text-center">Status</th>
                     <th className="p-4 text-right">Bank Proof</th>
                   </tr>
@@ -1120,69 +1354,117 @@ export default function SupervisorHub() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredDeposits.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-8 text-center text-slate-400 font-bold">
+                      <td
+                        colSpan={5}
+                        className="p-8 text-center text-slate-400 font-bold"
+                      >
                         No deposits logged in your perimeter for this period.
                       </td>
                     </tr>
                   ) : (
-                    filteredDeposits.map((d) => (
-                      <tr key={d.id} className="hover:bg-slate-50">
-                        <td className="p-4">
-                          <p className="font-black text-slate-800">
-                            {formatToDDMMYYYY(normalizeToYYYYMMDD(d.deposit_date || d.created_at))}
-                          </p>
-                          <p className="font-bold text-slate-600 mt-1 truncate max-w-[200px]">
-                            {d.active_partners?.partner_name}
-                          </p>
-                          <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">
-                            📍 [{d.active_partners?.locations?.center_code || "NO-CODE"}]{" "}
-                            {d.active_partners?.locations?.center_name}
-                          </p>
-                        </td>
-                        <td className="p-4 text-right">
-                          <p
-                            className={`font-black text-lg ${
-                              d.status === "Discrepancy" ? "text-slate-400 line-through" : "text-slate-900"
-                            }`}
-                          >
-                            ₹{Number(d.deposit_amount).toLocaleString("en-IN")}
-                          </p>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
-                            {d.deposit_method} / {d.reference_no}
-                          </p>
-                        </td>
-                        <td className="p-4 text-center">
-                          <span
-                            className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
-                              d.status === "Verified"
-                                ? "bg-green-100 text-green-700 border-green-200"
-                                : d.status === "Discrepancy"
-                                ? "bg-red-100 text-red-700 border-red-200"
-                                : "bg-amber-100 text-amber-700 border-amber-200"
-                            }`}
-                          >
-                            {d.status}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right">
-                          {d.is_exempted ? (
-                            <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest">
-                              ⚠️ Exempted
+                    filteredDeposits.map((d) => {
+                      const isAadhaar =
+                        d.deposit_stream === "AADHAAR" ||
+                        String(d.reference_no || "")
+                          .toUpperCase()
+                          .startsWith("AADHAAR_");
+                      const cleanUtr =
+                        d.utr_number ||
+                        String(d.reference_no || "").replace(/^AADHAAR_/i, "");
+                      const cleanTxn = d.transaction_id || cleanUtr;
+                      const refCode =
+                        d.reference_code ||
+                        `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(
+                          d.id || ""
+                        )
+                          .slice(0, 6)
+                          .toUpperCase()}`;
+
+                      return (
+                        <tr key={d.id} className="hover:bg-slate-50">
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <p className="font-black text-slate-800">
+                                {formatToDDMMYYYY(
+                                  normalizeToYYYYMMDD(
+                                    d.deposit_date || d.created_at
+                                  )
+                                )}
+                              </p>
+                              <span className="font-mono text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded">
+                                {refCode}
+                              </span>
+                            </div>
+                            <p className="font-bold text-slate-600 mt-1 truncate max-w-[200px]">
+                              {d.active_partners?.partner_name}
+                            </p>
+                            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-black">
+                              📍 [
+                              {d.active_partners?.locations?.center_code ||
+                                "NO-CODE"}
+                              ] {d.active_partners?.locations?.center_name}
+                            </p>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-[10px] font-black uppercase text-blue-600">
+                              {isAadhaar ? "🆔 Aadhaar • " : ""}
+                              {d.deposit_method}
                             </span>
-                          ) : d.deposit_slip_url ? (
-                            <button
-                              onClick={() => handleViewSecureSlip(d)}
-                              disabled={viewingSlipId === d.id}
-                              className="bg-slate-800 hover:bg-slate-700 text-white font-black px-3 py-1.5 rounded shadow-sm text-[9px] uppercase tracking-widest transition disabled:opacity-50"
+                            <p className="text-xs font-black text-slate-900 mt-0.5">
+                              UTR: {cleanUtr}
+                            </p>
+                            <p className="text-[10px] font-bold text-slate-500">
+                              Txn: {cleanTxn}
+                            </p>
+                          </td>
+                          <td className="p-4 text-right">
+                            <p
+                              className={`font-black text-lg ${
+                                d.status === "Discrepancy"
+                                  ? "text-slate-400 line-through"
+                                  : "text-slate-900"
+                              }`}
                             >
-                              {viewingSlipId === d.id ? "Decrypting..." : "📄 View Slip"}
-                            </button>
-                          ) : (
-                            <span className="text-[9px] text-slate-400 uppercase font-bold">No Proof</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                              ₹{Number(d.deposit_amount).toLocaleString("en-IN")}
+                            </p>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span
+                              className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
+                                d.status === "Verified"
+                                  ? "bg-green-100 text-green-700 border-green-200"
+                                  : d.status === "Discrepancy"
+                                  ? "bg-red-100 text-red-700 border-red-200"
+                                  : "bg-amber-100 text-amber-700 border-amber-200"
+                              }`}
+                            >
+                              {d.status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            {d.is_exempted ? (
+                              <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest">
+                                ⚠️ Exempted
+                              </span>
+                            ) : d.deposit_slip_url ? (
+                              <button
+                                onClick={() => handleViewSecureSlip(d)}
+                                disabled={viewingSlipId === d.id}
+                                className="bg-slate-800 hover:bg-slate-700 text-white font-black px-3 py-1.5 rounded shadow-sm text-[9px] uppercase tracking-widest transition disabled:opacity-50"
+                              >
+                                {viewingSlipId === d.id
+                                  ? "Decrypting..."
+                                  : "📄 View Slip"}
+                              </button>
+                            ) : (
+                              <span className="text-[9px] text-slate-400 uppercase font-bold">
+                                No Proof
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1221,16 +1503,26 @@ export default function SupervisorHub() {
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-red-50 text-[10px] uppercase tracking-widest text-red-800 border-b border-red-200 sticky top-0 shadow-sm z-10">
                   <tr>
-                    <th className="p-4 font-black">Flagged Associate &amp; Center Code</th>
-                    <th className="p-4 font-black text-center">Missing Report (Period)</th>
-                    <th className="p-4 font-black text-center">Lifetime Pending Cash</th>
+                    <th className="p-4 font-black">
+                      Flagged Associate &amp; Center Code
+                    </th>
+                    <th className="p-4 font-black text-center">
+                      Missing Report (Period)
+                    </th>
+                    <th className="p-4 font-black text-center">
+                      Lifetime Pending Cash
+                    </th>
                     <th className="p-4 font-black text-right">Field Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {complianceMatrix.filter((p) => p.isDefaulter).length === 0 ? (
+                  {complianceMatrix.filter((p) => p.isDefaulter).length ===
+                  0 ? (
                     <tr>
-                      <td colSpan={4} className="p-16 text-center text-slate-500 font-bold text-lg">
+                      <td
+                        colSpan={4}
+                        className="p-16 text-center text-slate-500 font-bold text-lg"
+                      >
                         🎉 Your territory is perfectly compliant. No defaulters.
                       </td>
                     </tr>
@@ -1238,16 +1530,22 @@ export default function SupervisorHub() {
                     complianceMatrix
                       .filter((p) => p.isDefaulter)
                       .map((p) => (
-                        <tr key={p.id} className="hover:bg-red-50/30 transition">
+                        <tr
+                          key={p.id}
+                          className="hover:bg-red-50/30 transition"
+                        >
                           <td className="p-4">
                             <div className="flex items-start gap-2">
-                              <p className="font-black text-slate-900 text-base">{p.partner_name}</p>
+                              <p className="font-black text-slate-900 text-base">
+                                {p.partner_name}
+                              </p>
                               <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
                                 {p.role}
                               </span>
                             </div>
                             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
-                              📍 [{p.locations?.center_code || "NO-CODE"}] {p.locations?.center_name}
+                              📍 [{p.locations?.center_code || "NO-CODE"}]{" "}
+                              {p.locations?.center_name}
                             </p>
                           </td>
                           <td className="p-4 text-center">
@@ -1256,7 +1554,9 @@ export default function SupervisorHub() {
                                 ❌ Missing
                               </span>
                             ) : (
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Logged</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">
+                                Logged
+                              </span>
                             )}
                           </td>
                           <td className="p-4 text-center">
@@ -1271,17 +1571,27 @@ export default function SupervisorHub() {
                               </div>
                             ) : (
                               <span className="text-slate-800 font-black">
-                                ₹{Math.max(0, p.pendingBalance).toLocaleString("en-IN")}
+                                ₹
+                                {Math.max(0, p.pendingBalance).toLocaleString(
+                                  "en-IN"
+                                )}
                               </span>
                             )}
                           </td>
                           <td className="p-4 text-right">
                             <button
-                              onClick={() => handleRegionalNudge(p, !p.hasLoggedActivity ? "SALES" : "CASH")}
+                              onClick={() =>
+                                handleRegionalNudge(
+                                  p,
+                                  !p.hasLoggedActivity ? "SALES" : "CASH"
+                                )
+                              }
                               disabled={isNudging === p.id}
                               className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded text-[10px] uppercase tracking-widest shadow-md transition disabled:opacity-50 flex items-center gap-2 ml-auto"
                             >
-                              {isNudging === p.id ? "Dispatching..." : "🔔 Send Regional Nudge"}
+                              {isNudging === p.id
+                                ? "Dispatching..."
+                                : "🔔 Send Regional Nudge"}
                             </button>
                           </td>
                         </tr>

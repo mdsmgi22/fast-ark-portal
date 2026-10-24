@@ -1,3 +1,4 @@
+// FILE PATH: ./app/partner/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -5,8 +6,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
-// External Utility Engines
-import { getLocalDateString, normalizeToYYYYMMDD, executePartnerSalesCSVExport } from "../../lib/partnerUtils";
+import {
+  normalizeToYYYYMMDD,
+  executePartnerSalesCSVExport,
+} from "../../lib/partnerUtils";
 import { buildCompliancePDF } from "../../lib/pdfEngine";
 import {
   DatePresetMode,
@@ -16,7 +19,6 @@ import {
   syncAadhaarLatePenalties,
 } from "../../lib/aadhaarEngine";
 
-// Isolated UI Components
 import DashboardQuickActions from "../../components/partner/DashboardQuickActions";
 import ComplianceModal from "../../components/partner/ComplianceModal";
 import InfrastructureAccordions from "../../components/partner/InfrastructureAccordions";
@@ -31,11 +33,9 @@ export default function PartnerDashboard() {
   const [syncError, setSyncError] = useState("");
   const [isRouting, setIsRouting] = useState(false);
 
-  // Live IST Date & Clock
   const [liveDateDDMMYYYY, setLiveDateDDMMYYYY] = useState("");
   const [liveTimeIST, setLiveTimeIST] = useState("");
 
-  // Data States
   const [partner, setPartner] = useState<any>(null);
   const [partnerCtops, setPartnerCtops] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
@@ -48,13 +48,15 @@ export default function PartnerDashboard() {
   const [rawAadhaar, setRawAadhaar] = useState<any[]>([]);
   const [rawPenalties, setRawPenalties] = useState<any[]>([]);
 
-  // 7-Option Date Preset + Custom Range States
   const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
-  const [fromDate, setFromDate] = useState<string>(() => getDateRangeFromPreset("current_month").start);
-  const [toDate, setToDate] = useState<string>(() => getDateRangeFromPreset("current_month").end);
+  const [fromDate, setFromDate] = useState<string>(
+    () => getDateRangeFromPreset("current_month").start
+  );
+  const [toDate, setToDate] = useState<string>(
+    () => getDateRangeFromPreset("current_month").end
+  );
   const [timeFilter, setTimeFilter] = useState("current_month");
 
-  // Operational & Balance States
   const [hasSubmittedToday, setHasSubmittedToday] = useState(false);
   const [lifetimePendingBalance, setLifetimePendingBalance] = useState(0);
   const [telecomPendingBalance, setTelecomPendingBalance] = useState(0);
@@ -86,7 +88,9 @@ export default function PartnerDashboard() {
     qAadhaarPkts: 0,
   });
 
-  const [docFiles, setDocFiles] = useState<Record<string, File | File[] | null>>({});
+  const [docFiles, setDocFiles] = useState<Record<string, File | File[] | null>>(
+    {}
+  );
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
   const [hasUploadedDocs, setHasUploadedDocs] = useState(false);
   const [docUploadMessage, setDocUploadMessage] = useState("");
@@ -116,7 +120,13 @@ export default function PartnerDashboard() {
         "EA Request Form",
         "Bank Passbook / Cancel Cheque",
       ];
-    return ["GST Certificate", "Bank Mapping", "Other Document 1", "Other Document 2", "Other Document 3"];
+    return [
+      "GST Certificate",
+      "Bank Mapping",
+      "Other Document 1",
+      "Other Document 2",
+      "Other Document 3",
+    ];
   };
 
   useEffect(() => {
@@ -146,7 +156,9 @@ export default function PartnerDashboard() {
 
   const initializeDashboard = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) return router.push("/partner/login");
 
       const { data: partnerData } = await supabase
@@ -156,7 +168,9 @@ export default function PartnerDashboard() {
         .maybeSingle();
 
       if (!partnerData) {
-        setSyncError("DATABASE DESYNC: Your partner profile could not be loaded. Please sign out and contact administration.");
+        setSyncError(
+          "DATABASE DESYNC: Your partner profile could not be loaded. Please sign out and contact administration."
+        );
         setLoading(false);
         return;
       }
@@ -164,7 +178,6 @@ export default function PartnerDashboard() {
       if (partnerData.tc_accepted === false) return router.push("/partner/terms");
       setPartner(partnerData);
 
-      // Sync any overdue Aadhaar ₹100/day penalties
       await syncAadhaarLatePenalties(supabase, partnerData.id);
 
       const { data: fileList } = await supabase.storage
@@ -191,7 +204,9 @@ export default function PartnerDashboard() {
 
       const { data: ctopData } = await supabase
         .from("agent_ctop_mappings")
-        .select("agent_ctop_no, agent_ocsc_login_id, is_active, master_ctop_accounts(master_ctop_no)")
+        .select(
+          "agent_ctop_no, agent_ocsc_login_id, is_active, master_ctop_accounts(master_ctop_no)"
+        )
         .eq("partner_id", partnerData.id)
         .eq("is_active", true);
       setPartnerCtops(ctopData || []);
@@ -215,16 +230,32 @@ export default function PartnerDashboard() {
   const fetchAllLedgerData = async (partnerId: string) => {
     try {
       const [salesRes, depositsRes, aadhaarRes, penaltyRes] = await Promise.all([
-        supabase.from("daily_sales_reports").select("*").eq("partner_id", partnerId).order("report_date", { ascending: false }),
-        supabase.from("partner_deposits").select("*").eq("partner_id", partnerId).order("created_at", { ascending: false }),
-        supabase.from("aadhaar_daily_reports").select("*").eq("partner_id", partnerId).order("report_date", { ascending: false }),
-        supabase.from("aadhaar_penalty_logs").select("*").eq("partner_id", partnerId).eq("is_settled", false),
+        supabase
+          .from("daily_sales_reports")
+          .select("*")
+          .eq("partner_id", partnerId)
+          .order("report_date", { ascending: false }),
+        supabase
+          .from("partner_deposits")
+          .select("*")
+          .eq("partner_id", partnerId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("aadhaar_daily_reports")
+          .select("*")
+          .eq("partner_id", partnerId)
+          .order("report_date", { ascending: false }),
+        supabase
+          .from("aadhaar_penalty_logs")
+          .select("*")
+          .eq("partner_id", partnerId)
+          .eq("is_settled", false),
       ]);
 
       const salesList = salesRes.data || [];
       const depList = depositsRes.data || [];
       const aadhaarList = aadhaarRes.data || [];
-      const penList = penaltyRes.data || [];
+      const penList = (penaltyRes.data || []).filter((p: any) => !p.is_waived);
 
       setRawSales(salesList);
       setRawDeposits(depList);
@@ -232,9 +263,11 @@ export default function PartnerDashboard() {
       setRawPenalties(penList);
 
       const todayStr = getISTDateString(0);
-      setHasSubmittedToday(salesList.some((s) => normalizeToYYYYMMDD(s.report_date) === todayStr));
+      setHasSubmittedToday(
+        salesList.some((s) => normalizeToYYYYMMDD(s.report_date) === todayStr)
+      );
 
-      // 1. Calculate Lifetime Telecom/Paybull Pending Balance (Strictly isolated from AADHAAR_ deposits)
+      // 1. Lifetime Telecom/Paybull Pending Balance (Isolated from Aadhaar stream)
       let lifetimeTelecomSales = 0;
       salesList.forEach((s) => {
         lifetimeTelecomSales +=
@@ -254,21 +287,38 @@ export default function PartnerDashboard() {
           Number(s.pb_other_amt || 0);
       });
 
-      let lifetimeTelecomDeposits = 0;
-      depList
-        .filter((d) => d.status !== "Discrepancy" && !String(d.reference_no || "").toUpperCase().startsWith("AADHAAR_"))
-        .forEach((d) => {
-          lifetimeTelecomDeposits += Number(d.deposit_amount || 0);
-        });
+      const isAadhaarDeposit = (d: any) =>
+        d.deposit_stream === "AADHAAR" ||
+        String(d.reference_no || "")
+          .toUpperCase()
+          .startsWith("AADHAAR_");
 
-      const netTelecomDue = Math.max(0, lifetimeTelecomSales - lifetimeTelecomDeposits);
+      const lifetimeTelecomDeposits = depList
+        .filter((d) => d.status !== "Discrepancy" && !isAadhaarDeposit(d))
+        .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
 
-      // 2. Calculate Unsettled Aadhaar Cash & Unpaid ₹100/day Late Penalties
-      const netAadhaarDue = aadhaarList
-        .filter((a) => a.deposit_status === "Pending Deposit")
-        .reduce((sum, a) => sum + Number(a.total_cash_collected || 0), 0);
+      const netTelecomDue = Math.max(
+        0,
+        lifetimeTelecomSales - lifetimeTelecomDeposits
+      );
 
-      const netPenaltyDue = penList.reduce((sum, p) => sum + Number(p.penalty_amount || 0), 0);
+      // 2. Unified Aadhaar Deduction Formula: (Total Aadhaar Collection - Total Aadhaar Deposits) + Non-Waived Penalties
+      const lifetimeAadhaarCollected = aadhaarList.reduce(
+        (sum, a) => sum + Number(a.total_cash_collected || 0),
+        0
+      );
+      const lifetimeAadhaarDeposited = depList
+        .filter((d) => d.status !== "Discrepancy" && isAadhaarDeposit(d))
+        .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
+
+      const netAadhaarDue = Math.max(
+        0,
+        lifetimeAadhaarCollected - lifetimeAadhaarDeposited
+      );
+      const netPenaltyDue = penList.reduce(
+        (sum, p) => sum + Number(p.penalty_amount || 0),
+        0
+      );
 
       setTelecomPendingBalance(netTelecomDue);
       setAadhaarPendingBalance(netAadhaarDue);
@@ -276,7 +326,14 @@ export default function PartnerDashboard() {
       setLifetimePendingBalance(netTelecomDue + netAadhaarDue + netPenaltyDue);
 
       const defaultRange = getDateRangeFromPreset("current_month");
-      recalculateWindow(defaultRange.start, defaultRange.end, "current_month", salesList, depList, aadhaarList);
+      recalculateWindow(
+        defaultRange.start,
+        defaultRange.end,
+        "current_month",
+        salesList,
+        depList,
+        aadhaarList
+      );
     } catch (error) {
       console.error(error);
     }
@@ -412,24 +469,39 @@ export default function PartnerDashboard() {
     setExpandedMsgId(msg.id);
     if (msg.is_read) return;
     try {
-      setMessages((current) => current.map((m) => (m.id === msg.id ? { ...m, is_read: true } : m)));
+      setMessages((current) =>
+        current.map((m) => (m.id === msg.id ? { ...m, is_read: true } : m))
+      );
       setUnreadCount((prev) => Math.max(0, prev - 1));
-      await supabase.from("partner_messages").update({ is_read: true }).eq("id", msg.id);
+      await supabase
+        .from("partner_messages")
+        .update({ is_read: true })
+        .eq("id", msg.id);
     } catch (err) {}
   };
 
   const handleRequestEdit = async (saleId: string) => {
-    if (editReason.trim().length < 5) return alert("Please provide a detailed reason (minimum 5 characters).");
+    if (editReason.trim().length < 5)
+      return alert("Please provide a detailed reason (minimum 5 characters).");
     try {
       const { error } = await supabase
         .from("daily_sales_reports")
-        .update({ edit_request_status: "Pending", edit_request_reason: editReason })
+        .update({
+          edit_request_status: "Pending",
+          edit_request_reason: editReason,
+        })
         .eq("id", saleId);
       if (error) throw error;
       alert("✅ Edit request submitted. Waiting for Back-Office approval.");
       setRawSales(
         rawSales.map((s) =>
-          s.id === saleId ? { ...s, edit_request_status: "Pending", edit_request_reason: editReason } : s
+          s.id === saleId
+            ? {
+                ...s,
+                edit_request_status: "Pending",
+                edit_request_reason: editReason,
+              }
+            : s
         )
       );
       setRequestingEditId(null);
@@ -439,15 +511,22 @@ export default function PartnerDashboard() {
     }
   };
 
-  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>, docName: string, isMulti: boolean) => {
+  const handleDocFileChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    docName: string,
+    isMulti: boolean
+  ) => {
     if (e.target.files && e.target.files.length > 0) {
       const selectedFiles = Array.from(e.target.files);
       for (const file of selectedFiles) {
-        if (file.size > 5 * 1024 * 1024) return alert(`File size for ${file.name} must be under 5MB.`);
+        if (file.size > 5 * 1024 * 1024)
+          return alert(`File size for ${file.name} must be under 5MB.`);
       }
       if (isMulti) {
         if (selectedFiles.length !== 5)
-          return alert(`Requirement Error: You must select exactly 5 photos for '${docName}'.`);
+          return alert(
+            `Requirement Error: You must select exactly 5 photos for '${docName}'.`
+          );
         setDocFiles((prev) => ({ ...prev, [docName]: selectedFiles }));
       } else {
         setDocFiles((prev) => ({ ...prev, [docName]: selectedFiles[0] }));
@@ -460,9 +539,18 @@ export default function PartnerDashboard() {
     const requiredDocs = getRequiredDocuments(partner?.role);
 
     for (const doc of requiredDocs) {
-      if (!docFiles[doc]) return alert(`Validation Error: Please upload the mandatory document: ${doc}`);
-      if (doc.includes("(5 Nos)") && Array.isArray(docFiles[doc]) && (docFiles[doc] as File[]).length !== 5) {
-        return alert(`Validation Error: Please select exactly 5 photos for: ${doc}`);
+      if (!docFiles[doc])
+        return alert(
+          `Validation Error: Please upload the mandatory document: ${doc}`
+        );
+      if (
+        doc.includes("(5 Nos)") &&
+        Array.isArray(docFiles[doc]) &&
+        (docFiles[doc] as File[]).length !== 5
+      ) {
+        return alert(
+          `Validation Error: Please select exactly 5 photos for: ${doc}`
+        );
       }
     }
 
@@ -470,7 +558,8 @@ export default function PartnerDashboard() {
     try {
       let userIp = "Unknown";
       try {
-        userIp = (await (await fetch("https://api.ipify.org?format=json")).json()).ip;
+        userIp = (await (await fetch("https://api.ipify.org?format=json")).json())
+          .ip;
       } catch (err) {}
 
       const mergedPdfBytes = await buildCompliancePDF(
@@ -483,7 +572,9 @@ export default function PartnerDashboard() {
       );
       const { error: uploadError, data } = await supabase.storage
         .from("application_documents")
-        .upload(`COMPLIANCE_${partner.id}_${Date.now()}.pdf`, mergedPdfBytes, { contentType: "application/pdf" });
+        .upload(`COMPLIANCE_${partner.id}_${Date.now()}.pdf`, mergedPdfBytes, {
+          contentType: "application/pdf",
+        });
       if (uploadError) throw uploadError;
 
       const { error: dbError } = await supabase
@@ -511,7 +602,10 @@ export default function PartnerDashboard() {
       const d = normalizeToYYYYMMDD(s.report_date);
       return d >= fromDate && d <= toDate;
     });
-    executePartnerSalesCSVExport(visible, `${formatToDDMMYYYY(fromDate)}_to_${formatToDDMMYYYY(toDate)}`);
+    executePartnerSalesCSVExport(
+      visible,
+      `${formatToDDMMYYYY(fromDate)}_to_${formatToDDMMYYYY(toDate)}`
+    );
   };
 
   const routeTo = (path: string) => {
@@ -539,7 +633,10 @@ export default function PartnerDashboard() {
         <div className="bg-red-50 p-8 rounded-2xl shadow-sm border-2 border-red-200 text-center">
           <h2 className="text-xl font-black text-red-800">Database Sync Error</h2>
           <p className="text-sm text-red-900 mt-2">{syncError}</p>
-          <button onClick={handleSignOut} className="mt-4 bg-red-600 text-white font-black px-6 py-3 rounded-lg">
+          <button
+            onClick={handleSignOut}
+            className="mt-4 bg-red-600 text-white font-black px-6 py-3 rounded-lg"
+          >
             Sign Out
           </button>
         </div>
@@ -558,7 +655,6 @@ export default function PartnerDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans relative">
-      {/* GLOBAL ROUTING OVERLAY */}
       {isRouting && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
@@ -568,7 +664,6 @@ export default function PartnerDashboard() {
         </div>
       )}
 
-      {/* STICKY TOP NAVIGATION HEADER & MENU RIBBON */}
       <header className="bg-blue-600 text-white shadow-lg sticky top-0 z-40">
         <div className="px-4 md:px-8 py-3.5 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -576,9 +671,13 @@ export default function PartnerDashboard() {
               F
             </div>
             <div>
-              <h1 className="font-black text-lg leading-tight tracking-wide text-white">FAST ARK</h1>
+              <h1 className="font-black text-lg leading-tight tracking-wide text-white">
+                FAST ARK
+              </h1>
               <p className="text-[9px] text-blue-200 font-bold uppercase tracking-widest hidden sm:block">
-                Partner Operations Hub • [{partner?.locations?.center_code || "CENTER"}] {partner?.locations?.center_name}
+                Partner Operations Hub • [
+                {partner?.locations?.center_code || "CENTER"}]{" "}
+                {partner?.locations?.center_name}
               </p>
             </div>
           </div>
@@ -593,14 +692,25 @@ export default function PartnerDashboard() {
             <div
               className="flex bg-blue-700 border border-blue-500 px-2 sm:px-3 py-1.5 rounded-lg text-right shadow-sm items-center gap-2 cursor-pointer hover:bg-blue-800 transition"
               title="View Inbox Below"
-              onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}
+              onClick={() =>
+                window.scrollTo({
+                  top: document.body.scrollHeight,
+                  behavior: "smooth",
+                })
+              }
             >
-              <span className="text-xl animate-pulse">{unreadCount > 0 ? "🔔" : "🔕"}</span>
+              <span className="text-xl animate-pulse">
+                {unreadCount > 0 ? "🔔" : "🔕"}
+              </span>
               <div className="hidden sm:block">
                 <p className="text-[9px] text-blue-200 font-black uppercase tracking-widest leading-none">
                   Unread Alerts
                 </p>
-                <p className={`font-black text-xs ${unreadCount > 0 ? "text-white" : "text-blue-300"}`}>
+                <p
+                  className={`font-black text-xs ${
+                    unreadCount > 0 ? "text-white" : "text-blue-300"
+                  }`}
+                >
                   {unreadCount} Notices
                 </p>
               </div>
@@ -619,24 +729,41 @@ export default function PartnerDashboard() {
           </div>
         </div>
 
-        {/* DIRECT MODULE NAVIGATION MENU BAR */}
         <div className="bg-slate-900 px-4 md:px-8 py-2 flex items-center gap-2 overflow-x-auto border-t border-blue-500/30 text-[11px] font-black uppercase tracking-wider">
-          <Link href="/partner/dashboard" className="px-3 py-1.5 rounded bg-blue-600 text-white shrink-0">
+          <Link
+            href="/partner/dashboard"
+            className="px-3 py-1.5 rounded bg-blue-600 text-white shrink-0"
+          >
             📊 Dashboard
           </Link>
-          <Link href="/partner/sales" className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition">
+          <Link
+            href="/partner/sales"
+            className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
+          >
             📈 Daily Sales
           </Link>
-          <Link href="/partner/deposit" className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition">
+          <Link
+            href="/partner/deposit"
+            className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
+          >
             💳 Deposit of Sales
           </Link>
-          <Link href="/partner/stock" className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition">
+          <Link
+            href="/partner/stock"
+            className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
+          >
             📦 Stock Request
           </Link>
-          <Link href="/partner/aadhaar" className="px-3 py-1.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500 hover:text-slate-950 shrink-0 transition">
+          <Link
+            href="/partner/aadhaar"
+            className="px-3 py-1.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500 hover:text-slate-950 shrink-0 transition"
+          >
             🆔 Aadhaar Kendra Hub
           </Link>
-          <Link href="/partner/helpdesk" className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition">
+          <Link
+            href="/partner/helpdesk"
+            className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
+          >
             🎧 Helpdesk
           </Link>
         </div>
@@ -655,7 +782,8 @@ export default function PartnerDashboard() {
                   Action Required: Upload Compliance Docs
                 </h3>
                 <p className="text-xs font-bold text-red-200 mt-1">
-                  Your account requires mandatory documentation to maintain active status.
+                  Your account requires mandatory documentation to maintain
+                  active status.
                 </p>
               </div>
             </div>
@@ -667,7 +795,9 @@ export default function PartnerDashboard() {
           <div className="bg-emerald-100 text-emerald-800 border border-emerald-200 p-4 rounded-xl shadow-sm flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-2xl">✅</span>
-              <p className="font-black uppercase tracking-widest text-sm">Compliance Documents Secured</p>
+              <p className="font-black uppercase tracking-widest text-sm">
+                Compliance Documents Secured
+              </p>
             </div>
             <span className="text-[10px] font-bold opacity-70 bg-emerald-200 px-2 py-1 rounded">
               Locked &amp; Validated
@@ -693,19 +823,23 @@ export default function PartnerDashboard() {
                 <span className="text-2xl">🚨</span> Priority Remittance Required
               </h3>
               <p className="font-bold text-sm mt-1">
-                Your pending cash balance has exceeded the ₹1,000 limit. Settle your ledger immediately.
+                Your pending cash balance has exceeded the ₹1,000 limit. Settle
+                your ledger immediately.
               </p>
             </div>
             <div className="mt-4 md:mt-0 text-left md:text-right bg-red-800/50 p-3 rounded-lg border border-red-700">
-              <p className="text-[10px] uppercase font-black text-red-300 tracking-widest">Pending Amount</p>
-              <p className="text-3xl font-black">₹{lifetimePendingBalance.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] uppercase font-black text-red-300 tracking-widest">
+                Pending Amount
+              </p>
+              <p className="text-3xl font-black">
+                ₹{lifetimePendingBalance.toLocaleString("en-IN")}
+              </p>
             </div>
           </div>
         )}
 
         <DashboardQuickActions hasSubmittedToday={hasSubmittedToday} />
 
-        {/* DEDICATED SUPPORT DESK ENTRY BANNER */}
         <div
           onClick={() => routeTo("/partner/helpdesk")}
           className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 cursor-pointer hover:border-blue-500 hover:shadow-xl transition-all group animate-in fade-in"
@@ -719,7 +853,8 @@ export default function PartnerDashboard() {
                 Support &amp; Escalation Helpdesk
               </h2>
               <p className="text-slate-400 font-medium mt-1 text-sm md:text-base leading-relaxed">
-                Report BSNL infrastructure issues, portal downtime, or company queries. Track your live SLA resolutions.
+                Report BSNL infrastructure issues, portal downtime, or company
+                queries. Track your live SLA resolutions.
               </p>
             </div>
           </div>
@@ -751,7 +886,9 @@ export default function PartnerDashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
           <SalesHistory
-            timeFilter={`${formatToDDMMYYYY(fromDate)} - ${formatToDDMMYYYY(toDate)}`}
+            timeFilter={`${formatToDDMMYYYY(fromDate)} - ${formatToDDMMYYYY(
+              toDate
+            )}`}
             visibleSales={visibleSales}
             expandedSaleId={expandedSaleId}
             setExpandedSaleId={setExpandedSaleId}
@@ -764,7 +901,9 @@ export default function PartnerDashboard() {
           />
           <div className="space-y-6">
             <DepositsHistory
-              timeFilter={`${formatToDDMMYYYY(fromDate)} - ${formatToDDMMYYYY(toDate)}`}
+              timeFilter={`${formatToDDMMYYYY(fromDate)} - ${formatToDDMMYYYY(
+                toDate
+              )}`}
               visibleDeposits={visibleDeposits}
             />
             <CorporateInbox

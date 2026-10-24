@@ -1,3 +1,4 @@
+// FILE PATH: ./app/update-password/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -29,51 +30,82 @@ export default function UpdatePasswordPage() {
 
     try {
       // 1. Verify active session
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) {
-        throw new Error("No active recovery session found. Please request a new reset link.");
+        throw new Error(
+          "No active recovery session found. Please request a new reset link."
+        );
       }
 
       // 2. Update password and wipe the must_change_password flag
       const { error: updateError } = await supabase.auth.updateUser({
         password: password,
-        data: { must_change_password: false }
+        data: { must_change_password: false },
       });
 
       if (updateError) throw updateError;
 
-      const userEmail = session.user.email || "Unknown";
+      const userEmail = (session.user.email || "Unknown").trim().toLowerCase();
 
-      // 3. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
-      await supabase.from('staff_activity_logs').insert([{
-        staff_id: session.user.id,
-        staff_email: userEmail.trim().toLowerCase(),
-        action_type: 'SECURITY_AUDIT',
-        module: 'AUTHENTICATION',
-        target_id: session.user.id,
-        details: `Credentials updated successfully. Password change locked.`
-      }]);
-
-      setSuccessMsg("✅ Password updated securely! Routing to your designated command center...");
-
-      // 4. BULLETPROOF ROUTING FIX: Direct Database Query
-      // Because auth_id is now mapped, RLS allows this query to succeed securely.
+      // 3. Determine Staff vs Partner Role & Establish Active Session Token
       const { data: staff } = await supabase
         .from("back_office_staff")
-        .select("role")
-        .ilike("email", userEmail.trim())
+        .select("id, role")
+        .ilike("email", userEmail)
         .maybeSingle();
+
+      const sessionPrefix = staff ? "STAFF" : "PARTNER";
+      const sessionToken = `${sessionPrefix}_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2)}`;
+
+      let currentIp = "Unknown";
+      try {
+        const ipRes = await fetch("https://api.ipify.org?format=json");
+        currentIp = (await ipRes.json()).ip;
+      } catch (_) {}
+
+      await supabase.from("active_sessions").upsert({
+        user_id: session.user.id,
+        session_token: sessionToken,
+        ip_address: currentIp,
+        last_active: new Date().toISOString(),
+      });
+
+      localStorage.setItem("fapl_session_token", sessionToken);
+
+      // 4. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+      await supabase.from("staff_activity_logs").insert([
+        {
+          staff_id: session.user.id,
+          staff_email: userEmail,
+          action_type: "SECURITY_AUDIT",
+          module: "AUTHENTICATION",
+          target_id: session.user.id,
+          details: `Credentials updated successfully. Password change locked. IP: ${currentIp}`,
+        },
+      ]);
+
+      setSuccessMsg(
+        "✅ Password updated securely! Routing to your designated command center..."
+      );
 
       setTimeout(() => {
         if (staff) {
-          // It is a verified Staff member -> Route to Corporate Admin Hub
-          router.push("/dashboard");
+          const safeRole = String(staff.role || "")
+            .trim()
+            .toLowerCase();
+          router.push(
+            safeRole === "supervisor"
+              ? "/dashboard/supervisor-hub"
+              : "/dashboard"
+          );
         } else {
-          // It is a Franchise Partner -> Route to Partner Portal
           router.push("/partner/dashboard");
         }
-      }, 2000);
-
+      }, 1500);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update password.");
     } finally {
@@ -84,14 +116,16 @@ export default function UpdatePasswordPage() {
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 font-sans">
       <div className="max-w-md w-full bg-slate-950 p-8 rounded-2xl shadow-2xl border border-slate-800">
-        
         <div className="text-center mb-6">
           <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white font-black text-2xl mx-auto mb-3 shadow-md">
             🔒
           </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-wider">Set New Password</h1>
+          <h1 className="text-2xl font-black text-white uppercase tracking-wider">
+            Set New Password
+          </h1>
           <p className="text-slate-400 text-xs font-bold mt-1">
-            Please choose a strong password to secure your Fast Ark portal access.
+            Please choose a strong password to secure your Fast Ark portal
+            access.
           </p>
         </div>
 
@@ -148,7 +182,6 @@ export default function UpdatePasswordPage() {
             {loading ? "Updating Credentials & Routing..." : "Save & Continue"}
           </button>
         </form>
-
       </div>
     </div>
   );
