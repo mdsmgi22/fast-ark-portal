@@ -21,7 +21,6 @@ export default function AdminOperatorMappingModule({
   onRefresh,
   onDownloadVaultFile,
 }: AdminOperatorMappingProps) {
-  // 4-Tier Cascade State for Direct Operator Role Flip & Center Mapping
   const [mapState, setMapState] = useState("ALL");
   const [mapHq, setMapHq] = useState("ALL");
   const [mapCenterId, setMapCenterId] = useState("");
@@ -35,6 +34,10 @@ export default function AdminOperatorMappingModule({
     nseit_no: "",
   });
   const [isSavingMapping, setIsSavingMapping] = useState(false);
+
+  // Roster Filter (All Mapped, Active Only, Revoked Only, or by Station ID)
+  const [rosterStatusFilter, setRosterStatusFilter] = useState<"ALL" | "ACTIVE" | "REVOKED">("ALL");
+  const [rosterStationFilter, setRosterStationFilter] = useState<string>("ALL");
 
   // Upgrade Queue Filter & Pre-Approval Inspection/Edit Modal State
   const [reqFilter, setReqFilter] = useState<"Pending" | "Approved" | "Rejected" | "ALL">("Pending");
@@ -50,7 +53,6 @@ export default function AdminOperatorMappingModule({
   const [isProcessingReq, setIsProcessingReq] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
-  // 1. Cascading Options for Direct Bind Form
   const uniqueStates = useMemo(
     () => Array.from(new Set(locations.map((l) => l.state).filter(Boolean))).sort(),
     [locations]
@@ -92,12 +94,33 @@ export default function AdminOperatorMappingModule({
     });
   }, [partners, mapState, mapHq, mapCenterId]);
 
-  const activeAadhaarOperators = useMemo(
-    () => partners.filter((p) => p.role_aadhaar && p.aadhaar_operator_id && p.aadhaar_station_id),
+  // Includes BOTH Active AND Revoked Aadhaar Operators so Admin can click "Allow Access" anytime
+  const allMappedAadhaarOperators = useMemo(
+    () =>
+      partners.filter(
+        (p) => Boolean(p.role_aadhaar || p.aadhaar_operator_id || p.aadhaar_station_id)
+      ),
     [partners]
   );
 
-  // --- HELPER: DIRECT FILE DOWNLOAD FROM SUPABASE STORAGE ---
+  const uniqueRosterStations = useMemo(
+    () =>
+      Array.from(
+        new Set(allMappedAadhaarOperators.map((p) => p.aadhaar_station_id).filter(Boolean))
+      ).sort(),
+    [allMappedAadhaarOperators]
+  );
+
+  const filteredRosterOperators = useMemo(() => {
+    return allMappedAadhaarOperators.filter((op) => {
+      const isAllowed = Boolean(op.role_aadhaar && op.locations?.role_aadhaar);
+      if (rosterStatusFilter === "ACTIVE" && !isAllowed) return false;
+      if (rosterStatusFilter === "REVOKED" && isAllowed) return false;
+      if (rosterStationFilter !== "ALL" && op.aadhaar_station_id !== rosterStationFilter) return false;
+      return true;
+    });
+  }, [allMappedAadhaarOperators, rosterStatusFilter, rosterStationFilter]);
+
   const handleDirectDownloadPdf = async (path: string | null, fileNameLabel: string) => {
     if (!path) return alert("No compliance PDF attached to this record.");
     setIsDownloadingPdf(true);
@@ -120,7 +143,6 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // --- HANDLER 1: DIRECT CASCADING AADHAAR CENTER & OPERATOR BIND (WITH CONFIRMATION EMAIL) ---
   const handleDirectOperatorMap = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mapCenterId) {
@@ -178,7 +200,6 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // --- HANDLER 2: OPEN PRE-APPROVAL INSPECTION & EDIT MODAL ---
   const openInspectionModal = async (req: any) => {
     setInspectingReq(req);
     setConfirmAdminApproveCheck(false);
@@ -198,7 +219,6 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // Save pre-approval edits to partner_upgrade_requests without approving yet
   const handleSavePreApprovalEditsOnly = async () => {
     if (!inspectingReq) return;
     if (!reqEditForm.center_id || !reqEditForm.operator_id.trim() || reqEditForm.station_id.trim().length !== 5) {
@@ -227,7 +247,6 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // Approve or Reject Request (Triggers Confirmation Email on Approval)
   const handleUpgradeDecision = async (req: any, decision: "Approved" | "Rejected") => {
     const finalCenterId = reqEditForm.center_id || (req.center_id || req.active_partners?.center_id)?.toString();
     const finalOpId = (reqEditForm.operator_id || req.requested_operator_id || "").trim().toUpperCase();
@@ -269,7 +288,6 @@ export default function AdminOperatorMappingModule({
       return;
     }
 
-    // APPROVAL VALIDATIONS
     if (!finalCenterId) {
       return alert("Mandatory: You must assign an Aadhaar Center before approving this operator.");
     }
@@ -319,34 +337,66 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // --- HANDLER 3: REVOKE AADHAAR ACCESS ---
-  const handleRevokeAadhaarAccess = async (op: any) => {
+  // --- HANDLER 3: REVOKE OR ALLOW (RESTORE) AADHAAR ACCESS ---
+  const handleToggleAadhaarAccess = async (op: any, allowAccess: boolean) => {
+    const actionLabel = allowAccess ? "ALLOW / RESTORE" : "REVOKE";
     if (
       !confirm(
-        `Revoke Aadhaar Seva Kendra access for ${op.partner_name} (Op: ${op.aadhaar_operator_id})? They will be locked out of the Aadhaar Upload dashboard immediately.`
+        `Are you sure you want to ${actionLabel} Aadhaar Seva Kendra access for ${op.partner_name} (Op: ${
+          op.aadhaar_operator_id || "N/A"
+        } | Station: ${op.aadhaar_station_id || "N/A"})?`
       )
     )
       return;
 
     try {
+      if (allowAccess) {
+        if (!op.aadhaar_operator_id || !op.aadhaar_station_id) {
+          return alert(
+            "This partner does not have an Operator ID and 5-digit Station ID bound yet. Click 'Edit IDs' to assign them first."
+          );
+        }
+        if (op.center_id) {
+          await supabase.from("locations").update({ role_aadhaar: true }).eq("id", op.center_id);
+        }
+      }
+
       const { error } = await supabase
         .from("active_partners")
-        .update({ role_aadhaar: false })
+        .update({ role_aadhaar: allowAccess })
         .eq("id", op.id);
       if (error) throw error;
 
-      await supabase.from("partner_messages").insert([
-        {
-          partner_id: op.id,
-          subject: "⚠️ Aadhaar Dashboard Access Suspended",
-          body: "Your Aadhaar Seva Kendra upload access has been revoked by Corporate Admin. Please contact your supervisor or submit an updated credential request.",
-        },
+      await Promise.all([
+        supabase.from("partner_messages").insert([
+          {
+            partner_id: op.id,
+            subject: allowAccess
+              ? `✅ Aadhaar Dashboard Access Restored (Station ${op.aadhaar_station_id})`
+              : "⚠️ Aadhaar Dashboard Access Revoked",
+            body: allowAccess
+              ? `Your Aadhaar Seva Kendra access (Operator ID: ${op.aadhaar_operator_id} | Station ID: ${op.aadhaar_station_id}) has been restored by Corporate Admin. You may now upload daily and weekly reports.`
+              : "Your Aadhaar Seva Kendra upload access has been revoked by Corporate Admin. Please contact your supervisor.",
+          },
+        ]),
+        supabase.from("staff_activity_logs").insert([
+          {
+            staff_id: staffUser?.id || "ADMIN",
+            staff_email: staffUser?.email,
+            action_type: allowAccess ? "AADHAAR_ALLOW" : "AADHAAR_REVOKE",
+            module: "AADHAAR_HUB",
+            target_id: op.id,
+            details: `${allowAccess ? "Restored" : "Revoked"} Aadhaar access for ${op.partner_name} (Op: ${
+              op.aadhaar_operator_id
+            }, Stn: ${op.aadhaar_station_id}).`,
+          },
+        ]),
       ]);
 
-      alert("✅ Aadhaar access revoked for " + op.partner_name);
+      alert(`✅ Aadhaar access ${allowAccess ? "ALLOWED / RESTORED" : "REVOKED"} for ${op.partner_name}.`);
       onRefresh();
     } catch (err: any) {
-      alert("Error revoking access: " + err.message);
+      alert("Error updating access: " + err.message);
     }
   };
 
@@ -359,14 +409,14 @@ export default function AdminOperatorMappingModule({
         <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="border-b border-slate-100 pb-3">
             <span className="text-[10px] font-black uppercase tracking-widest text-amber-600">
-              Direct Role &amp; Center Binding
+              Multi-Operator per Station Supported
             </span>
             <h3 className="font-black text-base text-slate-900 mt-0.5">
               Cascading Aadhaar Center &amp; Operator Bind
             </h3>
             <p className="text-xs font-bold text-slate-500 mt-1">
-              Filter by State &rarr; Master HQ &rarr; Center [Code], verify credentials, and bind the operator. Sends an
-              automated confirmation email upon approval.
+              Multiple operators can be bound to the same 5-digit Station ID. Filter by State &rarr; Master HQ &rarr;
+              Center [Code] to bind and send confirmation email.
             </p>
           </div>
 
@@ -522,7 +572,6 @@ export default function AdminOperatorMappingModule({
               </div>
             </div>
 
-            {/* MANDATORY ADMIN ANTI-FALSE-APPROVAL CHECKBOX */}
             <label className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50 border border-blue-200 cursor-pointer">
               <input
                 type="checkbox"
@@ -606,7 +655,6 @@ export default function AdminOperatorMappingModule({
                         </p>
                       </td>
 
-                      {/* VIEW & DOWNLOAD MERGED PDF BUTTONS */}
                       <td className="p-3.5 text-center">
                         <div className="flex justify-center gap-1.5">
                           <button
@@ -670,76 +718,145 @@ export default function AdminOperatorMappingModule({
         </div>
       </div>
 
-      {/* BOTTOM ROSTER: ACTIVE MAPPED AADHAAR CENTERS & OPERATORS */}
+      {/* BOTTOM ROSTER: MAPPED AADHAAR CENTERS & OPERATORS (WITH ALLOW / REVOKE TOGGLE & STATION FILTER) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
-          <h3 className="font-black text-xs uppercase tracking-widest">
-            Active Approved Aadhaar Operators &amp; Mapped Centers ({activeAadhaarOperators.length})
-          </h3>
-          <span className="text-[10px] font-bold text-emerald-400 uppercase">
-            Authorized to Upload Daily &amp; Weekly Reports
-          </span>
+        <div className="p-4 bg-slate-900 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div>
+            <h3 className="font-black text-xs uppercase tracking-widest">
+              Mapped Aadhaar Operators &amp; Station ID Roster ({filteredRosterOperators.length})
+            </h3>
+            <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+              Multiple operators can work on a single Station ID. Toggle Allow or Revoke access anytime.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={rosterStationFilter}
+              onChange={(e) => setRosterStationFilter(e.target.value)}
+              className="bg-slate-800 border border-slate-700 text-amber-400 font-black text-[10px] uppercase px-2.5 py-1.5 rounded-lg outline-none"
+            >
+              <option value="ALL">All Station IDs ({uniqueRosterStations.length})</option>
+              {uniqueRosterStations.map((stn) => (
+                <option key={stn} value={stn}>
+                  Station ID: {stn}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex bg-slate-800 p-1 rounded-lg text-[10px] font-black uppercase">
+              {(["ALL", "ACTIVE", "REVOKED"] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setRosterStatusFilter(st)}
+                  className={`px-2.5 py-1 rounded transition ${
+                    rosterStatusFilter === st ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
+
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
               <tr>
                 <th className="p-3.5">Mapped Aadhaar Center [Code]</th>
-                <th className="p-3.5">State &amp; District</th>
-                <th className="p-3.5">Approved Operator Name</th>
+                <th className="p-3.5">Operator Name</th>
                 <th className="p-3.5">UIDAI Operator ID</th>
                 <th className="p-3.5">UIDAI Station ID</th>
-                <th className="p-3.5 text-right">Access Control</th>
+                <th className="p-3.5 text-center">Portal Status</th>
+                <th className="p-3.5 text-right">Allow / Revoke Control</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {activeAadhaarOperators.map((op) => (
-                <tr key={op.id} className="hover:bg-slate-50">
-                  <td className="p-3.5">
-                    <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded font-black text-[10px] mr-2">
-                      {op.locations?.center_code || "NO-CODE"}
-                    </span>
-                    <span className="font-black text-slate-900">{op.locations?.center_name}</span>
-                  </td>
-                  <td className="p-3.5 font-bold text-slate-600">
-                    {op.locations?.dist}, {op.locations?.state}
-                  </td>
-                  <td className="p-3.5 font-black text-blue-700">{op.partner_name}</td>
-                  <td className="p-3.5 font-black text-slate-900">{op.aadhaar_operator_id}</td>
-                  <td className="p-3.5 font-black text-amber-700">{op.aadhaar_station_id}</td>
-                  <td className="p-3.5 text-right space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMapState(op.locations?.state || "ALL");
-                        setMapHq(op.locations?.parent_master_id?.toString() || "ALL");
-                        setMapCenterId(op.center_id?.toString() || "");
-                        setMappingForm({
-                          partner_id: op.id,
-                          operator_id: op.aadhaar_operator_id || "",
-                          station_id: op.aadhaar_station_id || "",
-                          nseit_no: "",
-                        });
-                        window.scrollTo({ top: 0, behavior: "smooth" });
-                      }}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-2.5 py-1 rounded text-[10px] font-black uppercase border border-slate-300"
-                    >
-                      ✏️ Edit IDs
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRevokeAadhaarAccess(op)}
-                      className="bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded text-[10px] font-black uppercase border border-red-200"
-                    >
-                      🚫 Revoke Access
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {activeAadhaarOperators.length === 0 && (
+              {filteredRosterOperators.map((op) => {
+                const isAllowed = Boolean(op.role_aadhaar && op.locations?.role_aadhaar);
+                const operatorsOnSameStation = allMappedAadhaarOperators.filter(
+                  (x) => x.aadhaar_station_id && x.aadhaar_station_id === op.aadhaar_station_id
+                ).length;
+
+                return (
+                  <tr key={op.id} className={`hover:bg-slate-50 ${!isAllowed ? "bg-red-50/40" : ""}`}>
+                    <td className="p-3.5">
+                      <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded font-black text-[10px] mr-2">
+                        {op.locations?.center_code || "NO-CODE"}
+                      </span>
+                      <span className="font-black text-slate-900">{op.locations?.center_name}</span>
+                      <span className="text-[10px] text-slate-500 font-bold block mt-0.5">
+                        {op.locations?.dist}, {op.locations?.state}
+                      </span>
+                    </td>
+                    <td className="p-3.5 font-black text-blue-700">{op.partner_name}</td>
+                    <td className="p-3.5 font-black text-slate-900">{op.aadhaar_operator_id || "UNMAPPED"}</td>
+                    <td className="p-3.5">
+                      <span className="font-black text-amber-700">{op.aadhaar_station_id || "UNMAPPED"}</span>
+                      {operatorsOnSameStation > 1 && (
+                        <span className="ml-2 bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded text-[9px] font-black uppercase">
+                          {operatorsOnSameStation} Ops on Station
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3.5 text-center">
+                      {isAllowed ? (
+                        <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded text-[9px] font-black uppercase">
+                          🟢 Active (Allowed)
+                        </span>
+                      ) : (
+                        <span className="bg-red-100 text-red-800 border border-red-200 px-2.5 py-1 rounded text-[9px] font-black uppercase">
+                          🔴 Revoked (Blocked)
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3.5 text-right space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMapState(op.locations?.state || "ALL");
+                          setMapHq(op.locations?.parent_master_id?.toString() || "ALL");
+                          setMapCenterId(op.center_id?.toString() || "");
+                          setMappingForm({
+                            partner_id: op.id,
+                            operator_id: op.aadhaar_operator_id || "",
+                            station_id: op.aadhaar_station_id || "",
+                            nseit_no: "",
+                          });
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-2.5 py-1 rounded text-[10px] font-black uppercase border border-slate-300"
+                      >
+                        ✏️ Edit IDs
+                      </button>
+
+                      {isAllowed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAadhaarAccess(op, false)}
+                          className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-1 rounded text-[10px] font-black uppercase border border-red-200 shadow-sm"
+                        >
+                          🚫 Revoke Access
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAadhaarAccess(op, true)}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-black uppercase shadow-sm"
+                        >
+                          ✅ Allow Access
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredRosterOperators.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
-                    No Aadhaar Operators have been mapped and approved yet.
+                    No Aadhaar Operators match the selected status/station filter.
                   </td>
                 </tr>
               )}
@@ -748,9 +865,7 @@ export default function AdminOperatorMappingModule({
         </div>
       </div>
 
-      {/* ===================================================================== */}
-      {/* ADMIN PRE-APPROVAL INSPECTION, EDIT, PDF VIEW/DOWNLOAD & VERIFY MODAL */}
-      {/* ===================================================================== */}
+      {/* PRE-APPROVAL INSPECTION, EDIT, PDF VIEW/DOWNLOAD & VERIFY MODAL */}
       {inspectingReq && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 w-full max-w-5xl my-8 overflow-hidden animate-in zoom-in-95">
@@ -772,7 +887,6 @@ export default function AdminOperatorMappingModule({
             </div>
 
             <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* LEFT SIDE (5 COLS): EDITABLE CREDENTIALS & MANDATORY VERIFICATION */}
               <div className="lg:col-span-5 space-y-4 text-xs">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-blue-700 border-b pb-2">
@@ -857,7 +971,6 @@ export default function AdminOperatorMappingModule({
                   </button>
                 </div>
 
-                {/* MANDATORY ADMIN ANTI-FALSE-APPROVAL CHECKBOX */}
                 <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-300 cursor-pointer">
                   <input
                     type="checkbox"
@@ -895,7 +1008,6 @@ export default function AdminOperatorMappingModule({
                 </div>
               </div>
 
-              {/* RIGHT SIDE (7 COLS): EMBEDDED MERGED PDF VIEWER + VIEW & DOWNLOAD BUTTONS */}
               <div className="lg:col-span-7 bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex flex-col h-[540px]">
                 <div className="p-3.5 bg-slate-950 border-b border-slate-800 flex justify-between items-center text-white shrink-0">
                   <span className="text-xs font-black uppercase tracking-widest text-amber-400">

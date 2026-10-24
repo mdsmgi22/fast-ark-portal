@@ -40,6 +40,24 @@ interface DocSlot {
   file: File | null;
 }
 
+// Helper: Given any YYYY-MM-DD date, returns the Monday and consecutive Sunday of that week
+const getMondayToSundayWindow = (dateStr: string): { monday: string; sunday: string } => {
+  const base = dateStr ? new Date(`${dateStr}T00:00:00Z`) : new Date();
+  const day = base.getUTCDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+
+  const mon = new Date(base);
+  mon.setUTCDate(base.getUTCDate() + diffToMonday);
+
+  const sun = new Date(mon);
+  sun.setUTCDate(mon.getUTCDate() + 6);
+
+  return {
+    monday: mon.toISOString().split("T")[0],
+    sunday: sun.toISOString().split("T")[0],
+  };
+};
+
 // Helper to extract YYYY-MM-DD from OCR receipt text
 const parseExtractedReceiptDate = (text: string): string | null => {
   const monthMap: Record<string, string> = {
@@ -64,7 +82,6 @@ const parseExtractedReceiptDate = (text: string): string | null => {
   return null;
 };
 
-// Strict Numeric Input Class (Removes Browser Up/Down Spinners)
 const noScrollNumClass =
   "w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-slate-900 bg-white outline-none focus:border-blue-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
@@ -95,13 +112,21 @@ export default function PartnerAadhaarPortal() {
   const [confirmDailyCheck, setConfirmDailyCheck] = useState<boolean>(false);
   const [isSubmittingDaily, setIsSubmittingDaily] = useState<boolean>(false);
 
-  // Instant Deposit & OCR Viewer States (Menu 3)
+  // Correction Request State on Locked Daily Reports
+  const [requestingCorrectionId, setRequestingCorrectionId] = useState<string | null>(null);
+  const [correctionReasonText, setCorrectionReasonText] = useState<string>("");
+  const [isSendingCorrectionReq, setIsSendingCorrectionReq] = useState<boolean>(false);
+
+  // Instant Deposit, Missing Slip Exemption & OCR Viewer States (Menu 3)
   const [depositForm, setDepositForm] = useState({
     amount: "",
     method: "UPI",
     utr: "",
     date: getISTDateString(0),
   });
+  const [isSlipExempted, setIsSlipExempted] = useState<boolean>(false);
+  const [slipExemptionCategory, setSlipExemptionCategory] = useState<string>("");
+  const [slipExemptionOtherText, setSlipExemptionOtherText] = useState<string>("");
   const [slipFile, setSlipFile] = useState<File | null>(null);
   const [slipPreviewUrl, setSlipPreviewUrl] = useState<string | null>(null);
   const [isScanningSlip, setIsScanningSlip] = useState<boolean>(false);
@@ -115,9 +140,9 @@ export default function PartnerAadhaarPortal() {
   const [confirmDepositCheck, setConfirmDepositCheck] = useState<boolean>(false);
   const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
 
-  // Weekly Reconciliation States (Menu 4)
-  const [weekStart, setWeekStart] = useState<string>(getISTDateString(-5));
-  const [weekEnd, setWeekEnd] = useState<string>(getISTDateString(0));
+  // Weekly Reconciliation States (Menu 4 — Strict Monday to Sunday)
+  const [weekStart, setWeekStart] = useState<string>(() => getMondayToSundayWindow(getISTDateString(-7)).monday);
+  const [weekEnd, setWeekEnd] = useState<string>(() => getMondayToSundayWindow(getISTDateString(-7)).sunday);
   const [weekCsv, setWeekCsv] = useState<File | null>(null);
   const [weekHtml, setWeekHtml] = useState<File | null>(null);
   const [weeklyPreview, setWeeklyPreview] = useState<any | null>(null);
@@ -125,11 +150,12 @@ export default function PartnerAadhaarPortal() {
   const [confirmWeeklyCheck, setConfirmWeeklyCheck] = useState<boolean>(false);
   const [isSubmittingWeekly, setIsSubmittingWeekly] = useState<boolean>(false);
 
-  // 7-Option Date Preset + History & Download Filters (Global & Menu 5)
+  // 7-Option Date Preset + Download Confirmation Gate (Global & Menu 5)
   const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
   const [filterFromDate, setFilterFromDate] = useState<string>(() => getDateRangeFromPreset("current_month").start);
   const [filterToDate, setFilterToDate] = useState<string>(() => getDateRangeFromPreset("current_month").end);
   const [fileModeFilter, setFileModeFilter] = useState<"ALL" | "WITH_FILES" | "WITHOUT_FILES">("ALL");
+  const [confirmDownloadCheck, setConfirmDownloadCheck] = useState<boolean>(false);
 
   // Menu 6: Credentials, Pre-Approval Edit (Locked After Approval), 10-Doc Merger & Mandatory Checkbox
   const [upgradeForm, setUpgradeForm] = useState({ operator_id: "", station_id: "", nseit_no: "" });
@@ -146,9 +172,6 @@ export default function PartnerAadhaarPortal() {
   const [isSubmittingUpgrade, setIsSubmittingUpgrade] = useState<boolean>(false);
   const [isDownloadingSubmittedPdf, setIsDownloadingSubmittedPdf] = useState<boolean>(false);
 
-  // =========================================================================
-  // STRICT SCROLL & KEYBOARD LOCKS FOR ALL NUMERIC INPUTS
-  // =========================================================================
   const handleNumericWheel = (e: React.WheelEvent<HTMLInputElement>) => {
     (e.target as HTMLInputElement).blur();
   };
@@ -166,11 +189,23 @@ export default function PartnerAadhaarPortal() {
 
   const handlePresetChange = (mode: DatePresetMode) => {
     setDatePreset(mode);
+    setConfirmDownloadCheck(false);
     if (mode !== "custom") {
       const range = getDateRangeFromPreset(mode);
       setFilterFromDate(range.start);
       setFilterToDate(range.end);
     }
+  };
+
+  // Auto-snap any picked date in Weekly Reconciliation to Monday -> Sunday
+  const handleWeekDateSelection = (pickedDate: string) => {
+    if (!pickedDate) return;
+    const { monday, sunday } = getMondayToSundayWindow(pickedDate);
+    setWeekStart(monday);
+    setWeekEnd(sunday);
+    setWeeklyPreview(null);
+    setWeeklyError("");
+    setConfirmWeeklyCheck(false);
   };
 
   useEffect(() => {
@@ -196,7 +231,6 @@ export default function PartnerAadhaarPortal() {
       if (!pData) return router.push("/partner/login");
       setPartner(pData);
 
-      // Fetch latest Upgrade Request status for this partner
       const { data: upgData } = await supabase
         .from("partner_upgrade_requests")
         .select("*")
@@ -221,7 +255,6 @@ export default function PartnerAadhaarPortal() {
         }));
       }
 
-      // STRICT AUTHORIZATION GATE CHECK
       const authorized = Boolean(
         pData.role_aadhaar &&
           pData.aadhaar_operator_id &&
@@ -235,7 +268,6 @@ export default function PartnerAadhaarPortal() {
         return;
       }
 
-      // Sync ₹100/day late payment penalties for any unsettled past reports
       await syncAadhaarLatePenalties(supabase, pData.id);
 
       const [tariffRes, dailyRes, weeklyRes, penaltyRes, upiRes] = await Promise.all([
@@ -315,8 +347,13 @@ export default function PartnerAadhaarPortal() {
       partner?.locations?.role_aadhaar
   );
 
-  // Once approved by Admin, credentials and compliance files are permanently locked from partner editing
   const isCredentialsLocked = isAadhaarAuthorized || latestUpgradeReq?.status === "Approved";
+
+  // Check if Daily or Weekly Report already exists for the selected date/week
+  const existingDailyForSelectedDate = dailyReports.find((r) => r.report_date === reportDate);
+  const existingWeeklyForSelectedWindow = weeklyReports.find(
+    (w) => w.start_date === weekStart && w.end_date === weekEnd
+  );
 
   // =========================================================================
   // 10-DOCUMENT DYNAMIC BUILDER & SINGLE MERGED PDF ENGINE (MENU 6)
@@ -375,7 +412,6 @@ export default function PartnerAadhaarPortal() {
       const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
       const timestamp = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 
-      // PAGE 1: OFFICIAL AADHAAR CREDENTIAL & DOCUMENT INDEX COVER PAGE
       const a4W = 595.28;
       const a4H = 841.89;
       const cover = pdfDoc.addPage([a4W, a4H]);
@@ -442,7 +478,6 @@ export default function PartnerAadhaarPortal() {
         { x: 15, y: 7, size: 7, font: boldFont, color: rgb(1, 1, 1) }
       );
 
-      // APPEND EACH UPLOADED DOCUMENT BEHIND THE COVER SHEET
       for (let i = 0; i < activeSlots.length; i++) {
         const slot = activeSlots[i];
         const file = slot.file!;
@@ -552,7 +587,6 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // --- SUBMIT OR UPDATE EXISTING PARTNER AADHAAR UPGRADE REQUEST (BLOCKED IF ALREADY APPROVED) ---
   const handleUpgradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isCredentialsLocked) {
@@ -565,7 +599,7 @@ export default function PartnerAadhaarPortal() {
       return showBanner("error", "Please enter your UIDAI Operator ID.");
     }
     if (upgradeForm.station_id.trim().length !== 5) {
-      return showBanner("error", "Validation Error: UIDAI Station ID must be exactly 5 digits.");
+      return showBanner("error", "Validation Error: UIDAI Station ID must be 5 digits.");
     }
     if (!upgradeForm.nseit_no.trim()) {
       return showBanner("error", "Please enter your NSEIT Certificate Number.");
@@ -667,7 +701,7 @@ export default function PartnerAadhaarPortal() {
   // Auto-trigger Dual File Validation when both CSV and HTML are selected
   useEffect(() => {
     const runDualValidation = async () => {
-      if (!csvFile || !htmlFile || isManualMode || !isAadhaarAuthorized) return;
+      if (!csvFile || !htmlFile || isManualMode || !isAadhaarAuthorized || existingDailyForSelectedDate) return;
       setParseError("");
       setParsedPreview(null);
       setConfirmDailyCheck(false);
@@ -688,7 +722,7 @@ export default function PartnerAadhaarPortal() {
       }
     };
     runDualValidation();
-  }, [csvFile, htmlFile, reportDate, isManualMode, isAadhaarAuthorized]);
+  }, [csvFile, htmlFile, reportDate, isManualMode, isAadhaarAuthorized, existingDailyForSelectedDate]);
 
   const isZeroExemption = isManualMode && exemptionReason !== "" && exemptionReason !== "ECMP_CRASH_MANUAL";
   const manualCashTotal = isZeroExemption
@@ -709,16 +743,14 @@ export default function PartnerAadhaarPortal() {
       setActiveMenu("upgrade");
       return;
     }
-    if (!confirmDailyCheck) {
-      return showBanner("error", "Please check the mandatory confirmation box before submitting.");
-    }
-
-    const existing = dailyReports.find((r) => r.report_date === reportDate);
-    if (existing) {
+    if (existingDailyForSelectedDate) {
       return showBanner(
         "error",
-        `Duplicate Blocked: A Daily Report for ${formatToDDMMYYYY(reportDate)} has already been submitted.`
+        `Duplicate Blocked: A Daily Report for ${formatToDDMMYYYY(reportDate)} has already been submitted and is locked.`
       );
+    }
+    if (!confirmDailyCheck) {
+      return showBanner("error", "Please check the mandatory confirmation box before submitting.");
     }
 
     setIsSubmittingDaily(true);
@@ -808,6 +840,33 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
+  // --- REQUEST ADMIN CORRECTION FOR LOCKED DAILY REPORT ---
+  const handleSendDailyCorrectionRequest = async (reportId: string) => {
+    if (correctionReasonText.trim().length < 5) {
+      return showBanner("error", "Please enter a detailed reason (min 5 characters) for the Admin correction request.");
+    }
+    setIsSendingCorrectionReq(true);
+    try {
+      const { error } = await supabase
+        .from("aadhaar_daily_reports")
+        .update({
+          edit_request_status: "Pending",
+          edit_request_reason: correctionReasonText.trim(),
+        })
+        .eq("id", reportId);
+      if (error) throw error;
+
+      showBanner("success", "✅ Correction request sent to Back-Office Audit Hub.");
+      setRequestingCorrectionId(null);
+      setCorrectionReasonText("");
+      await initializeAadhaarPortal();
+    } catch (err: any) {
+      showBanner("error", "Could not submit correction request: " + err.message);
+    } finally {
+      setIsSendingCorrectionReq(false);
+    }
+  };
+
   // --- MULTI-TEMPLATE OCR SLIP UPLOAD & LIVE PREVIEW ENGINE ---
   const handleSlipUploadOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -848,10 +907,6 @@ export default function PartnerAadhaarPortal() {
         /(?:upi\s*ref(?:\s*no|\s*id)?|utr(?:\s*no)?|txn(?:\s*id)?|transaction\s*id)[:\s#.-]*([A-Za-z0-9]{6,22})/i
       );
       if (labeledRef && labeledRef[1]) extractedUtr = labeledRef[1].trim();
-      else {
-        const utr12 = text.match(/\b\d{12}\b/);
-        if (utr12) extractedUtr = utr12[0];
-      }
 
       let extractedAmt: number | null = null;
       const amtMatch = text.match(/(?:[₹]|rs\.?|inr|amt|amount|paid)\s*[:\s]*([0-9,]+(?:\.[0-9]{2})?)/i);
@@ -881,22 +936,43 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
+  // --- SUBMIT INSTANT DEPOSIT (SUPPORTS MISSING SLIP EXEMPTION DROPDOWN) ---
   const handleInstantDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!slipFile) return showBanner("error", "Please upload the payment screenshot / bank slip.");
+    const amt = parseFloat(depositForm.amount) || 0;
+    if (amt <= 0) return showBanner("error", "Deposit amount must be greater than zero.");
     if (!depositForm.date) return showBanner("error", "Please select the Deposit Date.");
-    if (depositForm.utr.trim().length < 6)
-      return showBanner("error", "Please enter a valid 12-digit UTR / Reference number.");
-    if (!confirmDepositCheck) return showBanner("error", "Please check the verification box.");
+    if (depositForm.utr.trim().length < 4)
+      return showBanner("error", "Please enter a valid UTR / Reference ID (min 4 characters).");
+
+    if (!isSlipExempted && !slipFile) {
+      return showBanner("error", "Please upload the payment screenshot / bank slip, or select the Missing Slip Exemption option.");
+    }
+    if (isSlipExempted && !slipExemptionCategory) {
+      return showBanner("error", "Please select a reason from the Missing Slip dropdown.");
+    }
+    if (isSlipExempted && slipExemptionCategory === "Other" && slipExemptionOtherText.trim().length < 4) {
+      return showBanner("error", "Please type a detailed reason for 'Other' missing deposit slip.");
+    }
+    if (!confirmDepositCheck) return showBanner("error", "Please check the verification box before submitting.");
 
     setIsSubmittingDeposit(true);
     try {
-      const ext = slipFile.name.split(".").pop();
-      const slipFileName = `aadhaar-slip-${partner.id}-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("deposit-slips").upload(slipFileName, slipFile);
-      if (upErr) throw upErr;
+      let slipFileName: string | null = null;
 
-      const amt = parseFloat(depositForm.amount) || 0;
+      if (!isSlipExempted && slipFile) {
+        const ext = slipFile.name.split(".").pop();
+        slipFileName = `aadhaar-slip-${partner.id}-${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("deposit-slips").upload(slipFileName, slipFile);
+        if (upErr) throw upErr;
+      }
+
+      const finalExemptionReason = isSlipExempted
+        ? slipExemptionCategory === "Other"
+          ? `OTHER: ${slipExemptionOtherText.trim()}`
+          : slipExemptionCategory
+        : null;
+
       const cleanUtr = depositForm.utr.trim().replace(/^AADHAAR_/i, "");
       const { data: depRow, error: depErr } = await supabase
         .from("partner_deposits")
@@ -909,7 +985,8 @@ export default function PartnerAadhaarPortal() {
             reference_no: `AADHAAR_${cleanUtr}`,
             deposit_date: depositForm.date,
             deposit_slip_url: slipFileName,
-            is_exempted: false,
+            is_exempted: isSlipExempted,
+            exemption_reason: finalExemptionReason,
             status: "Pending",
           },
         ])
@@ -934,6 +1011,9 @@ export default function PartnerAadhaarPortal() {
       setSlipFile(null);
       if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
       setSlipPreviewUrl(null);
+      setIsSlipExempted(false);
+      setSlipExemptionCategory("");
+      setSlipExemptionOtherText("");
       setOcrSummary({ platform: null, amount: null, utr: null, date: null });
       setConfirmDepositCheck(false);
       await initializeAadhaarPortal();
@@ -947,7 +1027,7 @@ export default function PartnerAadhaarPortal() {
 
   useEffect(() => {
     const runWeeklyParse = async () => {
-      if (!weekCsv || !weekHtml || !isAadhaarAuthorized) return;
+      if (!weekCsv || !weekHtml || !isAadhaarAuthorized || existingWeeklyForSelectedWindow) return;
       setWeeklyError("");
       setWeeklyPreview(null);
       try {
@@ -966,10 +1046,18 @@ export default function PartnerAadhaarPortal() {
       }
     };
     runWeeklyParse();
-  }, [weekCsv, weekHtml, weekStart, weekEnd, isAadhaarAuthorized]);
+  }, [weekCsv, weekHtml, weekStart, weekEnd, isAadhaarAuthorized, existingWeeklyForSelectedWindow]);
 
   const handleWeeklySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (existingWeeklyForSelectedWindow) {
+      return showBanner(
+        "error",
+        `Duplicate Blocked: Weekly Reconciliation for ${formatToDDMMYYYY(weekStart)} to ${formatToDDMMYYYY(
+          weekEnd
+        )} is already submitted.`
+      );
+    }
     if (!weeklyPreview || !weekCsv || !weekHtml || !confirmWeeklyCheck || !isAadhaarAuthorized) return;
     setIsSubmittingWeekly(true);
     try {
@@ -1084,6 +1172,7 @@ export default function PartnerAadhaarPortal() {
     slipFile?.type === "application/pdf" || (slipFile?.name || "").toLowerCase().endsWith(".pdf");
 
   const effectiveMenu: AadhaarMenuTab = isAadhaarAuthorized ? activeMenu : "upgrade";
+  const isDownloadReady = Boolean(filterFromDate && filterToDate && filteredHistory.length > 0 && confirmDownloadCheck);
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row font-sans">
@@ -1139,9 +1228,10 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
+        {/* GLOBAL 7-PRESET DATE DROPDOWN + MANDATORY DOWNLOAD REQUEST CHECKBOX GATE */}
         {isAadhaarAuthorized && (
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full xl:w-auto">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label className="block text-[9px] font-black uppercase text-indigo-600 tracking-widest mb-1">
                   1. Date Preset
@@ -1173,6 +1263,7 @@ export default function PartnerAadhaarPortal() {
                   onChange={(e) => {
                     setDatePreset("custom");
                     setFilterFromDate(e.target.value);
+                    setConfirmDownloadCheck(false);
                   }}
                   className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
                 />
@@ -1188,6 +1279,7 @@ export default function PartnerAadhaarPortal() {
                   onChange={(e) => {
                     setDatePreset("custom");
                     setFilterToDate(e.target.value);
+                    setConfirmDownloadCheck(false);
                   }}
                   className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
                 />
@@ -1199,7 +1291,10 @@ export default function PartnerAadhaarPortal() {
                 </label>
                 <select
                   value={fileModeFilter}
-                  onChange={(e) => setFileModeFilter(e.target.value as any)}
+                  onChange={(e) => {
+                    setFileModeFilter(e.target.value as any);
+                    setConfirmDownloadCheck(false);
+                  }}
                   className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-black text-slate-800 bg-slate-50 outline-none focus:border-blue-600"
                 >
                   <option value="ALL">📋 Both (With &amp; Without Files)</option>
@@ -1209,25 +1304,48 @@ export default function PartnerAadhaarPortal() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-              <button
-                onClick={() =>
-                  downloadAadhaarPDFReport(
-                    filteredHistory,
-                    fileModeFilter,
-                    `${partner?.partner_name} (${partner?.aadhaar_station_id || "N/A"})`
-                  )
-                }
-                className="flex-1 xl:flex-none bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
-              >
-                📄 Download PDF
-              </button>
-              <button
-                onClick={() => downloadAadhaarCSVReport(filteredHistory, fileModeFilter)}
-                className="flex-1 xl:flex-none bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
-              >
-                📊 Download CSV
-              </button>
+            {/* MANDATORY DOWNLOAD CONFIRMATION GATE */}
+            <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <label className="flex items-center gap-2.5 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={confirmDownloadCheck}
+                  disabled={filteredHistory.length === 0}
+                  onChange={(e) => setConfirmDownloadCheck(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600"
+                />
+                <span className="text-[11px] font-bold text-slate-800">
+                  I confirm the selected filter details ({formatToDDMMYYYY(filterFromDate)} to{" "}
+                  {formatToDDMMYYYY(filterToDate)} • {filteredHistory.length} records) and request report download.
+                </span>
+              </label>
+
+              <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  disabled={!isDownloadReady}
+                  onClick={() =>
+                    downloadAadhaarPDFReport(
+                      filteredHistory,
+                      fileModeFilter,
+                      `${partner?.partner_name} (Op: ${partner?.aadhaar_operator_id} | Stn: ${
+                        partner?.aadhaar_station_id || "N/A"
+                      })`
+                    )
+                  }
+                  className="flex-1 sm:flex-none bg-red-600 hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
+                >
+                  📄 Download PDF
+                </button>
+                <button
+                  type="button"
+                  disabled={!isDownloadReady}
+                  onClick={() => downloadAadhaarCSVReport(filteredHistory, fileModeFilter)}
+                  className="flex-1 sm:flex-none bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
+                >
+                  📊 Download CSV
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1299,312 +1417,432 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 2: DAILY REPORT UPLOAD (WITH SCROLL-LOCKED MANUAL INPUTS) */}
+        {/* VIEW 2: DAILY REPORT UPLOAD (STRICT DUPLICATE DATE LOCK + CORRECTION REQUEST) */}
         {isAadhaarAuthorized && effectiveMenu === "daily" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-4 gap-4">
               <div>
                 <h2 className="text-xl font-black text-slate-900">Daily Aadhaar Report Submission</h2>
                 <p className="text-xs font-bold text-slate-500 mt-0.5">
-                  Select date (DD/MM/YYYY) and upload matching UIDAI .CSV and .HTML status files.
+                  Select date (DD/MM/YYYY). Once a report is submitted for a date, duplicate submissions are strictly
+                  locked.
                 </p>
               </div>
-              <label className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 px-4 py-2 rounded-lg cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isManualMode}
-                  onChange={(e) => {
-                    setIsManualMode(e.target.checked);
-                    setParsedPreview(null);
-                    setParseError("");
-                  }}
-                  className="w-4 h-4 accent-amber-600"
-                />
-                <span className="text-xs font-black text-amber-900 uppercase tracking-wider">
-                  Files Not Available (Manual / Exemption)
-                </span>
-              </label>
+              {!existingDailyForSelectedDate && (
+                <label className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 px-4 py-2 rounded-lg cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isManualMode}
+                    onChange={(e) => {
+                      setIsManualMode(e.target.checked);
+                      setParsedPreview(null);
+                      setParseError("");
+                    }}
+                    className="w-4 h-4 accent-amber-600"
+                  />
+                  <span className="text-xs font-black text-amber-900 uppercase tracking-wider">
+                    Files Not Available (Manual / Exemption)
+                  </span>
+                </label>
+              )}
             </div>
 
-            <form onSubmit={handleDailySubmit} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-600 tracking-widest mb-1">
-                    1. Select Report Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    max={getISTDateString(0)}
-                    value={reportDate}
-                    onChange={(e) => setReportDate(e.target.value)}
-                    className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-bold text-sm bg-white outline-none focus:border-blue-600"
-                  />
-                </div>
-                <div className="flex flex-col justify-center bg-white p-3 rounded-lg border border-slate-200">
-                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
-                    Selected Date (Indian Format)
-                  </span>
-                  <span className="text-2xl font-black text-blue-700 mt-0.5">{formatToDDMMYYYY(reportDate)}</span>
-                </div>
-                <div className="flex flex-col justify-center bg-white p-3 rounded-lg border border-slate-200">
-                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
-                    Active UIDAI Tariff ({formatToDDMMYYYY(reportDate)})
-                  </span>
-                  <span className="text-xs font-black text-slate-800 mt-1">
-                    Demo: ₹{activeTariff?.demographic_fee || 75} | Bio/MBU: ₹{activeTariff?.biometric_fee || 125}
-                  </span>
-                </div>
+            {/* STEP 1: DATE SELECTOR */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-600 tracking-widest mb-1">
+                  1. Select Report Date *
+                </label>
+                <input
+                  type="date"
+                  required
+                  max={getISTDateString(0)}
+                  value={reportDate}
+                  onChange={(e) => {
+                    setReportDate(e.target.value);
+                    setParsedPreview(null);
+                    setParseError("");
+                    setConfirmDailyCheck(false);
+                  }}
+                  className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-bold text-sm bg-white outline-none focus:border-blue-600"
+                />
               </div>
+              <div className="flex flex-col justify-center bg-white p-3 rounded-lg border border-slate-200">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                  Selected Date (Indian Format)
+                </span>
+                <span className="text-2xl font-black text-blue-700 mt-0.5">{formatToDDMMYYYY(reportDate)}</span>
+              </div>
+              <div className="flex flex-col justify-center bg-white p-3 rounded-lg border border-slate-200">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                  Active UIDAI Tariff ({formatToDDMMYYYY(reportDate)})
+                </span>
+                <span className="text-xs font-black text-slate-800 mt-1">
+                  Demo: ₹{activeTariff?.demographic_fee || 75} | Bio/MBU: ₹{activeTariff?.biometric_fee || 125}
+                </span>
+              </div>
+            </div>
 
-              {!isManualMode ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl p-5 text-center relative">
-                    <input
-                      type="file"
-                      accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
-                      onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <div className="text-3xl mb-1">📊</div>
-                    <p className="font-black text-slate-800 text-sm">
-                      {csvFile ? `✅ ${csvFile.name}` : "Upload UIDAI Daily .CSV File *"}
-                    </p>
-                    <p className="text-[10px] font-bold text-slate-500 mt-1">Contains 20-column packet telemetry</p>
+            {/* STRICT DUPLICATE LOCK IF REPORT FOR THIS DATE ALREADY EXISTS */}
+            {existingDailyForSelectedDate ? (
+              <div className="bg-slate-900 text-white p-6 rounded-2xl border-2 border-emerald-500/60 space-y-5 shadow-xl">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">🔒</span>
+                    <div>
+                      <h3 className="font-black text-base uppercase tracking-wider text-emerald-400">
+                        Report Already Submitted for {formatToDDMMYYYY(reportDate)} — Date Locked
+                      </h3>
+                      <p className="text-xs font-bold text-slate-300 mt-0.5">
+                        Re-submitting or overwriting an existing daily report is strictly prohibited.
+                      </p>
+                    </div>
                   </div>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    {existingDailyForSelectedDate.deposit_status}
+                  </span>
+                </div>
 
-                  <div className="border-2 border-dashed border-indigo-300 bg-indigo-50/50 rounded-xl p-5 text-center relative">
-                    <input
-                      type="file"
-                      accept=".html,.htm,text/html"
-                      onChange={(e) => setHtmlFile(e.target.files?.[0] || null)}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <div className="text-3xl mb-1">🌐</div>
-                    <p className="font-black text-slate-800 text-sm">
-                      {htmlFile ? `✅ ${htmlFile.name}` : "Upload UIDAI Daily .HTML File *"}
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
+                  <div className="bg-slate-800 p-3 rounded-lg">
+                    <p className="text-[9px] text-slate-400 uppercase font-bold">1. New</p>
+                    <p className="text-xl font-black">{existingDailyForSelectedDate.cat1_new_qty}</p>
+                  </div>
+                  <div className="bg-slate-800 p-3 rounded-lg">
+                    <p className="text-[9px] text-slate-400 uppercase font-bold">2. MBU Free</p>
+                    <p className="text-xl font-black">{existingDailyForSelectedDate.cat2_mbu_free_qty}</p>
+                  </div>
+                  <div className="bg-slate-800 p-3 rounded-lg">
+                    <p className="text-[9px] text-amber-400 uppercase font-bold">3. MBU Paid</p>
+                    <p className="text-xl font-black text-amber-400">
+                      {existingDailyForSelectedDate.cat3_mbu_chargeable_qty}
                     </p>
-                    <p className="text-[10px] font-bold text-slate-500 mt-1">
-                      Verifies Station ID, Operator ID &amp; Date
+                  </div>
+                  <div className="bg-slate-800 p-3 rounded-lg">
+                    <p className="text-[9px] text-blue-400 uppercase font-bold">4. Demographic</p>
+                    <p className="text-xl font-black text-blue-400">
+                      {existingDailyForSelectedDate.cat4_demographic_qty}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800 p-3 rounded-lg">
+                    <p className="text-[9px] text-purple-400 uppercase font-bold">5. Biometric</p>
+                    <p className="text-xl font-black text-purple-400">
+                      {existingDailyForSelectedDate.cat5_biometric_qty}
+                    </p>
+                  </div>
+                  <div className="bg-emerald-950 border border-emerald-700 p-3 rounded-lg">
+                    <p className="text-[9px] text-emerald-300 uppercase font-black">Logged Cash</p>
+                    <p className="text-xl font-black text-white">
+                      ₹{Number(existingDailyForSelectedDate.total_cash_collected || 0).toLocaleString("en-IN")}
                     </p>
                   </div>
                 </div>
-              ) : (
-                <div className="bg-amber-50 p-5 rounded-xl border border-amber-200 space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-amber-800 tracking-widest mb-1">
-                      Select Reason for Missing CSV / HTML Files *
-                    </label>
-                    <select
-                      required
-                      value={exemptionReason}
-                      onChange={(e) => setExemptionReason(e.target.value)}
-                      className="w-full border-2 border-amber-300 p-3 rounded-lg font-bold text-sm bg-white text-slate-800 outline-none"
-                    >
-                      <option value="" disabled>
-                        -- Choose Exemption / Manual Reason --
-                      </option>
-                      <option value="CENTER_HOLIDAY">1. Center Holiday / Sunday Closed (0 Enrolments)</option>
-                      <option value="OPERATOR_LEAVE">2. Operator on Leave / Absent (0 Enrolments)</option>
-                      <option value="SERVER_L1_DOWN">3. UIDAI Server / L1 Device Down (0 Enrolments)</option>
-                      <option value="POWER_NETWORK_OUTAGE">4. Electricity / Network Outage (0 Enrolments)</option>
-                      <option value="ECMP_CRASH_MANUAL">5. ECMP Client Crash — Enter Packet Counts Manually</option>
-                    </select>
-                  </div>
 
-                  {/* SCROLL-FREE & SPINNER-FREE MANUAL PACKET COUNT INPUTS */}
-                  {exemptionReason === "ECMP_CRASH_MANUAL" && (
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
-                          1. New (₹0)
-                        </label>
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          placeholder="0"
-                          value={manualCounts.cat1 || ""}
-                          onWheel={handleNumericWheel}
-                          onKeyDown={handleNumericKeyDown}
-                          onChange={(e) =>
-                            setManualCounts({ ...manualCounts, cat1: Math.max(0, parseInt(e.target.value, 10) || 0) })
-                          }
-                          className={noScrollNumClass}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
-                          2. MBU Free (₹0)
-                        </label>
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          placeholder="0"
-                          value={manualCounts.cat2 || ""}
-                          onWheel={handleNumericWheel}
-                          onKeyDown={handleNumericKeyDown}
-                          onChange={(e) =>
-                            setManualCounts({ ...manualCounts, cat2: Math.max(0, parseInt(e.target.value, 10) || 0) })
-                          }
-                          className={noScrollNumClass}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-amber-800 block mb-1">
-                          3. MBU Paid (₹{activeTariff?.mbu_chargeable_fee || 125})
-                        </label>
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          placeholder="0"
-                          value={manualCounts.cat3 || ""}
-                          onWheel={handleNumericWheel}
-                          onKeyDown={handleNumericKeyDown}
-                          onChange={(e) =>
-                            setManualCounts({ ...manualCounts, cat3: Math.max(0, parseInt(e.target.value, 10) || 0) })
-                          }
-                          className={noScrollNumClass}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-blue-800 block mb-1">
-                          4. Demo (₹{activeTariff?.demographic_fee || 75})
-                        </label>
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          placeholder="0"
-                          value={manualCounts.cat4 || ""}
-                          onWheel={handleNumericWheel}
-                          onKeyDown={handleNumericKeyDown}
-                          onChange={(e) =>
-                            setManualCounts({ ...manualCounts, cat4: Math.max(0, parseInt(e.target.value, 10) || 0) })
-                          }
-                          className={noScrollNumClass}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-purple-800 block mb-1">
-                          5. Bio (₹{activeTariff?.biometric_fee || 125})
-                        </label>
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          placeholder="0"
-                          value={manualCounts.cat5 || ""}
-                          onWheel={handleNumericWheel}
-                          onKeyDown={handleNumericKeyDown}
-                          onChange={(e) =>
-                            setManualCounts({ ...manualCounts, cat5: Math.max(0, parseInt(e.target.value, 10) || 0) })
-                          }
-                          className={noScrollNumClass}
-                        />
-                      </div>
+                {/* SENIOR SAFEGUARD: REQUEST ADMIN CORRECTION WITHOUT ALLOWING PARTNER OVERWRITE */}
+                <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  {existingDailyForSelectedDate.edit_request_status === "Pending" ? (
+                    <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
+                      ⏳ Correction Request Pending Back-Office Audit ({existingDailyForSelectedDate.edit_request_reason})
+                    </span>
+                  ) : requestingCorrectionId === existingDailyForSelectedDate.id ? (
+                    <div className="w-full flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="Describe what needs correction by Admin..."
+                        value={correctionReasonText}
+                        onChange={(e) => setCorrectionReasonText(e.target.value)}
+                        className="flex-1 bg-slate-800 border border-slate-700 text-white p-2.5 rounded-lg text-xs font-bold outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={isSendingCorrectionReq}
+                        onClick={() => handleSendDailyCorrectionRequest(existingDailyForSelectedDate.id)}
+                        className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-lg text-[10px] uppercase"
+                      >
+                        {isSendingCorrectionReq ? "Sending..." : "Submit Request"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRequestingCorrectionId(null)}
+                        className="bg-slate-700 text-white font-black px-3 py-2 rounded-lg text-[10px] uppercase"
+                      >
+                        Cancel
+                      </button>
                     </div>
+                  ) : (
+                    <>
+                      <span className="text-[11px] font-bold text-slate-400">
+                        Need an adjustment on this locked date? Only Corporate Admin can audit and edit submitted reports.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRequestingCorrectionId(existingDailyForSelectedDate.id);
+                          setCorrectionReasonText("");
+                        }}
+                        className="bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-amber-400 border border-amber-500/40 font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest transition shrink-0"
+                      >
+                        📝 Request Admin Correction
+                      </button>
+                    </>
                   )}
                 </div>
-              )}
+              </div>
+            ) : (
+              <form onSubmit={handleDailySubmit} className="space-y-6">
+                {!isManualMode ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl p-5 text-center relative">
+                      <input
+                        type="file"
+                        accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
+                        onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <div className="text-3xl mb-1">📊</div>
+                      <p className="font-black text-slate-800 text-sm">
+                        {csvFile ? `✅ ${csvFile.name}` : "Upload UIDAI Daily .CSV File *"}
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-500 mt-1">Contains 20-column packet telemetry</p>
+                    </div>
 
-              {parseError && (
-                <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-800 text-xs font-black">
-                  ❌ VALIDATION BLOCKED: {parseError}
-                </div>
-              )}
-
-              {(parsedPreview || (isManualMode && exemptionReason)) && (
-                <div className="bg-slate-900 text-white p-5 rounded-xl space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                    <span className="text-xs font-black uppercase tracking-widest text-emerald-400">
-                      ✅ 5-Category Verification Summary ({formatToDDMMYYYY(reportDate)})
-                    </span>
-                    <span className="text-xs font-bold text-slate-300">
-                      Operator: {isManualMode ? partner?.aadhaar_operator_id : parsedPreview?.operator_id} | Station:{" "}
-                      {isManualMode ? partner?.aadhaar_station_id : parsedPreview?.station_id}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
-                    <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-slate-400 uppercase font-bold">1. New (₹0)</p>
-                      <p className="text-xl font-black">
-                        {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat1) : parsedPreview.cat1_new_qty}
+                    <div className="border-2 border-dashed border-indigo-300 bg-indigo-50/50 rounded-xl p-5 text-center relative">
+                      <input
+                        type="file"
+                        accept=".html,.htm,text/html"
+                        onChange={(e) => setHtmlFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <div className="text-3xl mb-1">🌐</div>
+                      <p className="font-black text-slate-800 text-sm">
+                        {htmlFile ? `✅ ${htmlFile.name}` : "Upload UIDAI Daily .HTML File *"}
                       </p>
-                    </div>
-                    <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-slate-400 uppercase font-bold">2. MBU Free</p>
-                      <p className="text-xl font-black">
-                        {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat2) : parsedPreview.cat2_mbu_free_qty}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-amber-400 uppercase font-bold">3. MBU Paid</p>
-                      <p className="text-xl font-black text-amber-400">
-                        {isManualMode
-                          ? isZeroExemption
-                            ? 0
-                            : manualCounts.cat3
-                          : parsedPreview.cat3_mbu_chargeable_qty}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-blue-400 uppercase font-bold">4. Demographic</p>
-                      <p className="text-xl font-black text-blue-400">
-                        {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat4) : parsedPreview.cat4_demographic_qty}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-purple-400 uppercase font-bold">5. Biometric</p>
-                      <p className="text-xl font-black text-purple-400">
-                        {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat5) : parsedPreview.cat5_biometric_qty}
-                      </p>
-                    </div>
-                    <div className="bg-emerald-950 border border-emerald-700 p-3 rounded-lg">
-                      <p className="text-[9px] text-emerald-300 uppercase font-black">Cash Collected</p>
-                      <p className="text-xl font-black text-white">
-                        ₹
-                        {(isManualMode ? manualCashTotal : parsedPreview.total_cash_collected).toLocaleString("en-IN", {
-                          minimumFractionDigits: 2,
-                        })}
+                      <p className="text-[10px] font-bold text-slate-500 mt-1">
+                        Verifies Station ID, Operator ID &amp; Date
                       </p>
                     </div>
                   </div>
+                ) : (
+                  <div className="bg-amber-50 p-5 rounded-xl border border-amber-200 space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-amber-800 tracking-widest mb-1">
+                        Select Reason for Missing CSV / HTML Files *
+                      </label>
+                      <select
+                        required
+                        value={exemptionReason}
+                        onChange={(e) => setExemptionReason(e.target.value)}
+                        className="w-full border-2 border-amber-300 p-3 rounded-lg font-bold text-sm bg-white text-slate-800 outline-none"
+                      >
+                        <option value="" disabled>
+                          -- Choose Exemption / Manual Reason --
+                        </option>
+                        <option value="CENTER_HOLIDAY">1. Center Holiday / Sunday Closed (0 Enrolments)</option>
+                        <option value="OPERATOR_LEAVE">2. Operator on Leave / Absent (0 Enrolments)</option>
+                        <option value="SERVER_L1_DOWN">3. UIDAI Server / L1 Device Down (0 Enrolments)</option>
+                        <option value="POWER_NETWORK_OUTAGE">4. Electricity / Network Outage (0 Enrolments)</option>
+                        <option value="ECMP_CRASH_MANUAL">5. ECMP Client Crash — Enter Packet Counts Manually</option>
+                      </select>
+                    </div>
 
-                  <label className="flex items-center gap-3 bg-slate-800 p-3.5 rounded-lg border border-slate-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      required
-                      checked={confirmDailyCheck}
-                      onChange={(e) => setConfirmDailyCheck(e.target.checked)}
-                      className="w-5 h-5 accent-emerald-500"
-                    />
-                    <span className="text-xs font-bold text-slate-200">
-                      I verify that the 5-category counts and{" "}
-                      <strong className="text-emerald-400">
-                        ₹{(isManualMode ? manualCashTotal : parsedPreview.total_cash_collected).toLocaleString("en-IN")}
-                      </strong>{" "}
-                      collected amount for <strong>{formatToDDMMYYYY(reportDate)}</strong> are accurate.
-                    </span>
-                  </label>
+                    {exemptionReason === "ECMP_CRASH_MANUAL" && (
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
+                            1. New (₹0)
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            placeholder="0"
+                            value={manualCounts.cat1 || ""}
+                            onWheel={handleNumericWheel}
+                            onKeyDown={handleNumericKeyDown}
+                            onChange={(e) =>
+                              setManualCounts({ ...manualCounts, cat1: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                            }
+                            className={noScrollNumClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
+                            2. MBU Free (₹0)
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            placeholder="0"
+                            value={manualCounts.cat2 || ""}
+                            onWheel={handleNumericWheel}
+                            onKeyDown={handleNumericKeyDown}
+                            onChange={(e) =>
+                              setManualCounts({ ...manualCounts, cat2: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                            }
+                            className={noScrollNumClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-amber-800 block mb-1">
+                            3. MBU Paid (₹{activeTariff?.mbu_chargeable_fee || 125})
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            placeholder="0"
+                            value={manualCounts.cat3 || ""}
+                            onWheel={handleNumericWheel}
+                            onKeyDown={handleNumericKeyDown}
+                            onChange={(e) =>
+                              setManualCounts({ ...manualCounts, cat3: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                            }
+                            className={noScrollNumClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-blue-800 block mb-1">
+                            4. Demo (₹{activeTariff?.demographic_fee || 75})
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            placeholder="0"
+                            value={manualCounts.cat4 || ""}
+                            onWheel={handleNumericWheel}
+                            onKeyDown={handleNumericKeyDown}
+                            onChange={(e) =>
+                              setManualCounts({ ...manualCounts, cat4: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                            }
+                            className={noScrollNumClass}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-purple-800 block mb-1">
+                            5. Bio (₹{activeTariff?.biometric_fee || 125})
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            placeholder="0"
+                            value={manualCounts.cat5 || ""}
+                            onWheel={handleNumericWheel}
+                            onKeyDown={handleNumericKeyDown}
+                            onChange={(e) =>
+                              setManualCounts({ ...manualCounts, cat5: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                            }
+                            className={noScrollNumClass}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                  <button
-                    type="submit"
-                    disabled={isSubmittingDaily || !confirmDailyCheck}
-                    className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black uppercase tracking-widest text-sm rounded-xl shadow-lg disabled:opacity-40 transition"
-                  >
-                    {isSubmittingDaily ? "Committing Report..." : "Submit Daily Report & Unlock Deposit QR \u2192"}
-                  </button>
-                </div>
-              )}
-            </form>
+                {parseError && (
+                  <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-800 text-xs font-black">
+                    ❌ VALIDATION BLOCKED: {parseError}
+                  </div>
+                )}
+
+                {(parsedPreview || (isManualMode && exemptionReason)) && (
+                  <div className="bg-slate-900 text-white p-5 rounded-xl space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <span className="text-xs font-black uppercase tracking-widest text-emerald-400">
+                        ✅ 5-Category Verification Summary ({formatToDDMMYYYY(reportDate)})
+                      </span>
+                      <span className="text-xs font-bold text-slate-300">
+                        Operator: {isManualMode ? partner?.aadhaar_operator_id : parsedPreview?.operator_id} | Station:{" "}
+                        {isManualMode ? partner?.aadhaar_station_id : parsedPreview?.station_id}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
+                      <div className="bg-slate-800 p-3 rounded-lg">
+                        <p className="text-[9px] text-slate-400 uppercase font-bold">1. New (₹0)</p>
+                        <p className="text-xl font-black">
+                          {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat1) : parsedPreview.cat1_new_qty}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800 p-3 rounded-lg">
+                        <p className="text-[9px] text-slate-400 uppercase font-bold">2. MBU Free</p>
+                        <p className="text-xl font-black">
+                          {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat2) : parsedPreview.cat2_mbu_free_qty}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800 p-3 rounded-lg">
+                        <p className="text-[9px] text-amber-400 uppercase font-bold">3. MBU Paid</p>
+                        <p className="text-xl font-black text-amber-400">
+                          {isManualMode
+                            ? isZeroExemption
+                              ? 0
+                              : manualCounts.cat3
+                            : parsedPreview.cat3_mbu_chargeable_qty}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800 p-3 rounded-lg">
+                        <p className="text-[9px] text-blue-400 uppercase font-bold">4. Demographic</p>
+                        <p className="text-xl font-black text-blue-400">
+                          {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat4) : parsedPreview.cat4_demographic_qty}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800 p-3 rounded-lg">
+                        <p className="text-[9px] text-purple-400 uppercase font-bold">5. Biometric</p>
+                        <p className="text-xl font-black text-purple-400">
+                          {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat5) : parsedPreview.cat5_biometric_qty}
+                        </p>
+                      </div>
+                      <div className="bg-emerald-950 border border-emerald-700 p-3 rounded-lg">
+                        <p className="text-[9px] text-emerald-300 uppercase font-black">Cash Collected</p>
+                        <p className="text-xl font-black text-white">
+                          ₹
+                          {(isManualMode ? manualCashTotal : parsedPreview.total_cash_collected).toLocaleString(
+                            "en-IN",
+                            { minimumFractionDigits: 2 }
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <label className="flex items-center gap-3 bg-slate-800 p-3.5 rounded-lg border border-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        required
+                        checked={confirmDailyCheck}
+                        onChange={(e) => setConfirmDailyCheck(e.target.checked)}
+                        className="w-5 h-5 accent-emerald-500"
+                      />
+                      <span className="text-xs font-bold text-slate-200">
+                        I verify that the 5-category counts and{" "}
+                        <strong className="text-emerald-400">
+                          ₹
+                          {(isManualMode ? manualCashTotal : parsedPreview.total_cash_collected).toLocaleString(
+                            "en-IN"
+                          )}
+                        </strong>{" "}
+                        collected amount for <strong>{formatToDDMMYYYY(reportDate)}</strong> are accurate. I understand
+                        that once submitted, this date cannot be submitted again.
+                      </span>
+                    </label>
+
+                    <button
+                      type="submit"
+                      disabled={isSubmittingDaily || !confirmDailyCheck}
+                      className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black uppercase tracking-widest text-sm rounded-xl shadow-lg disabled:opacity-40 transition"
+                    >
+                      {isSubmittingDaily ? "Committing Report..." : "Submit Daily Report & Unlock Deposit QR \u2192"}
+                    </button>
+                  </div>
+                )}
+              </form>
+            )}
           </div>
         )}
 
-        {/* VIEW 3: INSTANT DEPOSIT (WITH SCROLL-FREE AMOUNT & DEDICATED DEPOSIT DATE PICKER) */}
+        {/* VIEW 3: INSTANT DEPOSIT (WITH MISSING SLIP EXEMPTION DROPDOWN & SCROLL-FREE AMOUNT) */}
         {isAadhaarAuthorized && effectiveMenu === "deposit" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in items-start">
             <div className="space-y-6">
@@ -1638,7 +1876,7 @@ export default function PartnerAadhaarPortal() {
                 )}
               </div>
 
-              {slipPreviewUrl && (
+              {!isSlipExempted && slipPreviewUrl && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="p-3.5 bg-slate-900 text-white flex justify-between items-center">
                     <span className="text-xs font-black uppercase tracking-widest">📄 Uploaded Receipt Preview</span>
@@ -1672,10 +1910,9 @@ export default function PartnerAadhaarPortal() {
 
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
               <h3 className="font-black text-lg text-slate-900 border-b pb-3 mb-4">
-                Upload Payment Receipt / Slip
+                Record Aadhaar Remittance &amp; Slip
               </h3>
               <form onSubmit={handleInstantDepositSubmit} className="space-y-4">
-                {/* SCROLL-LOCKED AMOUNT & DEDICATED DEPOSIT DATE PICKER */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
@@ -1710,27 +1947,93 @@ export default function PartnerAadhaarPortal() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    3. Upload UPI Screenshot / Bank Slip (Auto-OCR) *
+                {/* MISSING DEPOSIT SLIP EXEMPTION TOGGLE & DROPDOWN */}
+                <div className="space-y-3 pt-1 border-t border-slate-100">
+                  <label className="flex items-center gap-3 cursor-pointer bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={isSlipExempted}
+                      onChange={(e) => {
+                        setIsSlipExempted(e.target.checked);
+                        setSlipFile(null);
+                        if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+                        setSlipPreviewUrl(null);
+                        setOcrSummary({ platform: null, amount: null, utr: null, date: null });
+                        setSlipExemptionCategory("");
+                        setSlipExemptionOtherText("");
+                        setConfirmDepositCheck(false);
+                      }}
+                      className="w-5 h-5 accent-amber-600"
+                    />
+                    <span className="font-bold text-xs text-slate-800">
+                      No deposit slip available (Select Missing Slip Reason)
+                    </span>
                   </label>
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf,.pdf"
-                    required
-                    onChange={handleSlipUploadOCR}
-                    className="w-full border-2 border-dashed border-slate-300 p-3 rounded-lg text-xs font-bold bg-slate-50 cursor-pointer"
-                  />
-                  {isScanningSlip && (
-                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                      <p className="text-[10px] font-black text-blue-700 uppercase animate-pulse">
-                        🔍 Scanning Slip Locally ({scanProgress}%)...
-                      </p>
+
+                  {!isSlipExempted ? (
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        3. Upload UPI Screenshot / Bank Slip (Auto-OCR) *
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf,.pdf"
+                        required={!isSlipExempted}
+                        onChange={handleSlipUploadOCR}
+                        className="w-full border-2 border-dashed border-slate-300 p-3 rounded-lg text-xs font-bold bg-slate-50 cursor-pointer"
+                      />
+                      {isScanningSlip && (
+                        <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                          <p className="text-[10px] font-black text-blue-700 uppercase animate-pulse">
+                            🔍 Scanning Slip Locally ({scanProgress}%)...
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3 animate-in fade-in">
+                      <div>
+                        <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
+                          3. Reason for Missing Deposit Slip *
+                        </label>
+                        <select
+                          required={isSlipExempted}
+                          value={slipExemptionCategory}
+                          onChange={(e) => {
+                            setSlipExemptionCategory(e.target.value);
+                            setSlipExemptionOtherText("");
+                          }}
+                          className="w-full bg-white border-2 border-amber-300 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-600"
+                        >
+                          <option value="" disabled>
+                            -- Select Missing Slip Reason --
+                          </option>
+                          <option value="Missing">Missing / Lost Physical Slip</option>
+                          <option value="Not downloaded">Receipt Not Downloaded / UPI App Error</option>
+                          <option value="Other">Other (Specify Below)</option>
+                        </select>
+                      </div>
+
+                      {slipExemptionCategory === "Other" && (
+                        <div>
+                          <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
+                            Detailed Exemption Remarks *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="TYPE DETAILED REASON HERE..."
+                            value={slipExemptionOtherText}
+                            onChange={(e) => setSlipExemptionOtherText(e.target.value.toUpperCase())}
+                            className="w-full bg-white border-2 border-amber-300 text-slate-900 font-black uppercase text-xs rounded-lg p-2.5 outline-none"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {!isScanningSlip && slipFile && ocrSummary.platform && (
+                {!isScanningSlip && !isSlipExempted && slipFile && ocrSummary.platform && (
                   <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2 border border-slate-800">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                       <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">
@@ -1778,12 +2081,12 @@ export default function PartnerAadhaarPortal() {
                   </div>
                   <div>
                     <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      5. UTR / Reference No *
+                      5. UTR / Reference ID *
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="12-digit UTR"
+                      placeholder="Enter UTR / Reference ID"
                       value={depositForm.utr}
                       onChange={(e) => setDepositForm({ ...depositForm, utr: e.target.value })}
                       className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs outline-none focus:border-blue-600"
@@ -1800,8 +2103,7 @@ export default function PartnerAadhaarPortal() {
                     className="w-4 h-4 accent-blue-600"
                   />
                   <span className="text-xs font-bold text-blue-900">
-                    I confirm the UTR, deposit date ({formatToDDMMYYYY(depositForm.date)}), and amount match the
-                    uploaded payment receipt.
+                    I confirm the UTR, deposit date ({formatToDDMMYYYY(depositForm.date)}), and amount are accurate.
                   </span>
                 </label>
 
@@ -1817,147 +2119,169 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 4: WEEKLY REPORT RECONCILIATION */}
+        {/* VIEW 4: WEEKLY REPORT RECONCILIATION (MANDATORY MONDAY-TO-SUNDAY AUTO-LOCK) */}
         {isAadhaarAuthorized && effectiveMenu === "weekly" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
-            <div>
-              <h2 className="text-xl font-black text-slate-900">Weekly UIDAI Report Reconciliation</h2>
-              <p className="text-xs font-bold text-slate-500 mt-0.5">
-                Upload the Weekly .CSV and .HTML files to automatically match every day against your Daily Reports.
-              </p>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">
+                  Weekly UIDAI Report Reconciliation (Monday to Sunday)
+                </h2>
+                <p className="text-xs font-bold text-slate-500 mt-0.5">
+                  Pick any date in the week — the system automatically snaps to Monday (Start) and consecutive Sunday
+                  (End).
+                </p>
+              </div>
+              <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                📅 {formatToDDMMYYYY(weekStart)} (Mon) &rarr; {formatToDDMMYYYY(weekEnd)} (Sun)
+              </span>
             </div>
 
-            <form onSubmit={handleWeeklySubmit} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                    Week Start Date ({formatToDDMMYYYY(weekStart)})
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={weekStart}
-                    onChange={(e) => setWeekStart(e.target.value)}
-                    className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-bold text-xs bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                    Week End Date ({formatToDDMMYYYY(weekEnd)})
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={weekEnd}
-                    onChange={(e) => setWeekEnd(e.target.value)}
-                    className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-bold text-xs bg-white"
-                  />
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-blue-700 mb-1">
+                  1. Select Week Start (Auto-Snaps to Monday: {formatToDDMMYYYY(weekStart)}) *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={weekStart}
+                  onChange={(e) => handleWeekDateSelection(e.target.value)}
+                  className="w-full border-2 border-blue-300 p-2.5 rounded-lg font-black text-xs bg-white outline-none focus:border-blue-600"
+                />
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl p-5 text-center relative">
-                  <input
-                    type="file"
-                    accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
-                    onChange={(e) => setWeekCsv(e.target.files?.[0] || null)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <p className="font-black text-slate-800 text-sm">
-                    {weekCsv ? `✅ ${weekCsv.name}` : "Upload Weekly .CSV File *"}
-                  </p>
-                </div>
-                <div className="border-2 border-dashed border-indigo-300 bg-indigo-50/50 rounded-xl p-5 text-center relative">
-                  <input
-                    type="file"
-                    accept=".html,.htm,text/html"
-                    onChange={(e) => setWeekHtml(e.target.files?.[0] || null)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <p className="font-black text-slate-800 text-sm">
-                    {weekHtml ? `✅ ${weekHtml.name}` : "Upload Weekly .HTML File *"}
-                  </p>
-                </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                  2. Consecutive Week End (Locked to Sunday: {formatToDDMMYYYY(weekEnd)})
+                </label>
+                <input
+                  type="date"
+                  readOnly
+                  value={weekEnd}
+                  className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs bg-slate-200/70 text-slate-600 cursor-not-allowed outline-none"
+                />
               </div>
+            </div>
 
-              {weeklyError && (
-                <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-800 text-xs font-black">
-                  ❌ WEEKLY VALIDATION ERROR: {weeklyError}
-                </div>
-              )}
-
-              {weeklyPreview && (
-                <div className="space-y-4">
-                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-600">
-                    Day-by-Day Weekly vs. Daily Matching Matrix
-                  </h3>
-                  <div className="overflow-x-auto border rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-900 text-white text-[10px] uppercase">
-                        <tr>
-                          <th className="p-3">Date (DD/MM/YYYY)</th>
-                          <th className="p-3 text-center">Weekly File Packets</th>
-                          <th className="p-3 text-center">Daily Report Logged</th>
-                          <th className="p-3 text-center">Rejected in Weekly</th>
-                          <th className="p-3 text-right">Weekly Cash</th>
-                          <th className="p-3 text-right">Match Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {weeklyPreview.daily_breakdown.map((wb: any) => {
-                          const dMatch = dailyReports.find((dr) => dr.report_date === wb.date);
-                          const isMatched = dMatch && dMatch.total_packets_qty === wb.totalPkts;
-                          return (
-                            <tr key={wb.date} className="hover:bg-slate-50">
-                              <td className="p-3 font-black">{formatToDDMMYYYY(wb.date)}</td>
-                              <td className="p-3 text-center font-bold">{wb.totalPkts}</td>
-                              <td className="p-3 text-center font-bold">
-                                {dMatch ? dMatch.total_packets_qty : "MISSING"}
-                              </td>
-                              <td className="p-3 text-center font-bold text-red-600">{wb.rejected}</td>
-                              <td className="p-3 text-right font-black">₹{wb.totalCash.toLocaleString("en-IN")}</td>
-                              <td className="p-3 text-right">
-                                {isMatched ? (
-                                  <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded text-[10px] font-black uppercase">
-                                    ✅ Matched
-                                  </span>
-                                ) : (
-                                  <span className="bg-red-100 text-red-800 px-2.5 py-1 rounded text-[10px] font-black uppercase">
-                                    🚨 Mismatch / Missing Daily
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <label className="flex items-center gap-2.5 bg-slate-100 p-3 rounded-lg cursor-pointer">
+            {existingWeeklyForSelectedWindow ? (
+              <div className="p-6 bg-slate-900 text-white rounded-2xl border-2 border-emerald-500/60 space-y-2">
+                <h3 className="font-black text-sm uppercase tracking-widest text-emerald-400">
+                  🔒 Weekly Reconciliation Already Submitted ({formatToDDMMYYYY(weekStart)} to{" "}
+                  {formatToDDMMYYYY(weekEnd)})
+                </h3>
+                <p className="text-xs font-bold text-slate-300">
+                  Logged Packets: {existingWeeklyForSelectedWindow.total_packets_qty} | Cash: ₹
+                  {Number(existingWeeklyForSelectedWindow.total_cash_collected || 0).toLocaleString("en-IN")} | Status:{" "}
+                  {existingWeeklyForSelectedWindow.reconciliation_status}
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleWeeklySubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl p-5 text-center relative">
                     <input
-                      type="checkbox"
-                      required
-                      checked={confirmWeeklyCheck}
-                      onChange={(e) => setConfirmWeeklyCheck(e.target.checked)}
-                      className="w-4 h-4 accent-blue-600"
+                      type="file"
+                      accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
+                      onChange={(e) => setWeekCsv(e.target.files?.[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
-                    <span className="text-xs font-bold text-slate-800">
-                      I confirm the weekly reconciliation matrix ({weeklyPreview.total_packets_qty} packets, ₹
-                      {weeklyPreview.total_cash_collected.toLocaleString("en-IN")}).
-                    </span>
-                  </label>
-
-                  <button
-                    type="submit"
-                    disabled={isSubmittingWeekly || !confirmWeeklyCheck}
-                    className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-lg"
-                  >
-                    {isSubmittingWeekly ? "Syncing Weekly Report..." : "Submit Weekly Reconciliation"}
-                  </button>
+                    <p className="font-black text-slate-800 text-sm">
+                      {weekCsv ? `✅ ${weekCsv.name}` : "Upload Weekly .CSV File *"}
+                    </p>
+                  </div>
+                  <div className="border-2 border-dashed border-indigo-300 bg-indigo-50/50 rounded-xl p-5 text-center relative">
+                    <input
+                      type="file"
+                      accept=".html,.htm,text/html"
+                      onChange={(e) => setWeekHtml(e.target.files?.[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <p className="font-black text-slate-800 text-sm">
+                      {weekHtml ? `✅ ${weekHtml.name}` : "Upload Weekly .HTML File *"}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </form>
+
+                {weeklyError && (
+                  <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-800 text-xs font-black">
+                    ❌ WEEKLY VALIDATION ERROR: {weeklyError}
+                  </div>
+                )}
+
+                {weeklyPreview && (
+                  <div className="space-y-4">
+                    <h3 className="font-black text-xs uppercase tracking-widest text-slate-600">
+                      Day-by-Day Weekly vs. Daily Matching Matrix ({formatToDDMMYYYY(weekStart)} to{" "}
+                      {formatToDDMMYYYY(weekEnd)})
+                    </h3>
+                    <div className="overflow-x-auto border rounded-xl">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-white text-[10px] uppercase">
+                          <tr>
+                            <th className="p-3">Date (DD/MM/YYYY)</th>
+                            <th className="p-3 text-center">Weekly File Packets</th>
+                            <th className="p-3 text-center">Daily Report Logged</th>
+                            <th className="p-3 text-center">Rejected in Weekly</th>
+                            <th className="p-3 text-right">Weekly Cash</th>
+                            <th className="p-3 text-right">Match Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {weeklyPreview.daily_breakdown.map((wb: any) => {
+                            const dMatch = dailyReports.find((dr) => dr.report_date === wb.date);
+                            const isMatched = dMatch && dMatch.total_packets_qty === wb.totalPkts;
+                            return (
+                              <tr key={wb.date} className="hover:bg-slate-50">
+                                <td className="p-3 font-black">{formatToDDMMYYYY(wb.date)}</td>
+                                <td className="p-3 text-center font-bold">{wb.totalPkts}</td>
+                                <td className="p-3 text-center font-bold">
+                                  {dMatch ? dMatch.total_packets_qty : "MISSING"}
+                                </td>
+                                <td className="p-3 text-center font-bold text-red-600">{wb.rejected}</td>
+                                <td className="p-3 text-right font-black">₹{wb.totalCash.toLocaleString("en-IN")}</td>
+                                <td className="p-3 text-right">
+                                  {isMatched ? (
+                                    <span className="bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded text-[10px] font-black uppercase">
+                                      ✅ Matched
+                                    </span>
+                                  ) : (
+                                    <span className="bg-red-100 text-red-800 px-2.5 py-1 rounded text-[10px] font-black uppercase">
+                                      🚨 Mismatch / Missing Daily
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <label className="flex items-center gap-2.5 bg-slate-100 p-3 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        required
+                        checked={confirmWeeklyCheck}
+                        onChange={(e) => setConfirmWeeklyCheck(e.target.checked)}
+                        className="w-4 h-4 accent-blue-600"
+                      />
+                      <span className="text-xs font-bold text-slate-800">
+                        I confirm the Monday-to-Sunday weekly reconciliation matrix ({weeklyPreview.total_packets_qty}{" "}
+                        packets, ₹{weeklyPreview.total_cash_collected.toLocaleString("en-IN")}).
+                      </span>
+                    </label>
+
+                    <button
+                      type="submit"
+                      disabled={isSubmittingWeekly || !confirmWeeklyCheck}
+                      className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-lg"
+                    >
+                      {isSubmittingWeekly ? "Syncing Weekly Report..." : "Submit Weekly Reconciliation"}
+                    </button>
+                  </div>
+                )}
+              </form>
+            )}
           </div>
         )}
 
@@ -1969,7 +2293,7 @@ export default function PartnerAadhaarPortal() {
                 Aadhaar Report Ledger ({filteredHistory.length} Records)
               </h3>
               <span className="text-[10px] font-bold text-amber-400 uppercase">
-                Preset: {datePreset.toUpperCase()} | Mode: {fileModeFilter}
+                Op: {partner?.aadhaar_operator_id} | Stn: {partner?.aadhaar_station_id}
               </span>
             </div>
             <div className="overflow-x-auto">
@@ -1977,6 +2301,7 @@ export default function PartnerAadhaarPortal() {
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
                   <tr>
                     <th className="p-3.5">Date (DD/MM/YYYY)</th>
+                    <th className="p-3.5">Operator &amp; Station</th>
                     <th className="p-3.5">Mode</th>
                     <th className="p-3.5 text-center">New</th>
                     <th className="p-3.5 text-center">MBU Free</th>
@@ -1992,6 +2317,9 @@ export default function PartnerAadhaarPortal() {
                   {filteredHistory.map((r) => (
                     <tr key={r.id} className="hover:bg-slate-50">
                       <td className="p-3.5 font-black text-slate-900">{formatToDDMMYYYY(r.report_date)}</td>
+                      <td className="p-3.5 font-bold text-slate-700">
+                        {r.operator_id} / {r.station_id}
+                      </td>
                       <td className="p-3.5">
                         {r.has_files ? (
                           <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-[9px] font-black uppercase">
@@ -2036,7 +2364,7 @@ export default function PartnerAadhaarPortal() {
                   ))}
                   {filteredHistory.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="p-10 text-center text-slate-400 font-bold">
+                      <td colSpan={11} className="p-10 text-center text-slate-400 font-bold">
                         No reports match the selected date range and file mode filter.
                       </td>
                     </tr>
@@ -2047,12 +2375,9 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* ===================================================================== */}
-        {/* VIEW 6: CREDENTIALS & COMPLIANCE DOSSIER (LOCKED ONCE APPROVED)       */}
-        {/* ===================================================================== */}
+        {/* VIEW 6: CREDENTIALS & COMPLIANCE DOSSIER (LOCKED ONCE APPROVED) */}
         {effectiveMenu === "upgrade" && (
           <div className="space-y-6 max-w-4xl animate-in fade-in">
-            {/* CORPORATE CLEARANCE CHECKLIST CARD */}
             <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-4">
                 <div>
@@ -2127,7 +2452,6 @@ export default function PartnerAadhaarPortal() {
               </div>
             </div>
 
-            {/* CASE 1: CREDENTIALS ARE APPROVED -> PERMANENT READ-ONLY LOCK (NO EDIT OR UPLOAD ALLOWED) */}
             {isCredentialsLocked ? (
               <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-6 shadow-sm space-y-5">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -2144,7 +2468,6 @@ export default function PartnerAadhaarPortal() {
                     </div>
                   </div>
 
-                  {/* VIEW & DOWNLOAD ONLY (NO EDIT BUTTON) */}
                   {(latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url) && (
                     <div className="flex flex-wrap gap-2 shrink-0">
                       <button
@@ -2203,7 +2526,6 @@ export default function PartnerAadhaarPortal() {
                 </div>
               </div>
             ) : latestUpgradeReq?.status === "Pending" && !isEditingPendingReq ? (
-              /* CASE 2: UPGRADE REQUEST IS PENDING ADMIN APPROVAL (CAN EDIT BEFORE ADMIN APPROVES) */
               <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 shadow-sm space-y-5">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex items-start gap-3">
@@ -2213,8 +2535,8 @@ export default function PartnerAadhaarPortal() {
                         Upgrade Request Under Corporate Review
                       </h3>
                       <p className="text-xs font-bold text-amber-800 mt-0.5">
-                        Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. You may edit or update your
-                        request only while it is pending approval. Once approved, editing will be permanently locked.
+                        Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. You may edit your request only
+                        while it is pending approval. Once approved, editing will be permanently locked.
                       </p>
                     </div>
                   </div>
@@ -2275,7 +2597,6 @@ export default function PartnerAadhaarPortal() {
                 </div>
               </div>
             ) : (
-              /* CASE 3: INITIAL SUBMISSION OR PRE-APPROVAL EDIT FORM */
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
                 {latestUpgradeReq?.status === "Rejected" && (
                   <div className="p-4 bg-red-50 border-2 border-red-200 rounded-xl">
@@ -2297,7 +2618,7 @@ export default function PartnerAadhaarPortal() {
                     </h2>
                     <p className="text-xs font-bold text-slate-500 mt-0.5">
                       Add up to 10 named compliance documents below. All uploaded files are automatically merged into a
-                      single watermarked PDF. Once Admin approves your request, editing will be permanently locked.
+                      single watermarked PDF.
                     </p>
                   </div>
 
@@ -2312,36 +2633,7 @@ export default function PartnerAadhaarPortal() {
                   )}
                 </div>
 
-                {latestUpgradeReq?.compliance_pdf_url && (
-                  <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <span className="text-xs font-bold text-blue-900">
-                      📎 Previously Merged Compliance PDF is on file.{" "}
-                      {isEditingPendingReq &&
-                        "(Leave file slots empty below to keep existing PDF, or add new files to replace it.)"}
-                    </span>
-                    <div className="flex gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleViewOrDownloadSubmittedPdf(latestUpgradeReq.compliance_pdf_url, "view")}
-                        className="bg-slate-900 text-white px-3 py-1.5 rounded text-[10px] font-black uppercase"
-                      >
-                        👁️ View Existing PDF
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleViewOrDownloadSubmittedPdf(latestUpgradeReq.compliance_pdf_url, "download")
-                        }
-                        className="bg-blue-600 text-white px-3 py-1.5 rounded text-[10px] font-black uppercase"
-                      >
-                        📥 Download Existing PDF
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 <form onSubmit={handleUpgradeSubmit} className="space-y-6">
-                  {/* STEP 1: CREDENTIAL INPUTS */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <div>
                       <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
@@ -2387,7 +2679,6 @@ export default function PartnerAadhaarPortal() {
                     </div>
                   </div>
 
-                  {/* STEP 2: DYNAMIC 10-DOCUMENT BUILDER */}
                   <div className="space-y-3">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <div>
@@ -2395,8 +2686,7 @@ export default function PartnerAadhaarPortal() {
                           4. Aadhaar Compliance Documents ({docSlots.length} / 10 Slots)
                         </label>
                         <p className="text-[11px] font-bold text-slate-500">
-                          Select the document name and attach PDF, JPG, or PNG files (Max 5MB each). All files merge
-                          into 1 PDF.
+                          Select the document name and attach PDF, JPG, or PNG files (Max 5MB each).
                         </p>
                       </div>
 
@@ -2461,7 +2751,6 @@ export default function PartnerAadhaarPortal() {
                               <button
                                 type="button"
                                 onClick={() => handleRemoveDocSlot(slot.id)}
-                                title="Remove slot"
                                 className="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-black text-sm border border-red-200"
                               >
                                 ✕
@@ -2472,15 +2761,11 @@ export default function PartnerAadhaarPortal() {
                       ))}
                     </div>
 
-                    {/* MERGE, VIEW & DOWNLOAD PREVIEW BAR */}
                     {docSlots.some((s) => s.file !== null) && (
                       <div className="p-4 bg-slate-900 text-white rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div>
                           <p className="text-xs font-black uppercase tracking-wider text-amber-400">
                             📄 Single Merged PDF Compiler ({docSlots.filter((s) => s.file !== null).length} File(s) Ready)
-                          </p>
-                          <p className="text-[10px] font-bold text-slate-300 mt-0.5">
-                            Preview or download your combined compliance PDF before submitting to Corporate Admin.
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2 shrink-0">
@@ -2514,7 +2799,6 @@ export default function PartnerAadhaarPortal() {
                       </div>
                     )}
 
-                    {/* EMBEDDED MERGED PDF VIEWER */}
                     {mergedPdfPreviewUrl && (
                       <div className="border-2 border-slate-300 rounded-xl overflow-hidden bg-slate-800">
                         <iframe
@@ -2526,7 +2810,6 @@ export default function PartnerAadhaarPortal() {
                     )}
                   </div>
 
-                  {/* STEP 3: MANDATORY PARTNER ANTI-FALSE-SUBMISSION CHECKBOX */}
                   <label className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 border-2 border-blue-200 cursor-pointer">
                     <input
                       type="checkbox"
@@ -2536,14 +2819,10 @@ export default function PartnerAadhaarPortal() {
                       className="w-5 h-5 accent-blue-600 mt-0.5 shrink-0"
                     />
                     <span className="text-xs font-bold text-blue-950 leading-relaxed">
-                      <strong className="uppercase block text-[10px] tracking-widest text-blue-700 mb-0.5">
-                        Mandatory Partner Verification *
-                      </strong>
-                      I confirm that I have verified my UIDAI Operator ID (
-                      <strong>{upgradeForm.operator_id || "N/A"}</strong>), 5-digit Station ID (
-                      <strong>{upgradeForm.station_id || "N/A"}</strong>), NSEIT Certificate Number (
-                      <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all attached compliance documents. I
-                      understand that once approved by Admin, these credentials and files cannot be edited.
+                      I confirm that my UIDAI Operator ID (<strong>{upgradeForm.operator_id || "N/A"}</strong>), 5-digit
+                      Station ID (<strong>{upgradeForm.station_id || "N/A"}</strong>), NSEIT Certificate Number (
+                      <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all attached compliance documents are
+                      accurate.
                     </span>
                   </label>
 
