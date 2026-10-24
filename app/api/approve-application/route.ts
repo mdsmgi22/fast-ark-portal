@@ -47,13 +47,12 @@ export async function POST(request: Request) {
 
     // =========================================================================
     // 3. TRIGGER COLLISION FIX: ATOMIC STATE GUARD
-    // Executed FIRST to verify the application has not been processed yet
     // =========================================================================
     const { data: updatedQueue, error: updateError } = await supabaseAdmin
       .from('pending_applications')
-      .update({ status: 'Approved' }) 
+      .update({ status: 'Approved', mapped_center_id: locationId }) 
       .eq('id', appId)
-      .eq('status', 'Pending') // <-- ATOMIC STATE GUARD
+      .eq('status', 'Pending')
       .select()
       .single();
 
@@ -83,9 +82,7 @@ export async function POST(request: Request) {
     
     if (authError) {
       const errStr = authError.message.toLowerCase();
-      // INTERCEPT CRASH: Broad catch for any variation of existing users
       if (errStr.includes('already') || errStr.includes('registered') || errStr.includes('exists')) {
-        
         let page = 1;
         let hasMore = true;
         while (hasMore) {
@@ -95,7 +92,6 @@ export async function POST(request: Request) {
           const existingUser = listData.users.find(u => u.email?.toLowerCase() === cleanEmail);
           if (existingUser) {
             authUserId = existingUser.id;
-            
             await supabaseAdmin.auth.admin.updateUserById(authUserId, {
               password: tempPassword,
               user_metadata: { name: applicantName, role: role, center_id: locationId, mobile: mobile || null }
@@ -107,12 +103,10 @@ export async function POST(request: Request) {
         }
 
         if (!authUserId) {
-          // Rollback the DB status to Pending if ghost recovery failed completely
           await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
           throw new Error(`Ghost Auth Recovery Failed: Could not locate the hidden user for ${cleanEmail}`);
         }
       } else {
-        // Rollback the DB status to Pending on random auth crash
         await supabaseAdmin.from('pending_applications').update({ status: 'Pending' }).eq('id', appId);
         throw new Error(`Auth Creation Failed: ${authError.message}`);
       }
@@ -121,32 +115,43 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // 5. SAFELY ENFORCE PROFILE DATA
+    // 5. SAFELY ENFORCE PROFILE DATA & AUTO-FLIP AADHAAR ROLE (NO MASTER CTOP)
     // =========================================================================
+    const isAadhaarRole = String(role || "").toUpperCase().includes("AADHAAR");
+    const roleMeta = updatedQueue?.role_metadata || {};
+
+    const partnerProfilePayload: any = {
+      application_id: appId,
+      auth_id: authUserId,
+      partner_name: applicantName,
+      email: cleanEmail,
+      mobile: mobile,
+      role: role,
+      role_aadhaar: isAadhaarRole,
+      aadhaar_operator_id: roleMeta.aadhaar_operator_id || null,
+      aadhaar_station_id: roleMeta.aadhaar_station_id || null,
+      center_id: locationId,
+      status: 'Active',
+      tc_accepted: false
+    };
+
     const { error: insertError } = await supabaseAdmin
       .from('active_partners')
-      .insert([{
-         application_id: appId,
-         auth_id: authUserId,
-         partner_name: applicantName,
-         email: cleanEmail,
-         mobile: mobile,
-         role: role,
-         center_id: locationId,
-         status: 'Active',
-         tc_accepted: false
-      }]);
+      .insert([partnerProfilePayload]);
 
     if (insertError) {
       if (insertError.code === '23505' || insertError.message.includes('unique_partner_email')) {
         const { error: updateProfileError } = await supabaseAdmin
           .from('active_partners')
           .update({
-             application_id: appId,
-             auth_id: authUserId,
-             status: 'Active',
-             role: role,
-             center_id: locationId
+            application_id: appId,
+            auth_id: authUserId,
+            status: 'Active',
+            role: role,
+            role_aadhaar: isAadhaarRole,
+            aadhaar_operator_id: roleMeta.aadhaar_operator_id || null,
+            aadhaar_station_id: roleMeta.aadhaar_station_id || null,
+            center_id: locationId
           })
           .eq('email', cleanEmail);
           
@@ -154,6 +159,10 @@ export async function POST(request: Request) {
       } else {
         throw new Error(`Profile Creation Failed: ${insertError.message}`);
       }
+    }
+
+    if (isAadhaarRole) {
+      await supabaseAdmin.from('locations').update({ role_aadhaar: true }).eq('id', locationId);
     }
 
     // =========================================================================

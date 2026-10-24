@@ -17,8 +17,15 @@ export default function SessionManager({ children }: { children: React.ReactNode
   const heartbeatTimer = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // We only run the session manager on protected routes
-  const isProtectedRoute = pathname.includes('/dashboard') || pathname.includes('/partner/dashboard') || pathname.includes('/partner/stock') || pathname.includes('/partner/sales') || pathname.includes('/partner/deposit');
+  // Unified protected route check (Includes Helpdesk & Aadhaar Hub)
+  const isProtectedRoute =
+    pathname.includes('/dashboard') ||
+    pathname.includes('/partner/dashboard') ||
+    pathname.includes('/partner/stock') ||
+    pathname.includes('/partner/sales') ||
+    pathname.includes('/partner/deposit') ||
+    pathname.includes('/partner/helpdesk') ||
+    pathname.includes('/partner/aadhaar');
 
   const executeLogout = async (reason: string) => {
     alert(reason);

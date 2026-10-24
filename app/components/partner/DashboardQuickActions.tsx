@@ -4,7 +4,7 @@ import Link from "next/link";
 
 export default function DashboardQuickActions({ hasSubmittedToday }: { hasSubmittedToday: boolean }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       <Link href="/partner/stock" className="bg-slate-900 p-5 rounded-xl shadow-md hover:shadow-lg transition-all border border-slate-800 hover:border-blue-500 group flex items-center gap-4 text-white">
         <div className="text-4xl shrink-0 group-hover:scale-110 transition duration-300">📦</div>
         <div>
@@ -18,7 +18,7 @@ export default function DashboardQuickActions({ hasSubmittedToday }: { hasSubmit
           <div className="text-4xl shrink-0">✅</div>
           <div>
             <h3 className="font-black text-sm uppercase tracking-widest text-emerald-800">Sales Logged</h3>
-            <p className="text-emerald-600 text-[10px] mt-1 font-bold uppercase">Today's report secured</p>
+            <p className="text-emerald-600 text-[10px] mt-1 font-bold uppercase">Today&apos;s report secured</p>
           </div>
         </div>
       ) : (
@@ -36,6 +36,14 @@ export default function DashboardQuickActions({ hasSubmittedToday }: { hasSubmit
         <div>
           <h3 className="font-black text-sm uppercase tracking-widest text-slate-900 group-hover:text-emerald-600">Deposit of Sales</h3>
           <p className="text-slate-500 text-[10px] mt-1 font-bold uppercase">Settle balance & upload slips</p>
+        </div>
+      </Link>
+
+      <Link href="/partner/aadhaar" className="bg-amber-500 p-5 rounded-xl shadow-md hover:bg-amber-400 border border-amber-600 transition-all group flex items-center gap-4 text-slate-950 transform hover:-translate-y-1">
+        <div className="text-4xl shrink-0 group-hover:scale-110 transition duration-300">🆔</div>
+        <div>
+          <h3 className="font-black text-sm uppercase tracking-widest">Aadhaar Kendra Hub</h3>
+          <p className="text-slate-900 text-[10px] mt-1 font-bold uppercase">Upload CSV/HTML & QR Pay</p>
         </div>
       </Link>
     </div>

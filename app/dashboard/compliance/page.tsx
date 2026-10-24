@@ -39,49 +39,71 @@ export default function ComplianceDefaulterEngine() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // 1. Fetch All Active Partners
-      const { data: partnersRes, error: pError } = await supabase
-        .from('active_partners')
-        .select('id, partner_name, locations(center_code, center_name, dist)')
-        .eq('status', 'Active');
-      if (pError) throw pError;
+      // 1. Fetch All Active Partners + Telecom + Aadhaar + Penalty Streams in Parallel
+      const [partnersRes, salesRes, depositsRes, messagesRes, aadhaarRes, penaltiesRes] = await Promise.all([
+        supabase
+          .from('active_partners')
+          .select('id, partner_name, role, role_aadhaar, aadhaar_station_id, locations(center_code, center_name, dist)')
+          .eq('status', 'Active'),
+        supabase.from('daily_sales_reports').select('*'),
+        supabase.from('partner_deposits').select('*').neq('status', 'Discrepancy'),
+        supabase.from('partner_messages').select('partner_id').eq('is_read', false),
+        supabase.from('aadhaar_daily_reports').select('partner_id, report_date, total_cash_collected, deposit_status'),
+        supabase.from('aadhaar_penalty_logs').select('partner_id, penalty_amount, is_settled').eq('is_settled', false)
+      ]);
 
-      // 2. Fetch All Sales & Deposits (for Lifetime Ledger Math)
-      const { data: salesRes } = await supabase.from('daily_sales_reports').select('*');
-      const { data: depositsRes } = await supabase.from('partner_deposits').select('*').neq('status', 'Discrepancy');
-      
-      // 3. Fetch Unread Messages
-      const { data: messagesRes } = await supabase.from('partner_messages').select('partner_id').eq('is_read', false);
+      if (partnersRes.error) throw partnersRes.error;
 
-      const yesterdayStr = getISTDate(-1); // Strict check for yesterday's sales
-      const safeSales = salesRes || [];
-      const safeDeposits = depositsRes || [];
-      const safeMessages = messagesRes || [];
+      const yesterdayStr = getISTDate(-1);
+      const safeSales = salesRes.data || [];
+      const safeDeposits = depositsRes.data || [];
+      const safeMessages = messagesRes.data || [];
+      const safeAadhaar = aadhaarRes.data || [];
+      const safePenalties = penaltiesRes.data || [];
 
-      // 4. Aggregation Engine
-      const matrix = (partnersRes || []).map(partner => {
-        // A. Extract Partner Specific Data
+      // 2. Unified Telecom + Aadhaar Aggregation Engine
+      const matrix = (partnersRes.data || []).map(partner => {
         const pSales = safeSales.filter(s => s.partner_id === partner.id);
-        const pDeposits = safeDeposits.filter(d => d.partner_id === partner.id);
+        const pAadhaar = safeAadhaar.filter(a => a.partner_id === partner.id);
+        const pPenalties = safePenalties.filter(pen => pen.partner_id === partner.id);
+        // Separate standard Telecom deposits from AADHAAR_ tagged deposits
+        const pTelecomDeposits = safeDeposits.filter(
+          d => d.partner_id === partner.id && !String(d.reference_no || "").toUpperCase().startsWith("AADHAAR_")
+        );
         const unreadCount = safeMessages.filter(m => m.partner_id === partner.id).length;
 
-        // B. Check Yesterday's Sales Submission
-        const submittedYesterday = pSales.some(s => normalizeToYYYYMMDD(s.report_date) === yesterdayStr);
+        // Check Yesterday's Submission across BOTH Telecom and Aadhaar
+        const submittedTelecomYest = pSales.some(s => normalizeToYYYYMMDD(s.report_date) === yesterdayStr);
+        const submittedAadhaarYest = pAadhaar.some(a => normalizeToYYYYMMDD(a.report_date) === yesterdayStr);
+        const submittedYesterday = submittedTelecomYest || submittedAadhaarYest;
 
-        // C. Calculate Lifetime Pending Balance
-        let lifetimeCash = 0;
+        // Calculate Telecom Pending Balance
+        let telecomCash = 0;
         pSales.forEach(s => {
-          lifetimeCash += (Number(s.cbp_landline_amt || 0) + Number(s.cbp_gsm_amt || 0) + Number(s.ctop_recharge_amt || 0) + Number(s.sim_replacement_amt || 0) + Number(s.sim_fancy_amt || 0) + Number(s.sim_postpaid_amt || 0) + Number(s.other_amt || 0));
+          telecomCash += (
+            Number(s.cbp_landline_amt || 0) + Number(s.cbp_gsm_amt || 0) + Number(s.ctop_recharge_amt || 0) +
+            Number(s.sim_replacement_amt || 0) + Number(s.sim_fancy_amt || 0) + Number(s.sim_postpaid_amt || 0) +
+            Number(s.other_amt || 0) + Number(s.frc_amt || 0) + Number(s.mnp_amt || 0) +
+            Number(s.pb_cbp_amt || 0) + Number(s.pb_ctop_amt || 0) + Number(s.pb_frc_amt || 0) +
+            Number(s.pb_mnp_amt || 0) + Number(s.pb_other_amt || 0)
+          );
         });
         
-        let lifetimeDep = 0;
-        pDeposits.forEach(d => {
-          lifetimeDep += Number(d.deposit_amount || 0);
+        let telecomDep = 0;
+        pTelecomDeposits.forEach(d => {
+          telecomDep += Number(d.deposit_amount || 0);
         });
 
-        const pendingBalance = lifetimeCash - lifetimeDep;
+        // Calculate Unsettled Aadhaar Cash + Late Penalties
+        const aadhaarPendingCash = pAadhaar
+          .filter(a => a.deposit_status === 'Pending Deposit')
+          .reduce((sum, a) => sum + Number(a.total_cash_collected || 0), 0);
 
-        // D. Defaulter Determination Flags
+        const aadhaarPenaltyCash = pPenalties.reduce((sum, pen) => sum + Number(pen.penalty_amount || 0), 0);
+
+        const pendingBalance = Math.max(0, telecomCash - telecomDep) + aadhaarPendingCash + aadhaarPenaltyCash;
+
+        // Defaulter Determination Flags
         const isSalesDefaulter = !submittedYesterday;
         const isCashDefaulter = pendingBalance > 1000;
         const isCommDefaulter = unreadCount > 0;
@@ -91,6 +113,7 @@ export default function ComplianceDefaulterEngine() {
           ...partner,
           submittedYesterday,
           pendingBalance,
+          aadhaarPenaltyCash,
           unreadCount,
           isSalesDefaulter,
           isCashDefaulter,
@@ -99,7 +122,6 @@ export default function ComplianceDefaulterEngine() {
         };
       });
 
-      // Sort: Highest pending balances first
       matrix.sort((a, b) => b.pendingBalance - a.pendingBalance);
       setComplianceData(matrix);
 
@@ -119,23 +141,21 @@ export default function ComplianceDefaulterEngine() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Staff authentication failed.");
 
-      // Determine the primary reason for the alert dynamically
       let alertSubject = "Priority Compliance Notice";
       let alertBody = `Dear ${partner.partner_name},\n\nYou have been flagged by the Corporate Audit System for the following immediate actions:\n`;
       
       if (partner.isSalesDefaulter) {
-        alertSubject = "Deposit slips missing / Sales unlogged";
-        alertBody += `\n❌ MANDATORY ACTION: You failed to submit your Daily Sales Entry for yesterday. Log your sales immediately.\n`;
+        alertSubject = "Daily Sales / Aadhaar Report Unlogged";
+        alertBody += `\n❌ MANDATORY ACTION: You failed to submit your Daily Sales or Aadhaar Status Report for yesterday. Log your report immediately.\n`;
       }
       if (partner.isCashDefaulter) {
         alertSubject = "Regular cash hold / Limit Exceeded";
-        alertBody += `\n⚠️ TREASURY ALERT: Your pending cash balance is ₹${partner.pendingBalance.toLocaleString('en-IN')}, which exceeds the ₹1,000 threshold. Remit your dues immediately via the Deposit tab to avoid suspension.\n`;
+        alertBody += `\n⚠️ TREASURY ALERT: Your pending cash balance (including any Aadhaar dues/penalties) is ₹${partner.pendingBalance.toLocaleString('en-IN')}, which exceeds the ₹1,000 threshold. Remit your dues immediately to avoid suspension.\n`;
       }
       if (partner.isCommDefaulter) {
         alertBody += `\n📬 COMMUNICATION HOLD: You have unread corporate alerts in your inbox. Please read and acknowledge them immediately.\n`;
       }
 
-      // 1. Dispatch Message
       const { error: msgError } = await supabase.from("partner_messages").insert([{
         partner_id: partner.id,
         subject: `🚨 ALERT: ${alertSubject}`,
@@ -143,7 +163,6 @@ export default function ComplianceDefaulterEngine() {
       }]);
       if (msgError) throw msgError;
 
-      // 2. Telemetry Logging (Productivity Matrix)
       await supabase.from('staff_activity_logs').insert([{
         staff_id: user.id,
         staff_email: user.email,
@@ -154,7 +173,7 @@ export default function ComplianceDefaulterEngine() {
       }]);
 
       alert(`✅ Warning dispatched successfully to ${partner.partner_name}.`);
-      fetchComplianceMatrix(); // Refresh the grid
+      fetchComplianceMatrix();
 
     } catch (err: any) {
       alert("Error sending warning: " + err.message);
@@ -188,7 +207,7 @@ export default function ComplianceDefaulterEngine() {
             <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
               <span className="text-4xl">🚨</span> Defaulter &amp; Compliance Engine
             </h1>
-            <p className="text-slate-500 font-medium mt-1">Automated oversight of unlogged sales, high cash holdings, and unread notices.</p>
+            <p className="text-slate-500 font-medium mt-1">Automated oversight of unlogged Telecom/Aadhaar reports, high cash holdings, and unread notices.</p>
           </div>
           <button 
             onClick={fetchComplianceMatrix} 
@@ -209,11 +228,10 @@ export default function ComplianceDefaulterEngine() {
             <p className="text-3xl font-black text-red-900">{totalDefaulters} <span className="text-sm font-bold text-red-700 opacity-80">Flagged</span></p>
           </div>
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-amber-500">
-            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Missing Sales (Yesterday)</p>
+            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Missing Report (Yesterday)</p>
             <p className="text-3xl font-black text-slate-800">{salesDefaulters} <span className="text-sm font-bold text-slate-500">Centers</span></p>
           </div>
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-pink-500">
-            {/* [BULLETPROOF JSX FIX]: Safely escaped greater-than symbol */}
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Cash Limit Breach (&gt;1K)</p>
             <p className="text-3xl font-black text-slate-800">{cashDefaulters} <span className="text-sm font-bold text-slate-500">Centers</span></p>
           </div>
@@ -241,9 +259,8 @@ export default function ComplianceDefaulterEngine() {
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
                 <tr>
-                  {/* [BULLETPROOF JSX FIX]: Safely escaped ampersand symbol */}
                   <th className="p-4 font-black">Partner &amp; Location</th>
-                  <th className="p-4 font-black text-center">Missing Sales (Yest)</th>
+                  <th className="p-4 font-black text-center">Yesterday&apos;s Report</th>
                   <th className="p-4 font-black text-center">Pending Cash Dues</th>
                   <th className="p-4 font-black text-center">Unread Alerts</th>
                   <th className="p-4 font-black text-right">Corporate Action</th>
@@ -262,7 +279,14 @@ export default function ComplianceDefaulterEngine() {
                     <tr key={p.id} className={`transition ${p.isDefaulter ? 'bg-red-50/30 hover:bg-red-50/60' : 'hover:bg-slate-50'}`}>
                       
                       <td className="p-4 align-middle">
-                        <p className="font-black text-slate-900">{p.partner_name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-black text-slate-900">{p.partner_name}</p>
+                          {(p.role_aadhaar || String(p.role || "").toUpperCase().includes("AADHAAR")) && (
+                            <span className="text-[8px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded">
+                              🆔 Stn: {p.aadhaar_station_id || "Aadhaar"}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
                             {p.locations?.center_code || "NO-CODE"}
@@ -289,7 +313,9 @@ export default function ComplianceDefaulterEngine() {
                         {p.isCashDefaulter ? (
                           <div className="flex flex-col items-center">
                             <span className="text-red-600 font-black text-lg">₹{Math.max(0, p.pendingBalance).toLocaleString('en-IN')}</span>
-                            <span className="text-[9px] font-black text-red-500 uppercase tracking-widest mt-0.5">⚠️ Limit Breach</span>
+                            <span className="text-[9px] font-black text-red-500 uppercase tracking-widest mt-0.5">
+                              ⚠️ Limit Breach {p.aadhaarPenaltyCash > 0 ? `(Incl. ₹${p.aadhaarPenaltyCash} Fine)` : ""}
+                            </span>
                           </div>
                         ) : (
                           <span className="text-slate-800 font-black">₹{Math.max(0, p.pendingBalance).toLocaleString('en-IN')}</span>

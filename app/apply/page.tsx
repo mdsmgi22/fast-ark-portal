@@ -14,7 +14,8 @@ export default function ApplicationForm() {
     email: "", qualification: "", guardian_relation: "Father Name", guardian_name: "", 
     address_1: "", address_2: "", pin_code: "", taluk: "", dist: "", state: "",
     requested_role: "OCSC", center_name: "", terms_accepted: false,
-    poi_type: "AADHAAR CARD", poa_type: "AADHAAR CARD", other_type: "PAN CARD"
+    poi_type: "AADHAAR CARD", poa_type: "AADHAAR CARD", other_type: "PAN CARD",
+    aadhaar_operator_id: "", aadhaar_station_id: "", nseit_cert_no: ""
   };
 
   const initialFileState = {
@@ -123,6 +124,12 @@ export default function ApplicationForm() {
     if (formData.pin_code.length !== 6) return showError("Please enter a valid 6-digit PIN Code.");
     if (!formData.center_name.trim()) return showError("Please enter the Requested Center Name / Location.");
 
+    if (formData.requested_role === "AADHAAR CENTER") {
+      if (!formData.aadhaar_operator_id.trim()) return showError("Please enter your UIDAI Operator ID.");
+      if (formData.aadhaar_station_id.trim().length !== 5) return showError("UIDAI Station ID must be 5 digits.");
+      if (!formData.nseit_cert_no.trim()) return showError("Please enter your NSEIT Certificate Number.");
+    }
+
     if (!formData.terms_accepted) return showError("You must accept the terms and conditions.");
     if (!files.poi || !files.poa) return showError("Please upload both POI and POA documents.");
     if (!files.photo) return showError("Please upload your Passport Size Photo.");
@@ -217,7 +224,7 @@ export default function ApplicationForm() {
       drawRow(`${formData.guardian_relation}:`, formData.guardian_name);
       drawRow("Gender:", formData.gender.toUpperCase());
       drawRow("Date of Birth:", formData.dob);
-      drawRow("Gov ID Number:", "[Redacted]"); // Security masking for document PDF 
+      drawRow("Gov ID Number:", "[Redacted]");
       drawRow("PAN Number:", formData.pan_number);
       drawRow("Primary Mobile:", formData.mobile);
       drawRow("Alt Mobile:", formData.alt_mobile);
@@ -238,6 +245,12 @@ export default function ApplicationForm() {
       currentY -= 25;
       drawRow("Requested Role:", formData.requested_role);
       drawRow("Requested Center:", formData.center_name.toUpperCase());
+
+      if (formData.requested_role === "AADHAAR CENTER") {
+        drawRow("UIDAI Operator ID:", formData.aadhaar_operator_id.toUpperCase());
+        drawRow("UIDAI Station ID:", formData.aadhaar_station_id);
+        drawRow("NSEIT Cert No:", formData.nseit_cert_no.toUpperCase());
+      }
 
       const formStampText = `APP: ${formData.name.toUpperCase()} | DOC: SYSTEM GENERATED FORM | FILE: A4_APPLICATION.PDF | IP: ${userIp} | TIME: ${timestamp}`;
       formPage.drawRectangle({ x: 0, y: 0, width: a4Width, height: 20, color: rgb(0, 0, 0) });
@@ -352,6 +365,11 @@ export default function ApplicationForm() {
         state: formData.state,
         requested_role: formData.requested_role, 
         center_name: formData.center_name,
+        role_metadata: formData.requested_role === "AADHAAR CENTER" ? {
+          aadhaar_operator_id: formData.aadhaar_operator_id.trim().toUpperCase(),
+          aadhaar_station_id: formData.aadhaar_station_id.trim(),
+          nseit_cert_no: formData.nseit_cert_no.trim().toUpperCase()
+        } : {},
         terms_accepted: formData.terms_accepted,
         ip_address: userIp,
         photo_path: savedPhotoPath,
@@ -577,9 +595,9 @@ export default function ApplicationForm() {
             </div>
           </div>
 
-          {/* ROLE SELECTION */}
+          {/* ROLE SELECTION & DYNAMIC AADHAAR CREDENTIALS */}
           <div>
-            <h2 className="text-xl font-bold border-b pb-2 mb-4">Role & Center Request</h2>
+            <h2 className="text-xl font-bold border-b pb-2 mb-4">Role &amp; Center Request</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <select className="border p-3 rounded font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500" value={formData.requested_role} onChange={e => setFormData({...formData, requested_role: e.target.value})}>
                 <option value="OCSC">OCSC</option>
@@ -590,6 +608,46 @@ export default function ApplicationForm() {
               </select>
               <input required placeholder="Requested Center Name / Location *" className="border p-3 rounded outline-none focus:ring-2 focus:ring-blue-500" value={formData.center_name} onChange={e => setFormData({...formData, center_name: e.target.value})} />
             </div>
+
+            {formData.requested_role === "AADHAAR CENTER" && (
+              <div className="mt-4 bg-amber-50 p-4 rounded-xl border border-amber-300 grid grid-cols-1 md:grid-cols-3 gap-4 animate-in fade-in">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-amber-900 mb-1">UIDAI Operator ID *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. MYS_FAAFREEN"
+                    value={formData.aadhaar_operator_id}
+                    onChange={(e) => setFormData({ ...formData, aadhaar_operator_id: e.target.value.toUpperCase() })}
+                    className="w-full border border-amber-300 p-2.5 rounded bg-white font-bold text-sm uppercase outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-amber-900 mb-1">UIDAI Station ID (5 Digits) *</label>
+                  <input
+                    required
+                    type="text"
+                    maxLength={5}
+                    placeholder="e.g. 21505"
+                    value={formData.aadhaar_station_id}
+                    onChange={(e) => setFormData({ ...formData, aadhaar_station_id: e.target.value.replace(/\D/g, "") })}
+                    className="w-full border border-amber-300 p-2.5 rounded bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-amber-900 mb-1">NSEIT Certificate No *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Certificate Number"
+                    value={formData.nseit_cert_no}
+                    onChange={(e) => setFormData({ ...formData, nseit_cert_no: e.target.value.toUpperCase() })}
+                    className="w-full border border-amber-300 p-2.5 rounded bg-white font-bold text-sm uppercase outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+            )}
+
             {formData.requested_role === "IRCTC AGENT" && (
               <p className="text-red-600 text-sm font-bold mt-2 border-l-4 border-red-600 pl-3">
                 WARNING: Ensure your ID, Email, and Mobile are NOT blacklisted by IRCTC.
@@ -643,7 +701,7 @@ export default function ApplicationForm() {
 
           {/* TERMS AND CONDITIONS */}
           <div>
-            <h2 className="text-xl font-bold border-b pb-2 mb-4">Terms & Conditions</h2>
+            <h2 className="text-xl font-bold border-b pb-2 mb-4">Terms &amp; Conditions</h2>
             <div className="h-48 overflow-y-scroll bg-gray-50 border p-5 text-sm text-gray-700 mb-4 rounded shadow-inner space-y-3">
               <p><strong>1. Allotment Rights:</strong> Fast Ark Private Limited reserves the sole and absolute right to approve, allot, or decline the IRCTC Agent ID creation upon review of applicant credentials and compliance documents.</p>
               <p><strong>2. Non-Refundable Policy:</strong> Any application processing fee or commercial charges deposited are strictly non-refundable under all circumstances once submitted.</p>
@@ -664,7 +722,7 @@ export default function ApplicationForm() {
               disabled={loading}
               className="w-full sm:w-1/3 bg-slate-200 text-slate-700 p-5 rounded-md font-black text-xl hover:bg-slate-300 transition-colors shadow-sm disabled:opacity-50"
             >
-              Cancel & Return
+              Cancel &amp; Return
             </button>
             <button 
               type="submit" 

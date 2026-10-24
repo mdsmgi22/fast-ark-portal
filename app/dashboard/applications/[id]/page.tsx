@@ -17,6 +17,11 @@ export default function ApplicationReview() {
   // Cascading Filter States
   const [filterState, setFilterState] = useState("ALL");
   const [filterHQ, setFilterHQ] = useState("ALL");
+
+  // Editable Aadhaar Operator & Station ID States for Approval Mapping
+  const [aadhaarOpId, setAadhaarOpId] = useState("");
+  const [aadhaarStnId, setAadhaarStnId] = useState("");
+  const [nseitCertNo, setNseitCertNo] = useState("");
   
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -42,7 +47,13 @@ export default function ApplicationReview() {
         .single();
       
       if (appError) throw appError;
-      if (appData) setApp(appData);
+      if (appData) {
+        setApp(appData);
+        const meta = appData.role_metadata || {};
+        setAadhaarOpId(meta.aadhaar_operator_id || "");
+        setAadhaarStnId(meta.aadhaar_station_id || "");
+        setNseitCertNo(meta.nseit_cert_no || "");
+      }
 
       const { data: locData, error: locError } = await supabase
         .from('locations')
@@ -107,8 +118,9 @@ export default function ApplicationReview() {
     }
   };
 
+  const isAadhaarApplication = String(app?.requested_role || "").toUpperCase().includes("AADHAAR");
+
   const handleApprove = async () => {
-    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
     if (app.status !== 'Pending') {
       return alert("This application has already been processed.");
     }
@@ -116,12 +128,32 @@ export default function ApplicationReview() {
     if (!selectedLocation) {
       return alert("Mandatory: You must assign an official infrastructure location to approve this applicant.");
     }
+
+    if (isAadhaarApplication) {
+      if (!aadhaarOpId.trim()) return alert("Mandatory for Aadhaar Role: Please enter or verify the UIDAI Operator ID.");
+      if (aadhaarStnId.trim().length !== 5) return alert("Mandatory for Aadhaar Role: UIDAI Station ID must be 5 digits.");
+    }
     
     setIsProcessing(true);
     
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Authentication error. Please log in again.");
+
+      // Sync verified Aadhaar credentials into role_metadata before approval API runs
+      if (isAadhaarApplication) {
+        await supabase
+          .from('pending_applications')
+          .update({
+            role_metadata: {
+              ...(app.role_metadata || {}),
+              aadhaar_operator_id: aadhaarOpId.trim().toUpperCase(),
+              aadhaar_station_id: aadhaarStnId.trim(),
+              nseit_cert_no: nseitCertNo.trim().toUpperCase(),
+            }
+          })
+          .eq('id', app.id);
+      }
 
       const response = await fetch('/api/approve-application', {
         method: 'POST',
@@ -142,14 +174,14 @@ export default function ApplicationReview() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to process approval.");
 
-      const locDetails = locations.find(l => l.id === selectedLocation);
+      const locDetails = locations.find(l => l.id.toString() === selectedLocation.toString());
       await supabase.from('staff_activity_logs').insert([{
         staff_id: session.user.id,
         staff_email: session.user.email,
         action_type: 'APPROVAL',
         module: 'ONBOARDING',
         target_id: app.id,
-        details: `Approved Franchise Application for ${app.name}. Assigned to: ${locDetails?.center_name || 'Unknown Center'}.`
+        details: `Approved Franchise Application for ${app.name} (${app.requested_role}). Assigned to: [${locDetails?.center_code || 'NO-CODE'}] ${locDetails?.center_name || 'Unknown Center'}.`
       }]);
 
       alert("✅ Application Approved! The partner has been provisioned and the Welcome email dispatched.");
@@ -158,14 +190,12 @@ export default function ApplicationReview() {
     } catch (error: any) {
       console.error(error);
       alert("❌ Error approving application: " + error.message);
-      // Ensure we unlock the UI if the backend request fails
       setIsProcessing(false); 
-      fetchDetails(); // Refresh to get the latest status
+      fetchDetails();
     }
   };
 
   const handleReject = async () => {
-    // 1. FRONTEND PRE-FLIGHT CHECK: Abort if not pending
     if (app.status !== 'Pending') {
       return alert("This application has already been processed.");
     }
@@ -257,7 +287,7 @@ export default function ApplicationReview() {
                     Status: {app.status || 'Pending'}
                   </span>
                   <button onClick={handleViewKYC} className="text-sm bg-slate-800 text-white px-4 py-2 rounded font-bold shadow hover:bg-slate-700 transition flex items-center gap-2">
-                    <span>📄</span> View Application & KYC
+                    <span>📄</span> View Application &amp; KYC
                   </button>
                 </div>
               </div>
@@ -285,13 +315,31 @@ export default function ApplicationReview() {
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Email Address</span><span className="font-bold text-slate-800">{app.email}</span></div>
               </div>
 
-              <h2 className="text-xl font-bold mb-4 border-t pt-4">Location Request</h2>
+              <h2 className="text-xl font-bold mb-4 border-t pt-4">Location &amp; Role Request</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm bg-slate-50 p-4 rounded-lg border border-gray-100">
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Requested Role</span><span className="font-black text-blue-700 bg-blue-100 px-2 py-0.5 rounded">{app.requested_role}</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Requested Center</span><span className="font-bold text-slate-800">{app.center_name}</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">PIN Code</span><span className="font-bold text-slate-800">{app.pin_code}</span></div>
                 <div><span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">Address</span><span className="font-bold text-slate-800 leading-relaxed">{app.address_1}, {app.address_2 ? `${app.address_2}, ` : ""}<br/>{app.taluk}, {app.dist}, {app.state}</span></div>
               </div>
+
+              {/* DISPLAY SUBMITTED AADHAAR CREDENTIALS IF PRESENT */}
+              {(isAadhaarApplication || app.role_metadata?.aadhaar_operator_id) && (
+                <div className="mt-4 bg-amber-50 p-4 rounded-lg border border-amber-200 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span className="text-amber-800 font-black text-[10px] uppercase tracking-widest block mb-1">UIDAI Operator ID</span>
+                    <span className="font-black text-slate-900">{app.role_metadata?.aadhaar_operator_id || "Not Provided"}</span>
+                  </div>
+                  <div>
+                    <span className="text-amber-800 font-black text-[10px] uppercase tracking-widest block mb-1">UIDAI Station ID</span>
+                    <span className="font-black text-slate-900">{app.role_metadata?.aadhaar_station_id || "Not Provided"}</span>
+                  </div>
+                  <div>
+                    <span className="text-amber-800 font-black text-[10px] uppercase tracking-widest block mb-1">NSEIT Cert No</span>
+                    <span className="font-black text-slate-900">{app.role_metadata?.nseit_cert_no || "Not Provided"}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -347,6 +395,42 @@ export default function ApplicationReview() {
                       ))}
                     </select>
                   </div>
+
+                  {/* EDITABLE AADHAAR OPERATOR & STATION ID BINDING BLOCK */}
+                  {isAadhaarApplication && (
+                    <div className="pt-3 mt-3 border-t border-amber-200 bg-amber-50/70 p-3.5 rounded-xl space-y-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-900">
+                        🆔 Verify / Bind Aadhaar Credentials
+                      </p>
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          UIDAI Operator ID *
+                        </label>
+                        <input
+                          type="text"
+                          value={aadhaarOpId}
+                          onChange={(e) => setAadhaarOpId(e.target.value.toUpperCase())}
+                          placeholder="e.g. MYS_FAAFREEN"
+                          disabled={isProcessing || app.status !== 'Pending'}
+                          className="w-full border border-amber-300 p-2 rounded bg-white font-black text-xs uppercase outline-none focus:border-amber-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          UIDAI Station ID (5 Digits) *
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={5}
+                          value={aadhaarStnId}
+                          onChange={(e) => setAadhaarStnId(e.target.value.replace(/\D/g, ''))}
+                          placeholder="e.g. 21505"
+                          disabled={isProcessing || app.status !== 'Pending'}
+                          className="w-full border border-amber-300 p-2 rounded bg-white font-black text-xs outline-none focus:border-amber-600"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {availableCenters.length === 0 && (

@@ -10,10 +10,21 @@ export function proxy(request: NextRequest) {
 
   const hasAuthCookie = authCookies.length > 0;
 
-  if (pathname.startsWith('/partner/dashboard') || pathname.startsWith('/partner/sales') || pathname.startsWith('/partner/deposit') || pathname.startsWith('/partner/stock')) {
+  // 1. UNIFIED PARTNER PORTAL SECURITY GATE
+  if (
+    pathname.startsWith('/partner/dashboard') ||
+    pathname.startsWith('/partner/sales') ||
+    pathname.startsWith('/partner/deposit') ||
+    pathname.startsWith('/partner/stock') ||
+    pathname.startsWith('/partner/helpdesk') ||
+    pathname.startsWith('/partner/aadhaar') ||
+    pathname.startsWith('/partner/terms') ||
+    pathname.startsWith('/partner/resubmit')
+  ) {
     if (!hasAuthCookie) return NextResponse.redirect(new URL('/partner/login', request.url));
   }
 
+  // 2. CORPORATE COMMAND CENTER & RBAC SECURITY GATE
   if (pathname.startsWith('/dashboard')) {
     if (!hasAuthCookie) return NextResponse.redirect(new URL('/login', request.url));
 
@@ -41,10 +52,22 @@ export function proxy(request: NextRequest) {
       const rawRole = payload.user_metadata?.role || '';
       const safeRole = rawRole.trim().toLowerCase();
 
-      const financeRoutes = ['/dashboard/accounts', '/dashboard/sales-verification', '/dashboard/reports', '/dashboard/banking'];
-      const opsRoutes = ['/dashboard/applications', '/dashboard/logistics', '/dashboard/ocsc', '/dashboard/manager-mis'];
+      const financeRoutes = [
+        '/dashboard/accounts', 
+        '/dashboard/sales-verification', 
+        '/dashboard/reports', 
+        '/dashboard/banking',
+        '/dashboard/aadhaar'
+      ];
       
-      // ARCHITECTURAL FIX: Added the missing routes to the Manager's authorized array
+      const opsRoutes = [
+        '/dashboard/applications', 
+        '/dashboard/logistics', 
+        '/dashboard/ocsc', 
+        '/dashboard/manager-mis',
+        '/dashboard/aadhaar'
+      ];
+      
       const managerRoutes = [
         ...opsRoutes, 
         '/dashboard/compliance', 
@@ -52,8 +75,8 @@ export function proxy(request: NextRequest) {
         '/dashboard/messages', 
         '/dashboard/partners', 
         '/dashboard/banking',
-        '/dashboard/reports',            // <-- Explicitly permitted
-        '/dashboard/sales-verification'  // <-- Explicitly permitted
+        '/dashboard/reports',
+        '/dashboard/sales-verification'
       ];
       
       const adminOnlyRoutes = ['/dashboard/staff', '/dashboard/staff-reports'];
@@ -85,6 +108,9 @@ export function proxy(request: NextRequest) {
       }
       // Admin Guard Fault Tolerance
       else if (adminOnlyRoutes.some(p => pathname.startsWith(p))) {
+        if (safeRole !== 'admin') {
+          return NextResponse.redirect(new URL('/dashboard', request.url));
+        }
         return NextResponse.next();
       }
 
@@ -103,6 +129,10 @@ export const config = {
     '/partner/sales/:path*', 
     '/partner/deposit/:path*', 
     '/partner/stock/:path*', 
+    '/partner/helpdesk/:path*',
+    '/partner/aadhaar/:path*',
+    '/partner/terms/:path*',
+    '/partner/resubmit/:path*',
     '/dashboard/:path*'
   ],
 };

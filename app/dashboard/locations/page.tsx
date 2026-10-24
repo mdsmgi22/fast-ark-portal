@@ -101,7 +101,6 @@ export default function InfrastructureCommandCenter() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      // CRITICAL FIX: Fetch auth_id to satisfy Foreign Key constraints
       const [locsRes, supRes, allocRes] = await Promise.all([
         supabase.from("locations").select("*, parent_master:locations(center_name)").order("center_name", { ascending: true }),
         supabase.from("back_office_staff").select("id, auth_id, name, email").eq("role", "Supervisor").eq("status", "Active"),
@@ -221,7 +220,7 @@ export default function InfrastructureCommandCenter() {
     setIsSubmittingSup(true);
     try {
       const { error } = await supabase.from('supervisor_allocations').insert([{
-        supervisor_id: selectedSupId, // This is now the auth_id
+        supervisor_id: selectedSupId,
         location_id: currentLocForSup.id,
         manage_cm: supRoles.cm,
         manage_ocsc: supRoles.ocsc,
@@ -239,7 +238,7 @@ export default function InfrastructureCommandCenter() {
         action_type: 'MAPPING',
         module: 'INFRASTRUCTURE',
         target_id: currentLocForSup.id,
-        details: `Assigned Supervisor [${supName}] to Center: ${currentLocForSup.center_name} with specific role scoping.`
+        details: `Assigned Supervisor [${supName}] to Center: ${currentLocForSup.center_name} [${currentLocForSup.center_code}] with role scoping.`
       }]);
 
       setSelectedSupId("");
@@ -316,8 +315,8 @@ export default function InfrastructureCommandCenter() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-slate-200 pb-6">
         <div>
-          <h1 className="text-3xl font-black text-slate-900">Infrastructure & Locations</h1>
-          <p className="text-slate-500 font-medium mt-1">Manage physical centers, assign field supervisors, and map operational roles.</p>
+          <h1 className="text-3xl font-black text-slate-900">Infrastructure &amp; Locations</h1>
+          <p className="text-slate-500 font-medium mt-1">Manage physical centers, Center Codes, field supervisors, and Aadhaar / Telecom roles.</p>
         </div>
         <div className="flex items-center gap-3">
           <Link href="/dashboard" className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm transition">
@@ -332,7 +331,7 @@ export default function InfrastructureCommandCenter() {
       {/* TRIPLE-AXIS FILTER CONSOLE */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         
-        {/* AXIS 1: ROLE */}
+        {/* AXIS 1: ROLE (INCLUDES AADHAAR CENTERS BUTTON) */}
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           <button onClick={() => setFilterRole('ALL')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'ALL' ? 'bg-slate-800 text-white border-slate-900 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
             All Roles
@@ -348,6 +347,9 @@ export default function InfrastructureCommandCenter() {
           </button>
           <button onClick={() => setFilterRole('CM')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'CM' ? 'bg-emerald-600 text-white border-emerald-700 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
             CM
+          </button>
+          <button onClick={() => setFilterRole('AADHAAR')} className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border transition ${filterRole === 'AADHAAR' ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-md' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            🆔 Aadhaar Centers
           </button>
         </div>
 
@@ -400,7 +402,6 @@ export default function InfrastructureCommandCenter() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4">
           {filteredLocations.map(loc => {
-            // Find assigned supervisors for this specific location
             const locAllocs = allocations.filter(a => a.location_id === loc.id);
             const assignedSups = locAllocs.map(a => {
                const sup = supervisors.find(s => s.auth_id === a.supervisor_id);
@@ -415,7 +416,7 @@ export default function InfrastructureCommandCenter() {
                     <h3 className="font-black text-lg text-slate-900 leading-tight">
                       {loc.center_name}
                     </h3>
-                    <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 uppercase tracking-widest">
+                    <span className="text-[10px] font-black text-slate-700 bg-slate-100 px-2.5 py-1 rounded border border-slate-300 uppercase tracking-widest shrink-0">
                       {loc.center_code || "NO-CODE"}
                     </span>
                   </div>
@@ -733,7 +734,9 @@ export default function InfrastructureCommandCenter() {
             
             <div className="p-6">
               <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg mb-6">
-                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">Target Center</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-800 mb-1">
+                  Target Center [{currentLocForSup.center_code || "NO-CODE"}]
+                </p>
                 <p className="font-black text-emerald-900 text-lg">{currentLocForSup.center_name}</p>
                 <p className="text-xs font-bold text-emerald-700">{currentLocForSup.dist}, {currentLocForSup.state}</p>
               </div>
@@ -786,8 +789,8 @@ export default function InfrastructureCommandCenter() {
                       )}
                       {currentLocForSup.role_aadhaar && (
                         <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={supRoles.aadhaar} onChange={e => setSupRoles({...supRoles, aadhaar: e.target.checked})} className="w-4 h-4 accent-emerald-600" />
-                          <span className="text-xs font-bold text-slate-700 uppercase">Manage Aadhaar</span>
+                          <input type="checkbox" checked={supRoles.aadhaar} onChange={e => setSupRoles({...supRoles, aadhaar: e.target.checked})} className="w-4 h-4 accent-amber-600" />
+                          <span className="text-xs font-bold text-amber-800 uppercase">Manage Aadhaar</span>
                         </label>
                       )}
                       {currentLocForSup.role_partner && (

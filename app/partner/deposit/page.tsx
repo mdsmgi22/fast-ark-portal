@@ -39,7 +39,7 @@ export default function PartnerDepositPage() {
   const router = useRouter();
   const [partner, setPartner] = useState<any>(null);
   
-  // ARCHITECTURAL FIX: Direct center UPI state mapping
+  // Direct center UPI state mapping
   const [centerUpi, setCenterUpi] = useState<string>("fastark@upi"); 
   const [loading, setLoading] = useState(true);
   
@@ -107,7 +107,6 @@ export default function PartnerDepositPage() {
         .order("created_at", { ascending: false });
       setDeposits(depData || []);
 
-      // ARCHITECTURAL FIX: Fetch the specific UPI ID assigned to this partner's location in the Banking Hub
       if (partnerData.center_id) {
         const { data: upiData } = await supabase
           .from("upi_ids")
@@ -150,6 +149,12 @@ export default function PartnerDepositPage() {
     setOcrRawDate(null);
 
     try {
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        setDetectedPlatform("PDF Receipt Attached");
+        setIsScanning(false);
+        return;
+      }
+
       const worker = await Tesseract.createWorker("eng", 1, {
         logger: (m) => {
           if (m.status === "recognizing text" && m.progress) {
@@ -242,13 +247,11 @@ export default function PartnerDepositPage() {
 
   // --- SECURE DOCUMENT VIEWER ---
   const handleViewSecureSlip = async (path: string) => {
-    // Fallback support for older public URLs already saved in your database
     if (path.startsWith("http")) {
       window.open(path, "_blank");
       return;
     }
 
-    // Request a self-destructing access token valid for exactly 60 seconds
     const { data, error } = await supabase.storage.from("deposit-slips").createSignedUrl(path, 60);
     
     if (error || !data) {
@@ -287,8 +290,6 @@ export default function PartnerDepositPage() {
         const { error: uploadError } = await supabase.storage.from("deposit-slips").upload(fileName, slipImage);
         if (uploadError) throw new Error("Image upload failed: " + uploadError.message);
 
-        // SECURE VAULT UPDATE: Save ONLY the internal filename. 
-        // We will generate temporary tokens to view it later.
         finalSlipUrl = fileName;
       }
 
@@ -323,11 +324,9 @@ export default function PartnerDepositPage() {
       setExemptionCategory("");
       setOtherExemptionText("");
       
-      // Auto-switch back to ledger upon success
       setRightPanel("ledger");
       initializePortal();
     } catch (err: any) {
-      // Intercept the unique constraint violation (Code 23505) for Fraud Prevention
       if (err.code === '23505' || err.message.includes('unique_reference_no') || err.message.includes('duplicate key value')) {
         alert("🚨 FRAUD PREVENTION BLOCK: This UTR / Reference Number has already been submitted and claimed. Duplicate submissions are strictly prohibited.");
       } else {
@@ -381,22 +380,17 @@ export default function PartnerDepositPage() {
   );
 
   // =========================================================================
-  // ARCHITECTURAL FIX: QR ENGINE RECONSTRUCTION (NPCI Compliant)
+  // QR & MOBILE DEEP-LINK ENGINE (NPCI Compliant)
   // =========================================================================
   const userEnteredValue = parseFloat(form.deposit_amount) || 0;
-  
-  // 1. Force strict 2-decimal formatting mandated by NPCI specs
   const safeAmount = userEnteredValue.toFixed(2);
-  
-  // 2. Safely encode the Payee Name
   const safeName = encodeURIComponent("Fast Ark");
-  
-  // 3. Truncate the Transaction Note to strictly bypass the 50-character limit and URL encode it
   const rawNote = `Rolling_${partner?.center_id}`;
   const safeNote = encodeURIComponent(rawNote.substring(0, 48));
-
-  // 4. Safely construct the final deep link using the dynamically mapped centerUpi
   const upiString = `upi://pay?pa=${centerUpi}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`;
+
+  const isPdfPreview =
+    slipImage?.type === "application/pdf" || (slipImage?.name || "").toLowerCase().endsWith(".pdf");
 
   const numInputClass = "w-full border-2 border-slate-200 p-3 rounded-lg outline-none focus:border-blue-500 font-black text-slate-800 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
@@ -424,7 +418,7 @@ export default function PartnerDepositPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           
           {/* LEFT: SUBMISSION FORM (Sticky) */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sticky top-8" style={{ maxHeight: 'calc(100vh - 4rem)', overflowY: 'auto' }}>
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 lg:sticky lg:top-8" style={{ maxHeight: 'calc(100vh - 4rem)', overflowY: 'auto' }}>
             <h2 className="font-black text-lg text-slate-800 border-b border-slate-100 pb-3 mb-5">
               Record New Remittance
             </h2>
@@ -468,7 +462,7 @@ export default function PartnerDepositPage() {
                       setIsUserVerified(false);
                       setExemptionCategory(""); 
                       setOtherExemptionText("");
-                      setRightPanel("ledger"); // Revert panel if they select exemption
+                      setRightPanel("ledger");
                     }}
                   />
                   <span className="font-bold text-sm text-slate-700">No deposit slip available (Request Exemption)</span>
@@ -478,7 +472,7 @@ export default function PartnerDepositPage() {
                   <div className="border-2 border-dashed border-slate-300 rounded-xl p-5 text-center bg-slate-50 relative transition-all hover:bg-slate-100">
                     <input 
                       type="file" 
-                      accept="image/*,.pdf" 
+                      accept="image/*,application/pdf,.pdf" 
                       onChange={handleImageUpload} 
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
@@ -486,14 +480,14 @@ export default function PartnerDepositPage() {
                       <div>
                         <div className="text-3xl mb-1">📸</div>
                         <p className="font-bold text-slate-700 text-sm">Upload Slip or Screenshot</p>
-                        <p className="text-[11px] text-slate-500 mt-1">GPay, PhonePe, Paytm, or Bank Cash Receipt</p>
+                        <p className="text-[11px] text-slate-500 mt-1">GPay, PhonePe, Paytm, or Bank Cash Receipt (Image / PDF)</p>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center">
                         <div className="text-3xl mb-1">✅</div>
-                        <p className="font-bold text-green-700 text-sm">Document Attached</p>
+                        <p className="font-bold text-green-700 text-sm">{slipImage?.name || "Document Attached"}</p>
                         <p className="text-[10px] text-slate-500 mt-1">👀 View high-res document on the right panel</p>
-                        <p className="text-[11px] font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full mt-3">Tap to change image</p>
+                        <p className="text-[11px] font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full mt-3">Tap to change file</p>
                       </div>
                     )}
                   </div>
@@ -547,7 +541,7 @@ export default function PartnerDepositPage() {
                 <div className="bg-slate-900 text-white rounded-xl p-4 space-y-3 border-2 border-slate-800">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                     <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">
-                      OCR Audit & Capture
+                      OCR Audit &amp; Capture
                     </span>
                     <span className="text-[10px] font-black bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700">
                       {detectedPlatform}
@@ -558,13 +552,13 @@ export default function PartnerDepositPage() {
                     <div className="bg-slate-800/80 p-2 rounded">
                       <p className="text-[9px] text-slate-400 uppercase">Scanned Amount</p>
                       <p className="font-bold text-green-400">
-                        {ocrRawAmount ? `₹${ocrRawAmount.toLocaleString("en-IN")}` : "Not detected"}
+                        {ocrRawAmount ? `₹${ocrRawAmount.toLocaleString("en-IN")}` : "Verify Manually"}
                       </p>
                     </div>
                     <div className="bg-slate-800/80 p-2 rounded">
                       <p className="text-[9px] text-slate-400 uppercase">Scanned Date</p>
                       <p className="font-bold text-slate-200">
-                        {ocrRawDate ? ocrRawDate : "Not detected"}
+                        {ocrRawDate ? ocrRawDate : "Verify Manually"}
                       </p>
                     </div>
                   </div>
@@ -572,7 +566,7 @@ export default function PartnerDepositPage() {
                   <div className="bg-slate-800/80 p-2 rounded text-xs">
                     <p className="text-[9px] text-slate-400 uppercase">Scanned Ref / UTR</p>
                     <p className="font-bold text-slate-200 tracking-wider truncate">
-                      {ocrRawRef ? ocrRawRef : "Not detected"}
+                      {ocrRawRef ? ocrRawRef : "Verify Manually"}
                     </p>
                   </div>
 
@@ -590,7 +584,7 @@ export default function PartnerDepositPage() {
                       className="w-5 h-5 accent-blue-500 mt-0.5 cursor-pointer"
                     />
                     <span className="text-xs font-bold text-blue-200 leading-tight">
-                      I have cross-checked the scanned amount, date, and UTR against the receipt.
+                      I have cross-checked the amount, date, and UTR against the uploaded receipt.
                     </span>
                   </label>
                 </div>
@@ -659,10 +653,10 @@ export default function PartnerDepositPage() {
                 />
               </div>
 
-              {/* QR CODE GENERATOR */}
+              {/* QR CODE GENERATOR + MOBILE TAP-TO-PAY DEEP LINK */}
               {form.deposit_method === "UPI" && userEnteredValue > 0 && (
                 <div className="bg-slate-900 rounded-xl p-6 text-center border-2 border-slate-800 shadow-inner flex flex-col items-center animate-in fade-in zoom-in duration-300 mt-2">
-                  <p className="text-blue-400 font-black uppercase tracking-widest text-xs mb-3">Scan to Pay via UPI</p>
+                  <p className="text-blue-400 font-black uppercase tracking-widest text-xs mb-3">Scan or Tap to Pay via UPI</p>
                   <div className="bg-white p-3 rounded-xl shadow-lg mb-3">
                     <QRCodeSVG value={upiString} size={150} level="M" />
                   </div>
@@ -671,6 +665,12 @@ export default function PartnerDepositPage() {
                   <p className="text-slate-200 font-black mt-2">
                     Amount: ₹{userEnteredValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </p>
+                  <a
+                    href={upiString}
+                    className="mt-4 w-full py-3 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] uppercase tracking-widest rounded-lg shadow-md transition flex items-center justify-center gap-2"
+                  >
+                    <span>📲</span> Tap to Pay via UPI App (GPay / PhonePe)
+                  </a>
                 </div>
               )}
 
@@ -690,7 +690,7 @@ export default function PartnerDepositPage() {
           </div>
 
           {/* RIGHT: DYNAMIC SPLIT PANE (Viewer OR Ledger) */}
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col sticky top-8" style={{ maxHeight: 'calc(100vh - 4rem)' }}>
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col lg:sticky lg:top-8" style={{ maxHeight: 'calc(100vh - 4rem)' }}>
             
             {/* DYNAMIC HEADER TABS */}
             <div className="p-4 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center text-white gap-3 rounded-t-xl shrink-0">
@@ -700,12 +700,14 @@ export default function PartnerDepositPage() {
               </div>
               <div className="flex bg-slate-800 p-1 rounded-lg">
                  <button 
+                  type="button"
                   onClick={() => setRightPanel("viewer")} 
                   className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${rightPanel === 'viewer' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                  >
                    📄 Document Viewer
                  </button>
                  <button 
+                  type="button"
                   onClick={() => setRightPanel("ledger")} 
                   className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${rightPanel === 'ledger' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                  >
@@ -717,19 +719,41 @@ export default function PartnerDepositPage() {
             {/* PANEL CONTENT AREA (Scrollable internally) */}
             <div className="flex-1 overflow-y-auto bg-slate-50">
               {rightPanel === "viewer" ? (
-                // --- DOCUMENT VIEWER PANEL ---
-                <div className="p-6 flex justify-center items-start min-h-full">
+                // --- INTELLIGENT IMAGE + PDF DOCUMENT VIEWER PANEL ---
+                <div className="p-6 flex flex-col items-center justify-start min-h-full">
                   {imagePreview ? (
-                    <img 
-                      src={imagePreview} 
-                      alt="High Resolution Slip" 
-                      className="w-full max-w-3xl h-auto object-contain shadow-lg rounded border border-slate-200 bg-white" 
-                    />
+                    <div className="w-full flex flex-col items-center space-y-3">
+                      <div className="w-full flex justify-between items-center bg-slate-900 text-white px-4 py-2.5 rounded-lg">
+                        <span className="text-xs font-black truncate">{slipImage?.name || "Uploaded Receipt"}</span>
+                        <a
+                          href={imagePreview}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded shadow"
+                        >
+                          Open Full Screen ↗
+                        </a>
+                      </div>
+
+                      {isPdfPreview ? (
+                        <iframe
+                          src={`${imagePreview}#toolbar=0`}
+                          className="w-full h-[550px] rounded-xl shadow-lg border border-slate-300 bg-white"
+                          title="PDF Receipt Preview"
+                        />
+                      ) : (
+                        <img 
+                          src={imagePreview} 
+                          alt="High Resolution Slip" 
+                          className="w-full max-w-3xl h-auto object-contain shadow-lg rounded-xl border border-slate-200 bg-white" 
+                        />
+                      )}
+                    </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center text-slate-400 h-64">
                       <span className="text-5xl mb-4 opacity-50">📄</span>
                       <p className="font-black tracking-widest uppercase text-sm">No Document Uploaded</p>
-                      <p className="text-xs font-bold mt-2 text-slate-500">Upload a slip on the left to inspect it here.</p>
+                      <p className="text-xs font-bold mt-2 text-slate-500">Upload an image or PDF slip on the left to inspect it here.</p>
                     </div>
                   )}
                 </div>
@@ -742,7 +766,7 @@ export default function PartnerDepositPage() {
                         <th className="p-4 font-black text-center">Match ✅</th>
                         <th className="p-4 font-black">Date</th>
                         <th className="p-4 font-black text-right">Amount (₹)</th>
-                        <th className="p-4 font-black">Method & Ref No</th>
+                        <th className="p-4 font-black">Method &amp; Ref No</th>
                         <th className="p-4 font-black text-center">Scan Proof</th>
                         <th className="p-4 font-black text-center">Status</th>
                         <th className="p-4 font-black text-center">Action</th>
