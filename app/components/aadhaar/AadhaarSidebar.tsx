@@ -9,6 +9,7 @@ interface SidebarProps {
   activeMenu: AadhaarMenuTab;
   setActiveMenu: (menu: AadhaarMenuTab) => void;
   partner: any;
+  isAadhaarAuthorized: boolean;
   pendingReportCash: number;
   unpaidPenaltyTotal: number;
   overdueDaysCount: number;
@@ -19,6 +20,7 @@ export default function AadhaarSidebar({
   activeMenu,
   setActiveMenu,
   partner,
+  isAadhaarAuthorized,
   pendingReportCash,
   unpaidPenaltyTotal,
   overdueDaysCount,
@@ -50,7 +52,7 @@ export default function AadhaarSidebar({
   }, []);
 
   const totalPayable = pendingReportCash + unpaidPenaltyTotal;
-  const isDepositUnlocked = totalPayable > 0;
+  const isDepositUnlocked = isAadhaarAuthorized && totalPayable > 0;
 
   const menuItems: {
     id: AadhaarMenuTab;
@@ -58,6 +60,7 @@ export default function AadhaarSidebar({
     shortLabel: string;
     label: string;
     sub: string;
+    locked: boolean;
     badge?: string;
     badgeColor?: string;
   }[] = [
@@ -66,48 +69,79 @@ export default function AadhaarSidebar({
       icon: "📊",
       shortLabel: "Counts",
       label: "1. Dashboard & Counts",
-      sub: "5-Category Live KPIs",
+      sub: isAadhaarAuthorized ? "5-Category Live KPIs" : "Requires Admin Approval",
+      locked: !isAadhaarAuthorized,
+      badge: !isAadhaarAuthorized ? "🔒 Locked" : undefined,
+      badgeColor: "bg-slate-800 text-red-400 border border-red-900/50",
     },
     {
       id: "daily",
       icon: "📤",
       shortLabel: "Daily",
       label: "2. Daily Report Upload",
-      sub: "CSV + HTML / Manual",
+      sub: isAadhaarAuthorized ? "CSV + HTML / Manual" : "Requires Admin Approval",
+      locked: !isAadhaarAuthorized,
+      badge: !isAadhaarAuthorized ? "🔒 Locked" : undefined,
+      badgeColor: "bg-slate-800 text-red-400 border border-red-900/50",
     },
     {
       id: "deposit",
       icon: "💳",
       shortLabel: "Pay QR",
       label: "3. Instant Deposit (QR)",
-      sub: isDepositUnlocked ? "Scan / Tap & Pay Now" : "Upload Daily Report First",
-      badge: isDepositUnlocked ? `₹${totalPayable.toLocaleString("en-IN")}` : "Locked",
-      badgeColor: isDepositUnlocked ? "bg-emerald-500 text-slate-950 animate-pulse" : "bg-slate-800 text-slate-500",
+      sub: !isAadhaarAuthorized
+        ? "Requires Admin Approval"
+        : isDepositUnlocked
+        ? "Scan / Tap & Pay Now"
+        : "Upload Daily Report First",
+      locked: !isAadhaarAuthorized,
+      badge: !isAadhaarAuthorized
+        ? "🔒 Locked"
+        : isDepositUnlocked
+        ? `₹${totalPayable.toLocaleString("en-IN")}`
+        : "Locked",
+      badgeColor: !isAadhaarAuthorized
+        ? "bg-slate-800 text-red-400 border border-red-900/50"
+        : isDepositUnlocked
+        ? "bg-emerald-500 text-slate-950 animate-pulse"
+        : "bg-slate-800 text-slate-500",
     },
     {
       id: "weekly",
       icon: "📅",
       shortLabel: "Weekly",
       label: "4. Weekly Reconciliation",
-      sub: "Match Daily vs Weekly",
+      sub: isAadhaarAuthorized ? "Match Daily vs Weekly" : "Requires Admin Approval",
+      locked: !isAadhaarAuthorized,
+      badge: !isAadhaarAuthorized ? "🔒 Locked" : undefined,
+      badgeColor: "bg-slate-800 text-red-400 border border-red-900/50",
     },
     {
       id: "history",
       icon: "📥",
       shortLabel: "Reports",
       label: "5. Reports & Downloads",
-      sub: "PDF / CSV & File Vault",
+      sub: isAadhaarAuthorized ? "PDF / CSV & File Vault" : "Requires Admin Approval",
+      locked: !isAadhaarAuthorized,
+      badge: !isAadhaarAuthorized ? "🔒 Locked" : undefined,
+      badgeColor: "bg-slate-800 text-red-400 border border-red-900/50",
     },
     {
       id: "upgrade",
       icon: "🗂️",
       shortLabel: "IDs",
       label: "6. Credentials & Upgrade",
-      sub: "Station ID & Compliance",
+      sub: isAadhaarAuthorized ? "Verified Station & IDs" : "Submit Request for Approval",
+      locked: false,
+      badge: isAadhaarAuthorized ? "✅ Active" : "Action Req",
+      badgeColor: isAadhaarAuthorized
+        ? "bg-emerald-950 text-emerald-400 border border-emerald-700"
+        : "bg-amber-500 text-slate-950",
     },
   ];
 
-  const handleSelectMenu = (id: AadhaarMenuTab) => {
+  const handleSelectMenu = (id: AadhaarMenuTab, isLocked: boolean) => {
+    if (isLocked) return;
     setActiveMenu(id);
     setMobileDrawerOpen(false);
   };
@@ -132,9 +166,9 @@ export default function AadhaarSidebar({
           </div>
 
           <div className="flex items-center gap-2">
-            {totalPayable > 0 && (
+            {isAadhaarAuthorized && totalPayable > 0 && (
               <button
-                onClick={() => handleSelectMenu("deposit")}
+                onClick={() => handleSelectMenu("deposit", false)}
                 className="bg-emerald-500 text-slate-950 font-black text-[10px] uppercase px-2.5 py-1.5 rounded-lg shadow animate-pulse"
               >
                 💳 Pay ₹{totalPayable.toLocaleString("en-IN")}
@@ -149,17 +183,16 @@ export default function AadhaarSidebar({
           </div>
         </div>
 
-        {/* Collapsible Mobile Drawer for Full Details & Sign Out */}
         {mobileDrawerOpen && (
           <div className="mt-3 pt-3 border-t border-slate-800 space-y-3 animate-in fade-in">
             <div className="grid grid-cols-2 gap-2 text-[10px]">
               <div className="bg-slate-900 p-2 rounded border border-slate-800">
                 <span className="text-slate-400 font-bold uppercase block">Operator ID</span>
-                <span className="font-black text-white">{partner?.aadhaar_operator_id || "NOT MAPPED"}</span>
+                <span className="font-black text-white">{partner?.aadhaar_operator_id || "NOT APPROVED"}</span>
               </div>
               <div className="bg-slate-900 p-2 rounded border border-slate-800">
                 <span className="text-slate-400 font-bold uppercase block">Station ID</span>
-                <span className="font-black text-amber-400">{partner?.aadhaar_station_id || "NOT MAPPED"}</span>
+                <span className="font-black text-amber-400">{partner?.aadhaar_station_id || "NOT APPROVED"}</span>
               </div>
             </div>
 
@@ -194,7 +227,9 @@ export default function AadhaarSidebar({
                 </div>
                 <div>
                   <h1 className="font-black text-base tracking-wide text-white leading-none">AADHAAR HUB</h1>
-                  <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest mt-1">Fast Ark Seva Kendra</p>
+                  <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest mt-1">
+                    Fast Ark Seva Kendra
+                  </p>
                 </div>
               </div>
               <Link
@@ -217,15 +252,19 @@ export default function AadhaarSidebar({
               </div>
             </div>
 
-            {/* MAPPED OPERATOR & STATION CREDENTIALS */}
+            {/* MAPPED OPERATOR, STATION & CENTER STATUS */}
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
               <div className="bg-slate-800/70 p-2 rounded border border-slate-700/70">
                 <p className="text-slate-400 font-bold uppercase">Operator ID</p>
-                <p className="font-black text-white truncate mt-0.5">{partner?.aadhaar_operator_id || "NOT MAPPED"}</p>
+                <p className="font-black text-white truncate mt-0.5">
+                  {isAadhaarAuthorized ? partner?.aadhaar_operator_id : "🔒 UNAPPROVED"}
+                </p>
               </div>
               <div className="bg-slate-800/70 p-2 rounded border border-slate-700/70">
                 <p className="text-slate-400 font-bold uppercase">Station ID</p>
-                <p className="font-black text-amber-400 truncate mt-0.5">{partner?.aadhaar_station_id || "NOT MAPPED"}</p>
+                <p className="font-black text-amber-400 truncate mt-0.5">
+                  {isAadhaarAuthorized ? partner?.aadhaar_station_id : "🔒 UNAPPROVED"}
+                </p>
               </div>
             </div>
           </div>
@@ -237,9 +276,13 @@ export default function AadhaarSidebar({
               return (
                 <button
                   key={item.id}
-                  onClick={() => handleSelectMenu(item.id)}
+                  type="button"
+                  disabled={item.locked}
+                  onClick={() => handleSelectMenu(item.id, item.locked)}
                   className={`w-full text-left p-3 rounded-xl transition-all flex items-center justify-between border ${
-                    isActive
+                    item.locked
+                      ? "bg-slate-900/30 text-slate-600 border-slate-900 cursor-not-allowed opacity-60"
+                      : isActive
                       ? "bg-blue-600 text-white border-blue-500 shadow-lg"
                       : "bg-slate-900/60 text-slate-300 border-slate-800/80 hover:bg-slate-900 hover:text-white"
                   }`}
@@ -248,7 +291,11 @@ export default function AadhaarSidebar({
                     <span className="text-xl shrink-0">{item.icon}</span>
                     <div className="truncate">
                       <p className="font-black text-xs uppercase tracking-wider truncate">{item.label}</p>
-                      <p className={`text-[10px] font-bold truncate mt-0.5 ${isActive ? "text-blue-200" : "text-slate-500"}`}>
+                      <p
+                        className={`text-[10px] font-bold truncate mt-0.5 ${
+                          item.locked ? "text-red-400/70" : isActive ? "text-blue-200" : "text-slate-500"
+                        }`}
+                      >
                         {item.sub}
                       </p>
                     </div>
@@ -266,43 +313,58 @@ export default function AadhaarSidebar({
 
         {/* PINNED BOTTOM LEDGER & ₹100/DAY LATE PENALTY TRACKER */}
         <div className="p-4 space-y-3 border-t border-slate-800 bg-slate-900/50">
-          <div
-            className={`p-3.5 rounded-xl border ${
-              totalPayable > 0 ? "bg-red-950/60 border-red-800" : "bg-emerald-950/40 border-emerald-800/60"
-            }`}
-          >
-            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Aadhaar Closing Ledger</p>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-bold">Report Cash Due:</span>
-                <span className="font-black text-white">
-                  ₹{pendingReportCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </span>
+          {isAadhaarAuthorized ? (
+            <div
+              className={`p-3.5 rounded-xl border ${
+                totalPayable > 0 ? "bg-red-950/60 border-red-800" : "bg-emerald-950/40 border-emerald-800/60"
+              }`}
+            >
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                Aadhaar Closing Ledger
+              </p>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold">Report Cash Due:</span>
+                  <span className="font-black text-white">
+                    ₹{pendingReportCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-red-400 font-bold">Late Penalty (₹100/d):</span>
+                  <span className="font-black text-red-400">
+                    ₹{unpaidPenaltyTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} ({overdueDaysCount}d)
+                  </span>
+                </div>
+                <div className="border-t border-slate-800 pt-1.5 mt-1.5 flex justify-between items-baseline">
+                  <span className="text-[10px] font-black uppercase text-amber-400">Total Payable:</span>
+                  <span className="text-lg font-black text-white">
+                    ₹{totalPayable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-red-400 font-bold">Late Penalty (₹100/d):</span>
-                <span className="font-black text-red-400">
-                  ₹{unpaidPenaltyTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} ({overdueDaysCount}d)
-                </span>
-              </div>
-              <div className="border-t border-slate-800 pt-1.5 mt-1.5 flex justify-between items-baseline">
-                <span className="text-[10px] font-black uppercase text-amber-400">Total Payable:</span>
-                <span className="text-lg font-black text-white">
-                  ₹{totalPayable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
+              {totalPayable > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectMenu("deposit", false)}
+                  className="mt-3 w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-lg shadow transition"
+                >
+                  💳 Scan / Tap to Pay Now &rarr;
+                </button>
+              )}
             </div>
-            {totalPayable > 0 && (
-              <button
-                onClick={() => handleSelectMenu("deposit")}
-                className="mt-3 w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-lg shadow transition"
-              >
-                💳 Scan / Tap to Pay Now &rarr;
-              </button>
-            )}
-          </div>
+          ) : (
+            <div className="p-3.5 rounded-xl border border-amber-800/60 bg-amber-950/30 text-center">
+              <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                🔒 Dashboard Locked
+              </p>
+              <p className="text-[10px] font-bold text-slate-400 mt-1">
+                Admin approval of your Aadhaar credentials &amp; Center mapping is required to unlock uploads.
+              </p>
+            </div>
+          )}
 
           <button
+            type="button"
             onClick={onSignOut}
             className="w-full py-2.5 bg-slate-800 hover:bg-red-600 text-slate-300 hover:text-white font-black text-xs uppercase tracking-widest rounded-lg transition"
           >
@@ -320,12 +382,18 @@ export default function AadhaarSidebar({
           return (
             <button
               key={item.id}
-              onClick={() => handleSelectMenu(item.id)}
+              type="button"
+              disabled={item.locked}
+              onClick={() => handleSelectMenu(item.id, item.locked)}
               className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition ${
-                isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
+                item.locked
+                  ? "text-slate-700 opacity-40 cursor-not-allowed"
+                  : isActive
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white"
               }`}
             >
-              <span className="text-base leading-none">{item.icon}</span>
+              <span className="text-base leading-none">{item.locked ? "🔒" : item.icon}</span>
               <span className="text-[9px] font-black uppercase tracking-tighter mt-1 truncate max-w-full px-0.5">
                 {item.shortLabel}
               </span>

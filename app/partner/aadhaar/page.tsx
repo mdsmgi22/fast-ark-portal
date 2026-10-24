@@ -25,6 +25,7 @@ export default function PartnerAadhaarPortal() {
 
   // Core Data States
   const [partner, setPartner] = useState<any>(null);
+  const [latestUpgradeReq, setLatestUpgradeReq] = useState<any | null>(null);
   const [activeTariff, setActiveTariff] = useState<any>(null);
   const [dailyReports, setDailyReports] = useState<any[]>([]);
   const [weeklyReports, setWeeklyReports] = useState<any[]>([]);
@@ -119,12 +120,44 @@ export default function PartnerAadhaarPortal() {
       if (!pData) return router.push("/partner/login");
       setPartner(pData);
 
+      // Fetch latest Upgrade Request status for this partner
+      const { data: upgData } = await supabase
+        .from("partner_upgrade_requests")
+        .select("*")
+        .eq("partner_id", pData.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      setLatestUpgradeReq(upgData || null);
+
       if (pData.aadhaar_operator_id || pData.aadhaar_station_id) {
         setUpgradeForm((prev) => ({
           ...prev,
           operator_id: pData.aadhaar_operator_id || "",
           station_id: pData.aadhaar_station_id || "",
         }));
+      } else if (upgData) {
+        setUpgradeForm({
+          operator_id: upgData.requested_operator_id || "",
+          station_id: upgData.requested_station_id || "",
+          nseit_no: upgData.nseit_cert_no || "",
+        });
+      }
+
+      // STRICT AUTHORIZATION GATE CHECK:
+      // Partner must have role_aadhaar = true, mapped Operator ID & Station ID, AND their Center must have role_aadhaar = true
+      const authorized = Boolean(
+        pData.role_aadhaar &&
+          pData.aadhaar_operator_id &&
+          pData.aadhaar_station_id &&
+          pData.locations?.role_aadhaar
+      );
+
+      if (!authorized) {
+        setActiveMenu("upgrade");
+        setLoading(false);
+        return;
       }
 
       // Sync ₹100/day late payment penalties for any unsettled past reports
@@ -139,11 +172,28 @@ export default function PartnerAadhaarPortal() {
           .order("effective_from", { ascending: false })
           .limit(1)
           .maybeSingle(),
-        supabase.from("aadhaar_daily_reports").select("*").eq("partner_id", pData.id).order("report_date", { ascending: false }),
-        supabase.from("aadhaar_weekly_reports").select("*").eq("partner_id", pData.id).order("end_date", { ascending: false }),
-        supabase.from("aadhaar_penalty_logs").select("*").eq("partner_id", pData.id).eq("is_settled", false),
+        supabase
+          .from("aadhaar_daily_reports")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .order("report_date", { ascending: false }),
+        supabase
+          .from("aadhaar_weekly_reports")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .order("end_date", { ascending: false }),
+        supabase
+          .from("aadhaar_penalty_logs")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .eq("is_settled", false),
         pData.center_id
-          ? supabase.from("upi_ids").select("upi_id").eq("assigned_location_id", pData.center_id).eq("is_active", true).maybeSingle()
+          ? supabase
+              .from("upi_ids")
+              .select("upi_id")
+              .eq("assigned_location_id", pData.center_id)
+              .eq("is_active", true)
+              .maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
 
@@ -184,10 +234,18 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
+  // Strict Authorization Boolean
+  const isAadhaarAuthorized = Boolean(
+    partner?.role_aadhaar &&
+      partner?.aadhaar_operator_id &&
+      partner?.aadhaar_station_id &&
+      partner?.locations?.role_aadhaar
+  );
+
   // Fetch date-specific UIDAI Tariff whenever Report Date changes
   useEffect(() => {
     const loadTariffForDate = async () => {
-      if (!reportDate) return;
+      if (!reportDate || !isAadhaarAuthorized) return;
       const { data } = await supabase
         .from("aadhaar_tariff_history")
         .select("*")
@@ -199,12 +257,12 @@ export default function PartnerAadhaarPortal() {
       if (data) setActiveTariff(data);
     };
     loadTariffForDate();
-  }, [reportDate]);
+  }, [reportDate, isAadhaarAuthorized]);
 
   // Auto-trigger Dual File Validation when both CSV and HTML are selected
   useEffect(() => {
     const runDualValidation = async () => {
-      if (!csvFile || !htmlFile || isManualMode) return;
+      if (!csvFile || !htmlFile || isManualMode || !isAadhaarAuthorized) return;
       setParseError("");
       setParsedPreview(null);
       setConfirmDailyCheck(false);
@@ -225,7 +283,7 @@ export default function PartnerAadhaarPortal() {
       }
     };
     runDualValidation();
-  }, [csvFile, htmlFile, reportDate, isManualMode]);
+  }, [csvFile, htmlFile, reportDate, isManualMode, isAadhaarAuthorized]);
 
   // Calculate Manual Fallback Totals using Date-Locked Tariff
   const isZeroExemption = isManualMode && exemptionReason !== "" && exemptionReason !== "ECMP_CRASH_MANUAL";
@@ -240,8 +298,11 @@ export default function PartnerAadhaarPortal() {
   // --- SUBMIT DAILY REPORT & AUTO-UNLOCK DEPOSIT ---
   const handleDailySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!partner?.aadhaar_operator_id || !partner?.aadhaar_station_id) {
-      showBanner("error", "Your UIDAI Operator ID and Station ID are not mapped yet. Please complete Menu 6 (Credentials & Upgrade) first.");
+    if (!isAadhaarAuthorized) {
+      showBanner(
+        "error",
+        "Access Denied: Your Aadhaar credentials and Center mapping must be approved by Corporate Admin before uploading reports."
+      );
       setActiveMenu("upgrade");
       return;
     }
@@ -251,7 +312,10 @@ export default function PartnerAadhaarPortal() {
 
     const existing = dailyReports.find((r) => r.report_date === reportDate);
     if (existing) {
-      return showBanner("error", `Duplicate Blocked: A Daily Report for ${formatToDDMMYYYY(reportDate)} has already been submitted.`);
+      return showBanner(
+        "error",
+        `Duplicate Blocked: A Daily Report for ${formatToDDMMYYYY(reportDate)} has already been submitted.`
+      );
     }
 
     setIsSubmittingDaily(true);
@@ -287,7 +351,11 @@ export default function PartnerAadhaarPortal() {
         station_id: isManualMode ? partner.aadhaar_station_id : parsedPreview.station_id,
         cat1_new_qty: isManualMode ? (isZeroExemption ? 0 : manualCounts.cat1) : parsedPreview.cat1_new_qty,
         cat2_mbu_free_qty: isManualMode ? (isZeroExemption ? 0 : manualCounts.cat2) : parsedPreview.cat2_mbu_free_qty,
-        cat3_mbu_chargeable_qty: isManualMode ? (isZeroExemption ? 0 : manualCounts.cat3) : parsedPreview.cat3_mbu_chargeable_qty,
+        cat3_mbu_chargeable_qty: isManualMode
+          ? isZeroExemption
+            ? 0
+            : manualCounts.cat3
+          : parsedPreview.cat3_mbu_chargeable_qty,
         cat4_demographic_qty: isManualMode ? (isZeroExemption ? 0 : manualCounts.cat4) : parsedPreview.cat4_demographic_qty,
         cat5_biometric_qty: isManualMode ? (isZeroExemption ? 0 : manualCounts.cat5) : parsedPreview.cat5_biometric_qty,
         total_packets_qty: isManualMode
@@ -324,7 +392,10 @@ export default function PartnerAadhaarPortal() {
         );
         setActiveMenu("deposit");
       } else {
-        showBanner("success", `✅ Zero-Collection Daily Report for ${formatToDDMMYYYY(reportDate)} logged. No deposit required.`);
+        showBanner(
+          "success",
+          `✅ Zero-Collection Daily Report for ${formatToDDMMYYYY(reportDate)} logged. No deposit required.`
+        );
         setActiveMenu("overview");
       }
     } catch (err: any) {
@@ -405,7 +476,8 @@ export default function PartnerAadhaarPortal() {
   const handleInstantDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!slipFile) return showBanner("error", "Please upload the payment screenshot / bank slip.");
-    if (depositForm.utr.trim().length < 6) return showBanner("error", "Please enter a valid 12-digit UTR / Reference number.");
+    if (depositForm.utr.trim().length < 6)
+      return showBanner("error", "Please enter a valid 12-digit UTR / Reference number.");
     if (!confirmDepositCheck) return showBanner("error", "Please check the verification box.");
 
     setIsSubmittingDeposit(true);
@@ -437,14 +509,17 @@ export default function PartnerAadhaarPortal() {
 
       if (depErr) throw depErr;
 
-      // Mark all pending Aadhaar Daily Reports & Late Penalties as submitted
       await supabase
         .from("aadhaar_daily_reports")
         .update({ deposit_status: "Deposit Submitted", deposit_id: depRow.id })
         .eq("partner_id", partner.id)
         .eq("deposit_status", "Pending Deposit");
 
-      await supabase.from("aadhaar_penalty_logs").update({ is_settled: true }).eq("partner_id", partner.id).eq("is_settled", false);
+      await supabase
+        .from("aadhaar_penalty_logs")
+        .update({ is_settled: true })
+        .eq("partner_id", partner.id)
+        .eq("is_settled", false);
 
       showBanner("success", "✅ Aadhaar Remittance submitted to Accounts! Your closing ledger is now clear.");
       setSlipFile(null);
@@ -464,7 +539,7 @@ export default function PartnerAadhaarPortal() {
   // --- WEEKLY REPORT PARSER & RECONCILIATION ---
   useEffect(() => {
     const runWeeklyParse = async () => {
-      if (!weekCsv || !weekHtml) return;
+      if (!weekCsv || !weekHtml || !isAadhaarAuthorized) return;
       setWeeklyError("");
       setWeeklyPreview(null);
       try {
@@ -483,11 +558,11 @@ export default function PartnerAadhaarPortal() {
       }
     };
     runWeeklyParse();
-  }, [weekCsv, weekHtml, weekStart, weekEnd]);
+  }, [weekCsv, weekHtml, weekStart, weekEnd, isAadhaarAuthorized]);
 
   const handleWeeklySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!weeklyPreview || !weekCsv || !weekHtml || !confirmWeeklyCheck) return;
+    if (!weeklyPreview || !weekCsv || !weekHtml || !confirmWeeklyCheck || !isAadhaarAuthorized) return;
     setIsSubmittingWeekly(true);
     try {
       const safeOp = (partner.aadhaar_operator_id || "OP").replace(/[^a-zA-Z0-9]/g, "_");
@@ -548,7 +623,14 @@ export default function PartnerAadhaarPortal() {
   // --- EXISTING PARTNER AADHAAR UPGRADE REQUEST ---
   const handleUpgradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!upgradePdf) return showBanner("error", "Please upload your merged Aadhaar Compliance PDF (NSEIT, LMS, EA Form, Police Verification).");
+    if (upgradeForm.station_id.trim().length !== 5) {
+      return showBanner("error", "Validation Error: UIDAI Station ID must be exactly 5 digits.");
+    }
+    if (!upgradePdf)
+      return showBanner(
+        "error",
+        "Please upload your merged Aadhaar Compliance PDF (NSEIT, LMS, EA Form, Police Verification)."
+      );
     setIsSubmittingUpgrade(true);
     try {
       const path = `AADHAAR_UPGRADE_${partner.id}_${Date.now()}.pdf`;
@@ -563,10 +645,16 @@ export default function PartnerAadhaarPortal() {
           requested_station_id: upgradeForm.station_id.trim(),
           nseit_cert_no: upgradeForm.nseit_no.trim().toUpperCase(),
           compliance_pdf_url: path,
+          status: "Pending",
         },
       ]);
       if (error) throw error;
-      showBanner("success", "✅ Aadhaar Center Upgrade Request submitted! Admin will review and activate your Station ID.");
+      showBanner(
+        "success",
+        "✅ Aadhaar Center Upgrade Request submitted! Your dashboard will unlock automatically once Corporate Admin maps your Aadhaar Center and approves your Station ID."
+      );
+      setUpgradePdf(null);
+      await initializeAadhaarPortal();
     } catch (err: any) {
       showBanner("error", "Upgrade Error: " + err.message);
     } finally {
@@ -584,7 +672,7 @@ export default function PartnerAadhaarPortal() {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white font-black uppercase tracking-widest text-xs animate-pulse">
-        Loading Aadhaar Seva Kendra Engine...
+        Verifying Aadhaar Seva Kendra Clearance...
       </div>
     );
   }
@@ -622,20 +710,26 @@ export default function PartnerAadhaarPortal() {
   const totalPayableNow = pendingReportCash + unpaidPenaltyTotal;
 
   const safeDepositAmount = (parseFloat(depositForm.amount) || 0).toFixed(2);
-  const upiDeepLink = `upi://pay?pa=${centerUpi}&pn=${encodeURIComponent("Fast Ark Aadhaar")}&am=${safeDepositAmount}&cu=INR&tn=${encodeURIComponent(
+  const upiDeepLink = `upi://pay?pa=${centerUpi}&pn=${encodeURIComponent(
+    "Fast Ark Aadhaar"
+  )}&am=${safeDepositAmount}&cu=INR&tn=${encodeURIComponent(
     `Aadhaar_${partner?.aadhaar_station_id || partner?.center_id}`
   )}`;
 
   const isPdfSlip =
     slipFile?.type === "application/pdf" || (slipFile?.name || "").toLowerCase().endsWith(".pdf");
 
+  // Force menu to "upgrade" if not authorized
+  const effectiveMenu: AadhaarMenuTab = isAadhaarAuthorized ? activeMenu : "upgrade";
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row font-sans">
       {/* SIDEBAR + MOBILE TOP/BOTTOM NAVIGATION */}
       <AadhaarSidebar
-        activeMenu={activeMenu}
+        activeMenu={effectiveMenu}
         setActiveMenu={setActiveMenu}
         partner={partner}
+        isAadhaarAuthorized={isAadhaarAuthorized}
         pendingReportCash={pendingReportCash}
         unpaidPenaltyTotal={unpaidPenaltyTotal}
         overdueDaysCount={penalties.length}
@@ -665,15 +759,16 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* LATE PAYMENT PENALTY BANNER (₹100/DAY) */}
-        {unpaidPenaltyTotal > 0 && (
+        {/* LATE PAYMENT PENALTY BANNER (ONLY FOR AUTHORIZED OPERATORS) */}
+        {isAadhaarAuthorized && unpaidPenaltyTotal > 0 && (
           <div className="bg-red-600 text-white p-4 rounded-xl shadow-lg border-2 border-red-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-pulse">
             <div>
               <h3 className="font-black text-base uppercase tracking-widest flex items-center gap-2">
                 <span>🚨</span> Late Payment Penalty Active (₹100 / Day)
               </h3>
               <p className="text-xs font-bold text-red-100 mt-1">
-                You have {penalties.length} overdue day(s) of unsettled Aadhaar collections. ₹{unpaidPenaltyTotal} has been added to your closing ledger.
+                You have {penalties.length} overdue day(s) of unsettled Aadhaar collections. ₹{unpaidPenaltyTotal} has
+                been added to your closing ledger.
               </p>
             </div>
             <button
@@ -685,100 +780,104 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* GLOBAL 7-PRESET DATE DROPDOWN + FILE MODE FILTER & EXPORT BAR (DD/MM/YYYY) */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full xl:w-auto">
-            <div>
-              <label className="block text-[9px] font-black uppercase text-indigo-600 tracking-widest mb-1">
-                1. Date Preset
-              </label>
-              <select
-                value={datePreset}
-                onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
-                className="w-full border-2 border-indigo-200 p-2 rounded-lg text-xs font-black text-indigo-950 bg-indigo-50 outline-none focus:border-indigo-600"
+        {/* GLOBAL 7-PRESET DATE DROPDOWN + FILE MODE FILTER (VISIBLE ONLY WHEN AUTHORIZED) */}
+        {isAadhaarAuthorized && (
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full xl:w-auto">
+              <div>
+                <label className="block text-[9px] font-black uppercase text-indigo-600 tracking-widest mb-1">
+                  1. Date Preset
+                </label>
+                <select
+                  value={datePreset}
+                  onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
+                  className="w-full border-2 border-indigo-200 p-2 rounded-lg text-xs font-black text-indigo-950 bg-indigo-50 outline-none focus:border-indigo-600"
+                >
+                  <option value="today">Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
+                  <option value="yesterday">
+                    Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                  </option>
+                  <option value="current_week">Current Week</option>
+                  <option value="current_month">Current Month</option>
+                  <option value="previous_month">Previous Month</option>
+                  <option value="all">All Time</option>
+                  <option value="custom">Custom Filter</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
+                  From ({formatToDDMMYYYY(filterFromDate)})
+                </label>
+                <input
+                  type="date"
+                  value={filterFromDate}
+                  onChange={(e) => {
+                    setDatePreset("custom");
+                    setFilterFromDate(e.target.value);
+                  }}
+                  className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
+                  To ({formatToDDMMYYYY(filterToDate)})
+                </label>
+                <input
+                  type="date"
+                  value={filterToDate}
+                  onChange={(e) => {
+                    setDatePreset("custom");
+                    setFilterToDate(e.target.value);
+                  }}
+                  className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
+                  Report File Filter
+                </label>
+                <select
+                  value={fileModeFilter}
+                  onChange={(e) => setFileModeFilter(e.target.value as any)}
+                  className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-black text-slate-800 bg-slate-50 outline-none focus:border-blue-600"
+                >
+                  <option value="ALL">📋 Both (With &amp; Without Files)</option>
+                  <option value="WITH_FILES">✅ With CSV &amp; HTML Files Only</option>
+                  <option value="WITHOUT_FILES">⚠️ Without Files (Manual / Exemption)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 w-full xl:w-auto">
+              <button
+                onClick={() =>
+                  downloadAadhaarPDFReport(
+                    filteredHistory,
+                    fileModeFilter,
+                    `${partner?.partner_name} (${partner?.aadhaar_station_id || "N/A"})`
+                  )
+                }
+                className="flex-1 xl:flex-none bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
               >
-                <option value="today">Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
-                <option value="yesterday">Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})</option>
-                <option value="current_week">Current Week</option>
-                <option value="current_month">Current Month</option>
-                <option value="previous_month">Previous Month</option>
-                <option value="all">All Time</option>
-                <option value="custom">Custom Filter</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
-                From ({formatToDDMMYYYY(filterFromDate)})
-              </label>
-              <input
-                type="date"
-                value={filterFromDate}
-                onChange={(e) => {
-                  setDatePreset("custom");
-                  setFilterFromDate(e.target.value);
-                }}
-                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
-                To ({formatToDDMMYYYY(filterToDate)})
-              </label>
-              <input
-                type="date"
-                value={filterToDate}
-                onChange={(e) => {
-                  setDatePreset("custom");
-                  setFilterToDate(e.target.value);
-                }}
-                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-blue-600"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1">
-                Report File Filter
-              </label>
-              <select
-                value={fileModeFilter}
-                onChange={(e) => setFileModeFilter(e.target.value as any)}
-                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-black text-slate-800 bg-slate-50 outline-none focus:border-blue-600"
+                📄 Download PDF
+              </button>
+              <button
+                onClick={() => downloadAadhaarCSVReport(filteredHistory, fileModeFilter)}
+                className="flex-1 xl:flex-none bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
               >
-                <option value="ALL">📋 Both (With &amp; Without Files)</option>
-                <option value="WITH_FILES">✅ With CSV &amp; HTML Files Only</option>
-                <option value="WITHOUT_FILES">⚠️ Without Files (Manual / Exemption)</option>
-              </select>
+                📊 Download CSV
+              </button>
             </div>
           </div>
-
-          <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-            <button
-              onClick={() =>
-                downloadAadhaarPDFReport(
-                  filteredHistory,
-                  fileModeFilter,
-                  `${partner?.partner_name} (${partner?.aadhaar_station_id || "N/A"})`
-                )
-              }
-              className="flex-1 xl:flex-none bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
-            >
-              📄 Download PDF
-            </button>
-            <button
-              onClick={() => downloadAadhaarCSVReport(filteredHistory, fileModeFilter)}
-              className="flex-1 xl:flex-none bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
-            >
-              📊 Download CSV
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* ===================================================================== */}
-        {/* VIEW 1: DASHBOARD & LIVE 5-CATEGORY COUNTS                            */}
+        {/* VIEW 1: DASHBOARD & LIVE 5-CATEGORY COUNTS (AUTHORIZED ONLY)          */}
         {/* ===================================================================== */}
-        {activeMenu === "overview" && (
+        {isAadhaarAuthorized && effectiveMenu === "overview" && (
           <div className="space-y-6 animate-in fade-in">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-emerald-500">
@@ -794,17 +893,23 @@ export default function PartnerAadhaarPortal() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-amber-500">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">3. MBU Chargeable</p>
                 <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat3}</p>
-                <p className="text-[10px] font-bold text-amber-600 mt-1">Rate: ₹{activeTariff?.mbu_chargeable_fee || 125}</p>
+                <p className="text-[10px] font-bold text-amber-600 mt-1">
+                  Rate: ₹{activeTariff?.mbu_chargeable_fee || 125}
+                </p>
               </div>
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-blue-500">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">4. Demographic</p>
                 <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat4}</p>
-                <p className="text-[10px] font-bold text-blue-600 mt-1">Rate: ₹{activeTariff?.demographic_fee || 75}</p>
+                <p className="text-[10px] font-bold text-blue-600 mt-1">
+                  Rate: ₹{activeTariff?.demographic_fee || 75}
+                </p>
               </div>
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-purple-600 col-span-2 md:col-span-1">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">5. Biometric Update</p>
                 <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat5}</p>
-                <p className="text-[10px] font-bold text-purple-600 mt-1">Rate: ₹{activeTariff?.biometric_fee || 125}</p>
+                <p className="text-[10px] font-bold text-purple-600 mt-1">
+                  Rate: ₹{activeTariff?.biometric_fee || 125}
+                </p>
               </div>
             </div>
 
@@ -839,9 +944,9 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 2: DAILY REPORT UPLOAD (CSV + HTML OR MANUAL FALLBACK)           */}
+        {/* VIEW 2: DAILY REPORT UPLOAD (AUTHORIZED ONLY)                         */}
         {/* ===================================================================== */}
-        {activeMenu === "daily" && (
+        {isAadhaarAuthorized && effectiveMenu === "daily" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-4 gap-4">
               <div>
@@ -868,7 +973,6 @@ export default function PartnerAadhaarPortal() {
             </div>
 
             <form onSubmit={handleDailySubmit} className="space-y-6">
-              {/* STEP 1: MANDATORY DATE PICKER WITH DD/MM/YYYY DISPLAY */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <label className="block text-[10px] font-black uppercase text-slate-600 tracking-widest mb-1">
@@ -899,7 +1003,6 @@ export default function PartnerAadhaarPortal() {
                 </div>
               </div>
 
-              {/* STEP 2A: DUAL FILE DROPZONE (MOBILE MIME-SAFE) */}
               {!isManualMode ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl p-5 text-center relative">
@@ -927,11 +1030,12 @@ export default function PartnerAadhaarPortal() {
                     <p className="font-black text-slate-800 text-sm">
                       {htmlFile ? `✅ ${htmlFile.name}` : "Upload UIDAI Daily .HTML File *"}
                     </p>
-                    <p className="text-[10px] font-bold text-slate-500 mt-1">Verifies Station ID, Operator ID &amp; Date</p>
+                    <p className="text-[10px] font-bold text-slate-500 mt-1">
+                      Verifies Station ID, Operator ID &amp; Date
+                    </p>
                   </div>
                 </div>
               ) : (
-                /* STEP 2B: MANUAL / EXEMPTION FALLBACK */
                 <div className="bg-amber-50 p-5 rounded-xl border border-amber-200 space-y-4">
                   <div>
                     <label className="block text-[10px] font-black uppercase text-amber-800 tracking-widest mb-1">
@@ -950,9 +1054,7 @@ export default function PartnerAadhaarPortal() {
                       <option value="OPERATOR_LEAVE">2. Operator on Leave / Absent (0 Enrolments)</option>
                       <option value="SERVER_L1_DOWN">3. UIDAI Server / L1 Device Down (0 Enrolments)</option>
                       <option value="POWER_NETWORK_OUTAGE">4. Electricity / Network Outage (0 Enrolments)</option>
-                      <option value="ECMP_CRASH_MANUAL">
-                        5. ECMP Client Crash — Enter Packet Counts Manually
-                      </option>
+                      <option value="ECMP_CRASH_MANUAL">5. ECMP Client Crash — Enter Packet Counts Manually</option>
                     </select>
                   </div>
 
@@ -1019,14 +1121,12 @@ export default function PartnerAadhaarPortal() {
                 </div>
               )}
 
-              {/* VALIDATION ERROR ALERT */}
               {parseError && (
                 <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-red-800 text-xs font-black">
                   ❌ VALIDATION BLOCKED: {parseError}
                 </div>
               )}
 
-              {/* AUTO-FETCHED 5-CATEGORY PREVIEW & CONFIRMATION CHECKBOX */}
               {(parsedPreview || (isManualMode && exemptionReason)) && (
                 <div className="bg-slate-900 text-white p-5 rounded-xl space-y-4">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -1055,7 +1155,11 @@ export default function PartnerAadhaarPortal() {
                     <div className="bg-slate-800 p-3 rounded-lg">
                       <p className="text-[9px] text-amber-400 uppercase font-bold">3. MBU Paid</p>
                       <p className="text-xl font-black text-amber-400">
-                        {isManualMode ? (isZeroExemption ? 0 : manualCounts.cat3) : parsedPreview.cat3_mbu_chargeable_qty}
+                        {isManualMode
+                          ? isZeroExemption
+                            ? 0
+                            : manualCounts.cat3
+                          : parsedPreview.cat3_mbu_chargeable_qty}
                       </p>
                     </div>
                     <div className="bg-slate-800 p-3 rounded-lg">
@@ -1103,9 +1207,7 @@ export default function PartnerAadhaarPortal() {
                     disabled={isSubmittingDaily || !confirmDailyCheck}
                     className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black uppercase tracking-widest text-sm rounded-xl shadow-lg disabled:opacity-40 transition"
                   >
-                    {isSubmittingDaily
-                      ? "Committing Report..."
-                      : "Submit Daily Report & Unlock Deposit QR \u2192"}
+                    {isSubmittingDaily ? "Committing Report..." : "Submit Daily Report & Unlock Deposit QR \u2192"}
                   </button>
                 </div>
               )}
@@ -1114,9 +1216,9 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 3: INSTANT DEPOSIT (QR PAY + OCR SUMMARY + DOCUMENT VIEWER)      */}
+        {/* VIEW 3: INSTANT DEPOSIT (AUTHORIZED ONLY)                             */}
         {/* ===================================================================== */}
-        {activeMenu === "deposit" && (
+        {isAadhaarAuthorized && effectiveMenu === "deposit" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in items-start">
             <div className="space-y-6">
               <div className="bg-slate-900 text-white rounded-2xl p-6 flex flex-col items-center justify-center text-center border border-slate-800 shadow-xl">
@@ -1149,7 +1251,6 @@ export default function PartnerAadhaarPortal() {
                 )}
               </div>
 
-              {/* LIVE SLIP / PDF DOCUMENT VIEWER */}
               {slipPreviewUrl && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="p-3.5 bg-slate-900 text-white flex justify-between items-center">
@@ -1221,7 +1322,6 @@ export default function PartnerAadhaarPortal() {
                   )}
                 </div>
 
-                {/* OCR EXTRACTION SUMMARY CARD */}
                 {!isScanningSlip && slipFile && ocrSummary.platform && (
                   <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2 border border-slate-800">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -1241,9 +1341,7 @@ export default function PartnerAadhaarPortal() {
                       </div>
                       <div className="bg-slate-800 p-2 rounded">
                         <p className="text-[9px] text-slate-400 uppercase">Scanned UTR</p>
-                        <p className="font-bold text-slate-200 truncate">
-                          {ocrSummary.utr || "Verify Manually"}
-                        </p>
+                        <p className="font-bold text-slate-200 truncate">{ocrSummary.utr || "Verify Manually"}</p>
                       </div>
                     </div>
                   </div>
@@ -1305,9 +1403,9 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 4: WEEKLY REPORT RECONCILIATION                                  */}
+        {/* VIEW 4: WEEKLY REPORT RECONCILIATION (AUTHORIZED ONLY)                */}
         {/* ===================================================================== */}
-        {activeMenu === "weekly" && (
+        {isAadhaarAuthorized && effectiveMenu === "weekly" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
             <div>
               <h2 className="text-xl font-black text-slate-900">Weekly UIDAI Report Reconciliation</h2>
@@ -1451,9 +1549,9 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 5: REPORTS & DOWNLOADS (WITH FILES / WITHOUT FILES / PDF & CSV)  */}
+        {/* VIEW 5: REPORTS & DOWNLOADS (AUTHORIZED ONLY)                         */}
         {/* ===================================================================== */}
-        {activeMenu === "history" && (
+        {isAadhaarAuthorized && effectiveMenu === "history" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in">
             <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
               <h3 className="font-black text-xs uppercase tracking-widest">
@@ -1539,72 +1637,207 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 6: EXISTING PARTNER UPGRADE & CREDENTIALS                        */}
+        {/* VIEW 6: CREDENTIALS & CORPORATE APPROVAL WALL                         */}
         {/* ===================================================================== */}
-        {activeMenu === "upgrade" && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-2xl animate-in fade-in">
-            <h2 className="text-xl font-black text-slate-900 mb-1">Aadhaar Operator Credentials &amp; Upgrade</h2>
-            <p className="text-xs font-bold text-slate-500 mb-6">
-              Existing partners can submit their NSEIT and Station ID details here to activate the Aadhaar role.
-            </p>
-            <form onSubmit={handleUpgradeSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                  UIDAI Operator ID (e.g., MYS_FAAFREEN) *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={upgradeForm.operator_id}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, operator_id: e.target.value })}
-                  className="w-full border-2 p-3 rounded-lg font-bold text-sm uppercase"
-                />
+        {effectiveMenu === "upgrade" && (
+          <div className="space-y-6 max-w-3xl animate-in fade-in">
+            {/* CORPORATE CLEARANCE CHECKLIST CARD */}
+            <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-4">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 block">
+                    Corporate Security Gate
+                  </span>
+                  <h2 className="text-xl font-black mt-0.5">
+                    {isAadhaarAuthorized
+                      ? "✅ Aadhaar Seva Kendra Access Active"
+                      : "🔒 Aadhaar Portal Locked — Admin Approval Required"}
+                  </h2>
+                </div>
+                <span
+                  className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                    isAadhaarAuthorized
+                      ? "bg-emerald-500 text-slate-950"
+                      : "bg-red-500/20 text-red-300 border border-red-500/40"
+                  }`}
+                >
+                  {isAadhaarAuthorized ? "Authorized" : "Approval Pending"}
+                </span>
               </div>
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                  UIDAI Station ID (5 Digits, e.g., 21505) *
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={5}
-                  value={upgradeForm.station_id}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, station_id: e.target.value.replace(/\D/g, "") })}
-                  className="w-full border-2 p-3 rounded-lg font-bold text-sm"
-                />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
+                  <p className="text-[9px] font-black uppercase text-slate-400">1. Assigned Center Status</p>
+                  <p className="font-black text-white mt-1">
+                    [{partner?.locations?.center_code || "NO-CODE"}] {partner?.locations?.center_name || "Unassigned"}
+                  </p>
+                  <p
+                    className={`text-[10px] font-black mt-1 ${
+                      partner?.locations?.role_aadhaar ? "text-emerald-400" : "text-amber-400"
+                    }`}
+                  >
+                    {partner?.locations?.role_aadhaar
+                      ? "✅ Mapped as Aadhaar Center"
+                      : "⏳ Awaiting Admin Center Mapping"}
+                  </p>
+                </div>
+
+                <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
+                  <p className="text-[9px] font-black uppercase text-slate-400">2. Operator Role Binding</p>
+                  <p className="font-black text-white mt-1">
+                    {partner?.role_aadhaar ? "Aadhaar Role Bound" : "Not Bound Yet"}
+                  </p>
+                  <p
+                    className={`text-[10px] font-black mt-1 ${
+                      partner?.role_aadhaar ? "text-emerald-400" : "text-red-400"
+                    }`}
+                  >
+                    {partner?.role_aadhaar ? "✅ Approved by Admin" : "🔒 Requires Admin Approval"}
+                  </p>
+                </div>
+
+                <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
+                  <p className="text-[9px] font-black uppercase text-slate-400">3. UIDAI Operator &amp; Station ID</p>
+                  <p className="font-black text-white mt-1">
+                    {partner?.aadhaar_operator_id || "NO-ID"} / {partner?.aadhaar_station_id || "NO-STN"}
+                  </p>
+                  <p
+                    className={`text-[10px] font-black mt-1 ${
+                      partner?.aadhaar_operator_id && partner?.aadhaar_station_id
+                        ? "text-emerald-400"
+                        : "text-amber-400"
+                    }`}
+                  >
+                    {partner?.aadhaar_operator_id && partner?.aadhaar_station_id
+                      ? "✅ Bound to Profile"
+                      : "⏳ Submit Credentials Below"}
+                  </p>
+                </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                  NSEIT Certificate Number *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={upgradeForm.nseit_no}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, nseit_no: e.target.value })}
-                  className="w-full border-2 p-3 rounded-lg font-bold text-sm uppercase"
-                />
+            </div>
+
+            {/* IF UPGRADE REQUEST IS CURRENTLY PENDING ADMIN APPROVAL */}
+            {!isAadhaarAuthorized && latestUpgradeReq?.status === "Pending" ? (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 shadow-sm space-y-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl">⏳</span>
+                  <div>
+                    <h3 className="font-black text-amber-950 text-lg uppercase tracking-wide">
+                      Upgrade Request Under Corporate Review
+                    </h3>
+                    <p className="text-xs font-bold text-amber-800 mt-0.5">
+                      Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. Your dashboard and file upload menus
+                      will unlock automatically as soon as the Admin approves your request and maps your Aadhaar Center.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-4 rounded-xl border border-amber-200 text-xs">
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">Requested Operator ID</span>
+                    <span className="font-black text-slate-900 text-sm">
+                      {latestUpgradeReq.requested_operator_id}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">Requested Station ID</span>
+                    <span className="font-black text-amber-700 text-sm">
+                      {latestUpgradeReq.requested_station_id}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">NSEIT Certificate No</span>
+                    <span className="font-black text-slate-900 text-sm">{latestUpgradeReq.nseit_cert_no}</span>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                  Merged Compliance PDF (NSEIT, LMS, Police Verification, EA Form) *
-                </label>
-                <input
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  required
-                  onChange={(e) => setUpgradePdf(e.target.files?.[0] || null)}
-                  className="w-full border-2 border-dashed p-3 rounded-lg text-xs font-bold bg-slate-50"
-                />
+            ) : (
+              /* UPGRADE REQUEST FORM (FOR NEW REQUESTS, REJECTED REQUESTS, OR CREDENTIAL UPDATES) */
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                {latestUpgradeReq?.status === "Rejected" && (
+                  <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
+                    <p className="text-[10px] font-black uppercase text-red-700 tracking-widest">
+                      ❌ Previous Request Declined by Admin
+                    </p>
+                    <p className="text-xs font-bold text-red-900 mt-1">
+                      Reason: {latestUpgradeReq.reject_reason || "Please verify your credentials and re-upload."}
+                    </p>
+                  </div>
+                )}
+
+                <h2 className="text-xl font-black text-slate-900 mb-1">
+                  {isAadhaarAuthorized
+                    ? "Request Station ID / Operator ID Update"
+                    : "Submit Aadhaar Operator Credentials for Admin Approval"}
+                </h2>
+                <p className="text-xs font-bold text-slate-500 mb-6">
+                  {isAadhaarAuthorized
+                    ? "Need to update your UIDAI Station ID or Operator ID? Submit a verified request below."
+                    : "Existing partners must submit their UIDAI Operator ID, 5-digit Station ID, and NSEIT Compliance PDF. You will gain access to upload reports only after Admin approval."}
+                </p>
+
+                <form onSubmit={handleUpgradeSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      UIDAI Operator ID (e.g., MYS_FAAFREEN) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={upgradeForm.operator_id}
+                      onChange={(e) => setUpgradeForm({ ...upgradeForm, operator_id: e.target.value.toUpperCase() })}
+                      className="w-full border-2 p-3 rounded-lg font-bold text-sm uppercase outline-none focus:border-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      UIDAI Station ID (5 Digits, e.g., 21505) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={5}
+                      value={upgradeForm.station_id}
+                      onChange={(e) =>
+                        setUpgradeForm({ ...upgradeForm, station_id: e.target.value.replace(/\D/g, "") })
+                      }
+                      className="w-full border-2 p-3 rounded-lg font-bold text-sm outline-none focus:border-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      NSEIT Certificate Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={upgradeForm.nseit_no}
+                      onChange={(e) => setUpgradeForm({ ...upgradeForm, nseit_no: e.target.value.toUpperCase() })}
+                      className="w-full border-2 p-3 rounded-lg font-bold text-sm uppercase outline-none focus:border-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      Merged Compliance PDF (NSEIT, LMS, Police Verification, EA Form) *
+                    </label>
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      required
+                      onChange={(e) => setUpgradePdf(e.target.files?.[0] || null)}
+                      className="w-full border-2 border-dashed p-3 rounded-lg text-xs font-bold bg-slate-50 cursor-pointer"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingUpgrade}
+                    className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow transition"
+                  >
+                    {isSubmittingUpgrade ? "Submitting..." : "Submit Aadhaar Credentials for Approval"}
+                  </button>
+                </form>
               </div>
-              <button
-                type="submit"
-                disabled={isSubmittingUpgrade}
-                className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow"
-              >
-                {isSubmittingUpgrade ? "Submitting..." : "Submit Aadhaar Upgrade Request"}
-              </button>
-            </form>
+            )}
           </div>
         )}
       </main>

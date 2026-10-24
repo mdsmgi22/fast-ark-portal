@@ -4,7 +4,10 @@ import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import AdminOperatorMappingModule from "../../components/aadhaar/AdminOperatorMappingModule";
 import {
+  DatePresetMode,
+  getDateRangeFromPreset,
   formatToDDMMYYYY,
   getISTDateString,
   downloadAadhaarCSVReport,
@@ -18,60 +21,6 @@ type AdminAadhaarMenu =
   | "penalties"
   | "operators"
   | "tariff_master";
-
-type DatePresetMode =
-  | "today"
-  | "yesterday"
-  | "current_week"
-  | "current_month"
-  | "previous_month"
-  | "all"
-  | "custom";
-
-// Calculates IST YYYY-MM-DD start and end dates for the 7-Option Date Dropdown
-const getDateRangeFromPreset = (preset: DatePresetMode): { start: string; end: string } => {
-  const now = new Date();
-  const istNow = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
-
-  const formatYMD = (d: Date) => {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
-
-  const todayStr = formatYMD(istNow);
-
-  if (preset === "today") {
-    return { start: todayStr, end: todayStr };
-  }
-  if (preset === "yesterday") {
-    const yest = new Date(istNow);
-    yest.setDate(yest.getDate() - 1);
-    const yStr = formatYMD(yest);
-    return { start: yStr, end: yStr };
-  }
-  if (preset === "current_week") {
-    const startOfWeek = new Date(istNow);
-    const day = startOfWeek.getDay(); // 0 (Sun) to 6 (Sat)
-    const diffToMonday = day === 0 ? -6 : 1 - day;
-    startOfWeek.setDate(startOfWeek.getDate() + diffToMonday);
-    return { start: formatYMD(startOfWeek), end: todayStr };
-  }
-  if (preset === "current_month") {
-    const firstDay = new Date(istNow.getFullYear(), istNow.getMonth(), 1);
-    return { start: formatYMD(firstDay), end: todayStr };
-  }
-  if (preset === "previous_month") {
-    const firstDayPrev = new Date(istNow.getFullYear(), istNow.getMonth() - 1, 1);
-    const lastDayPrev = new Date(istNow.getFullYear(), istNow.getMonth(), 0);
-    return { start: formatYMD(firstDayPrev), end: formatYMD(lastDayPrev) };
-  }
-  if (preset === "all") {
-    return { start: "2020-01-01", end: todayStr };
-  }
-  return { start: todayStr, end: todayStr };
-};
 
 export default function AdminAadhaarCommandHub() {
   const router = useRouter();
@@ -97,20 +46,19 @@ export default function AdminAadhaarCommandHub() {
   const [fromDate, setFromDate] = useState<string>(() => getDateRangeFromPreset("current_month").start);
   const [toDate, setToDate] = useState<string>(() => getDateRangeFromPreset("current_month").end);
 
-  // 4-Tier Cascading Geo & Operator Filters + File Mode
+  // STRICT AADHAAR-MAPPED 4-TIER CASCADING FILTERS + FILE MODE
   const [fState, setFState] = useState<string>("ALL");
   const [fHq, setFHq] = useState<string>("ALL");
   const [fCenter, setFCenter] = useState<string>("ALL");
   const [fPartner, setFPartner] = useState<string>("ALL");
   const [fFileMode, setFFileMode] = useState<"ALL" | "WITH_FILES" | "WITHOUT_FILES">("ALL");
 
-  // Direct Operator Mapping State (Menu 5)
-  const [mappingForm, setMappingForm] = useState({
-    partner_id: "",
-    operator_id: "",
-    station_id: "",
-  });
-  const [isSavingMapping, setIsSavingMapping] = useState(false);
+  // Force-Edit / Audit Modal State for Daily Reports (Menu 2)
+  const [editingReport, setEditingReport] = useState<any | null>(null);
+  const [manualCashOverride, setManualCashOverride] = useState(false);
+  const [auditReasonCategory, setAuditReasonCategory] = useState("");
+  const [auditOtherText, setAuditOtherText] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // UIDAI Tariff Master State (Menu 6)
   const [tariffForm, setTariffForm] = useState({
@@ -150,7 +98,6 @@ export default function AdminAadhaarCommandHub() {
     return () => clearInterval(timer);
   }, []);
 
-  // Handle Date Preset Dropdown Change
   const handlePresetChange = (mode: DatePresetMode) => {
     setDatePreset(mode);
     if (mode !== "custom") {
@@ -183,25 +130,25 @@ export default function AdminAadhaarCommandHub() {
         supabase.from("locations").select("*").order("center_name"),
         supabase
           .from("active_partners")
-          .select("*, locations(id, center_name, center_code, state, dist, parent_master_id)")
+          .select("*, locations(id, center_name, center_code, state, dist, parent_master_id, role_aadhaar)")
           .order("partner_name"),
         supabase
           .from("aadhaar_daily_reports")
-          .select("*, active_partners(partner_name, locations(id, center_name, state, parent_master_id))")
+          .select("*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id, role_aadhaar))")
           .gte("report_date", fromDate)
           .lte("report_date", toDate)
           .order("report_date", { ascending: false }),
         supabase
           .from("aadhaar_weekly_reports")
-          .select("*, active_partners(partner_name, locations(id, center_name, state, parent_master_id))")
+          .select("*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id, role_aadhaar))")
           .order("end_date", { ascending: false }),
         supabase
           .from("aadhaar_penalty_logs")
-          .select("*, active_partners(partner_name, aadhaar_operator_id, aadhaar_station_id, locations(id, center_name, state, parent_master_id))")
+          .select("*, active_partners(partner_name, aadhaar_operator_id, aadhaar_station_id, locations(id, center_name, center_code, state, parent_master_id, role_aadhaar))")
           .order("penalty_for_date", { ascending: false }),
         supabase
           .from("partner_upgrade_requests")
-          .select("*, active_partners(partner_name, email, mobile, locations(center_name, state))")
+          .select("*, active_partners(partner_name, email, mobile, center_id, locations(center_name, center_code, state, role_aadhaar))")
           .order("created_at", { ascending: false }),
         supabase.from("aadhaar_tariff_history").select("*").order("effective_from", { ascending: false }),
       ]);
@@ -221,46 +168,55 @@ export default function AdminAadhaarCommandHub() {
   };
 
   // =========================================================================
-  // 4-TIER CASCADING FILTER ENGINE (STATE -> MASTER HQ -> LOCATION -> OPERATOR)
+  // STRICT AADHAAR-CENTER-ONLY 4-TIER CASCADING FILTER ENGINE
+  // Only populates States, Master HQs, Centers & Operators where Aadhaar is mapped!
   // =========================================================================
-  const uniqueStates = useMemo(
-    () => Array.from(new Set(locations.map((l) => l.state).filter(Boolean))).sort(),
+  const aadhaarEnabledCenters = useMemo(
+    () => locations.filter((l) => !l.is_master_node && l.role_aadhaar === true),
     [locations]
   );
 
-  const hqOptions = useMemo(
-    () =>
-      locations.filter(
-        (l) => l.is_master_node && (fState === "ALL" || l.state === fState)
-      ),
-    [locations, fState]
+  const uniqueStates = useMemo(
+    () => Array.from(new Set(aadhaarEnabledCenters.map((l) => l.state).filter(Boolean))).sort(),
+    [aadhaarEnabledCenters]
   );
+
+  const hqOptions = useMemo(() => {
+    const validHqIds = new Set(
+      aadhaarEnabledCenters
+        .filter((c) => fState === "ALL" || c.state === fState)
+        .map((c) => c.parent_master_id)
+        .filter(Boolean)
+    );
+    return locations.filter((l) => l.is_master_node && validHqIds.has(l.id));
+  }, [locations, aadhaarEnabledCenters, fState]);
 
   const centerOptions = useMemo(
     () =>
-      locations.filter(
+      aadhaarEnabledCenters.filter(
         (l) =>
-          !l.is_master_node &&
           (fState === "ALL" || l.state === fState) &&
           (fHq === "ALL" || l.parent_master_id?.toString() === fHq)
       ),
-    [locations, fState, fHq]
+    [aadhaarEnabledCenters, fState, fHq]
   );
 
   const operatorOptions = useMemo(
     () =>
       partners.filter((p) => {
+        if (!p.role_aadhaar || !p.aadhaar_operator_id || !p.aadhaar_station_id) return false;
         const loc = p.locations;
-        if (!loc) return false;
+        if (!loc || !loc.role_aadhaar) return false;
         if (fState !== "ALL" && loc.state !== fState) return false;
         if (fHq !== "ALL" && loc.parent_master_id?.toString() !== fHq) return false;
         if (fCenter !== "ALL" && loc.id?.toString() !== fCenter) return false;
-        return p.role_aadhaar || (p.role || "").toUpperCase().includes("AADHAAR");
+        return true;
       }),
     [partners, fState, fHq, fCenter]
   );
 
   const matchesCascade = (partnerId: string, locObj: any) => {
+    if (!locObj?.role_aadhaar) return false;
     if (fState !== "ALL" && locObj?.state !== fState) return false;
     if (fHq !== "ALL" && locObj?.parent_master_id?.toString() !== fHq) return false;
     if (fCenter !== "ALL" && locObj?.id?.toString() !== fCenter) return false;
@@ -286,7 +242,6 @@ export default function AdminAadhaarCommandHub() {
     return penaltyLogs.filter((p) => matchesCascade(p.partner_id, p.active_partners?.locations));
   }, [penaltyLogs, fState, fHq, fCenter, fPartner]);
 
-  // Identify Aadhaar Operators who have NOT uploaded a report for ToDate
   const missingTodayOperators = useMemo(() => {
     const submittedPartnerIds = new Set(
       dailyReports.filter((r) => r.report_date === toDate).map((r) => r.partner_id)
@@ -317,7 +272,7 @@ export default function AdminAadhaarCommandHub() {
   }, [filteredDailyReports]);
 
   // =========================================================================
-  // ACTIONS: RAW FILE DOWNLOAD, OPERATOR FLIP, TARIFF MASTER
+  // ACTIONS: RAW FILE DOWNLOAD, DAILY REPORT FORCE-EDIT & TARIFF MASTER
   // =========================================================================
   const handleDownloadVaultFile = async (path: string | null, bucket = "aadhaar-reports") => {
     if (!path) return alert("No file attached (Manual / Exemption record).");
@@ -326,97 +281,131 @@ export default function AdminAadhaarCommandHub() {
     window.open(data.signedUrl, "_blank");
   };
 
-  const handleDirectOperatorMap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mappingForm.partner_id || !mappingForm.operator_id || !mappingForm.station_id) {
-      return alert("Please select a Partner and enter both Operator ID and Station ID.");
-    }
-    setIsSavingMapping(true);
-    try {
-      const targetPartner = partners.find((p) => p.id === mappingForm.partner_id);
-      const { error } = await supabase
-        .from("active_partners")
-        .update({
-          role_aadhaar: true,
-          aadhaar_operator_id: mappingForm.operator_id.trim().toUpperCase(),
-          aadhaar_station_id: mappingForm.station_id.trim(),
-        })
-        .eq("id", mappingForm.partner_id);
-
-      if (error) throw error;
-
-      // Also enable role_aadhaar on their mapped location
-      if (targetPartner?.center_id) {
-        await supabase.from("locations").update({ role_aadhaar: true }).eq("id", targetPartner.center_id);
+  const getTariffForDate = (reportDate: string) => {
+    const matched = tariffHistory.find(
+      (t) => t.effective_from <= reportDate && (!t.effective_to || t.effective_to >= reportDate)
+    );
+    return (
+      matched || {
+        mbu_chargeable_fee: 125,
+        demographic_fee: 75,
+        biometric_fee: 125,
+        gst_percent: 18,
       }
+    );
+  };
+
+  const openReportEditModal = (r: any) => {
+    setEditingReport({
+      ...r,
+      cat1_new_qty: Number(r.cat1_new_qty || 0),
+      cat2_mbu_free_qty: Number(r.cat2_mbu_free_qty || 0),
+      cat3_mbu_chargeable_qty: Number(r.cat3_mbu_chargeable_qty || 0),
+      cat4_demographic_qty: Number(r.cat4_demographic_qty || 0),
+      cat5_biometric_qty: Number(r.cat5_biometric_qty || 0),
+      completed_qty: Number(r.completed_qty || 0),
+      inprocess_qty: Number(r.inprocess_qty || 0),
+      rejected_qty: Number(r.rejected_qty || 0),
+      total_cash_collected: Number(r.total_cash_collected || 0),
+      deposit_status: r.deposit_status || "Pending Deposit",
+    });
+    setManualCashOverride(false);
+    setAuditReasonCategory("");
+    setAuditOtherText("");
+  };
+
+  const handleEditCategoryQty = (field: string, val: string) => {
+    const num = Math.max(0, parseInt(val, 10) || 0);
+    setEditingReport((prev: any) => {
+      const next = { ...prev, [field]: num };
+      if (!manualCashOverride) {
+        const tariff = getTariffForDate(next.report_date);
+        next.total_cash_collected =
+          Number(next.cat3_mbu_chargeable_qty || 0) * Number(tariff.mbu_chargeable_fee || 125) +
+          Number(next.cat4_demographic_qty || 0) * Number(tariff.demographic_fee || 75) +
+          Number(next.cat5_biometric_qty || 0) * Number(tariff.biometric_fee || 125);
+      }
+      return next;
+    });
+  };
+
+  const handleSaveReportEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingReport || !auditReasonCategory) return alert("Please select a Correction Reason.");
+    if (auditReasonCategory === "Other" && auditOtherText.trim().length < 5) {
+      return alert("Please enter detailed remarks for 'Other' corrections.");
+    }
+    if (!confirm("Overwrite this Aadhaar Daily Report? This audit action will be logged.")) return;
+
+    setIsSavingEdit(true);
+    try {
+      const finalRemarks =
+        auditReasonCategory === "Other" ? `OTHER: ${auditOtherText}` : `CORRECTION: ${auditReasonCategory}`;
+      const tariff = getTariffForDate(editingReport.report_date);
+      const totalPackets =
+        Number(editingReport.cat1_new_qty || 0) +
+        Number(editingReport.cat2_mbu_free_qty || 0) +
+        Number(editingReport.cat3_mbu_chargeable_qty || 0) +
+        Number(editingReport.cat4_demographic_qty || 0) +
+        Number(editingReport.cat5_biometric_qty || 0);
+
+      const finalCash = Number(editingReport.total_cash_collected || 0);
+      const gstPct = Number(tariff.gst_percent || 18);
+      const finalBase = Number((finalCash / (1 + gstPct / 100)).toFixed(2));
+      const finalGst = Number((finalCash - finalBase).toFixed(2));
+
+      const payload: any = {
+        cat1_new_qty: Number(editingReport.cat1_new_qty || 0),
+        cat2_mbu_free_qty: Number(editingReport.cat2_mbu_free_qty || 0),
+        cat3_mbu_chargeable_qty: Number(editingReport.cat3_mbu_chargeable_qty || 0),
+        cat4_demographic_qty: Number(editingReport.cat4_demographic_qty || 0),
+        cat5_biometric_qty: Number(editingReport.cat5_biometric_qty || 0),
+        total_packets_qty: totalPackets,
+        completed_qty: Number(editingReport.completed_qty || 0),
+        inprocess_qty: Number(editingReport.inprocess_qty || 0),
+        rejected_qty: Number(editingReport.rejected_qty || 0),
+        base_amount: finalBase,
+        gst_amount: finalGst,
+        total_cash_collected: finalCash,
+        exemption_reason: finalRemarks,
+        deposit_status: finalCash === 0 ? "Settled" : editingReport.deposit_status,
+      };
+
+      const { error } = await supabase.from("aadhaar_daily_reports").update(payload).eq("id", editingReport.id);
+      if (error) throw error;
 
       await supabase.from("staff_activity_logs").insert([
         {
           staff_id: staffUser?.id || "ADMIN",
           staff_email: staffUser?.email,
-          action_type: "AADHAAR_ROLE_FLIP",
+          action_type: "AUDIT",
           module: "AADHAAR_HUB",
-          target_id: mappingForm.partner_id,
-          details: `Activated Aadhaar Role for ${targetPartner?.partner_name}. Operator: ${mappingForm.operator_id.toUpperCase()}, Station: ${mappingForm.station_id}`,
+          target_id: editingReport.id,
+          details: `Edited Aadhaar Daily Report (${formatToDDMMYYYY(
+            editingReport.report_date
+          )}) for ${editingReport.active_partners?.partner_name}. Packets: ${totalPackets}, Cash: ₹${finalCash}. Reason: ${finalRemarks}`,
         },
       ]);
-
-      alert("✅ Partner flipped to Aadhaar Role and bound to Operator ID & Station ID (No Master CTOP required).");
-      setMappingForm({ partner_id: "", operator_id: "", station_id: "" });
-      initializeAdminAadhaarHub();
-    } catch (err: any) {
-      alert("Mapping Error: " + err.message);
-    } finally {
-      setIsSavingMapping(false);
-    }
-  };
-
-  const handleUpgradeDecision = async (req: any, decision: "Approved" | "Rejected") => {
-    let reason = "";
-    if (decision === "Rejected") {
-      const input = prompt("Enter reason for rejecting this Aadhaar Upgrade request:");
-      if (!input) return;
-      reason = input;
-    } else {
-      if (!confirm(`Approve Aadhaar Upgrade for ${req.active_partners?.partner_name} (Station: ${req.requested_station_id})?`)) return;
-    }
-
-    try {
-      if (decision === "Approved") {
-        await supabase
-          .from("active_partners")
-          .update({
-            role_aadhaar: true,
-            aadhaar_operator_id: req.requested_operator_id,
-            aadhaar_station_id: req.requested_station_id,
-          })
-          .eq("id", req.partner_id);
-
-        if (req.center_id) {
-          await supabase.from("locations").update({ role_aadhaar: true }).eq("id", req.center_id);
-        }
-      }
-
-      await supabase
-        .from("partner_upgrade_requests")
-        .update({ status: decision, reject_reason: reason || null })
-        .eq("id", req.id);
 
       await supabase.from("partner_messages").insert([
         {
-          partner_id: req.partner_id,
-          subject: `🆔 Aadhaar Upgrade Request ${decision}`,
-          body:
-            decision === "Approved"
-              ? `Your Aadhaar Seva Kendra upgrade has been APPROVED! Operator ID: ${req.requested_operator_id} | Station ID: ${req.requested_station_id}. You can now upload daily CSV & HTML reports.`
-              : `Your Aadhaar upgrade request was declined. Reason: ${reason}`,
+          partner_id: editingReport.partner_id,
+          subject: `🆔 Aadhaar Report Audited: ${formatToDDMMYYYY(editingReport.report_date)}`,
+          body: `Your Aadhaar report for ${formatToDDMMYYYY(
+            editingReport.report_date
+          )} was updated by Admin (Packets: ${totalPackets}, Cash: ₹${finalCash.toLocaleString(
+            "en-IN"
+          )}). Reason: ${finalRemarks}.`,
         },
       ]);
 
-      alert(`✅ Upgrade request marked as ${decision}.`);
+      alert("✅ Aadhaar Daily Report updated and audited!");
+      setEditingReport(null);
       initializeAdminAadhaarHub();
     } catch (err: any) {
-      alert("Error processing upgrade: " + err.message);
+      alert("Error updating report: " + err.message);
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -517,7 +506,6 @@ export default function AdminAadhaarCommandHub() {
               </Link>
             </div>
 
-            {/* INDIAN STANDARD DATE (DD/MM/YYYY) & LIVE IST CLOCK */}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between text-xs">
               <div className="flex items-center gap-1.5">
                 <span>📅</span>
@@ -542,7 +530,7 @@ export default function AdminAadhaarCommandHub() {
                 id: "daily_vault",
                 icon: "📥",
                 label: "2. Daily Reports & Vault",
-                sub: "CSV/HTML & Manual Audit",
+                sub: "CSV/HTML & Force-Edit Audit",
                 badge: `${filteredDailyReports.length}`,
               },
               {
@@ -563,7 +551,7 @@ export default function AdminAadhaarCommandHub() {
                 id: "operators",
                 icon: "🆔",
                 label: "5. Operator Role & IDs",
-                sub: "Flip Role & Map Station ID",
+                sub: "Map Aadhaar Center & Approve",
                 badge: `${upgradeRequests.filter((u) => u.status === "Pending").length} Req`,
               },
               ...(isSuperAdmin
@@ -592,7 +580,11 @@ export default function AdminAadhaarCommandHub() {
                     <span className="text-xl shrink-0">{item.icon}</span>
                     <div className="truncate">
                       <p className="font-black text-xs uppercase tracking-wider truncate">{item.label}</p>
-                      <p className={`text-[10px] font-bold truncate mt-0.5 ${isActive ? "text-blue-200" : "text-slate-500"}`}>
+                      <p
+                        className={`text-[10px] font-bold truncate mt-0.5 ${
+                          isActive ? "text-blue-200" : "text-slate-500"
+                        }`}
+                      >
                         {item.sub}
                       </p>
                     </div>
@@ -610,7 +602,11 @@ export default function AdminAadhaarCommandHub() {
 
         <div className="p-4 border-t border-slate-800 bg-slate-900/50 space-y-2">
           <div className="text-[10px] text-slate-400 font-bold flex justify-between">
-            <span>Active Aadhaar Operators:</span>
+            <span>Mapped Aadhaar Centers:</span>
+            <span className="text-amber-400 font-black">{aadhaarEnabledCenters.length}</span>
+          </div>
+          <div className="text-[10px] text-slate-400 font-bold flex justify-between">
+            <span>Approved Aadhaar Operators:</span>
             <span className="text-white font-black">{operatorOptions.length}</span>
           </div>
           <div className="text-[10px] text-red-400 font-bold flex justify-between">
@@ -624,16 +620,19 @@ export default function AdminAadhaarCommandHub() {
       {/* RIGHT MAIN WORKSPACE                                                  */}
       {/* ===================================================================== */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto space-y-6 max-w-[1500px]">
-        {/* MASTER 4-TIER CASCADING FILTER + 7-PRESET DATE DROPDOWN CONSOLE */}
+        {/* STRICT AADHAAR-MAPPED 4-TIER CASCADING FILTER + 7-PRESET DATE CONSOLE */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-3">
             <div>
               <h2 className="font-black text-base text-slate-900 uppercase tracking-wider">
-                Cascading Network Filter &amp; Report Export Console
+                Aadhaar-Mapped Cascading Filter &amp; Report Export Console
               </h2>
               <p className="text-[11px] font-bold text-slate-500">
                 Active Window: <span className="text-blue-600 font-black">{formatToDDMMYYYY(fromDate)}</span> to{" "}
-                <span className="text-blue-600 font-black">{formatToDDMMYYYY(toDate)}</span>
+                <span className="text-blue-600 font-black">{formatToDDMMYYYY(toDate)}</span> •{" "}
+                <span className="text-emerald-700 font-black">
+                  Showing {centerOptions.length} Mapped Aadhaar Center(s) &amp; {operatorOptions.length} Approved Operator(s)
+                </span>
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -658,10 +657,27 @@ export default function AdminAadhaarCommandHub() {
             </div>
           </div>
 
-          {/* ROW 1: 4-TIER GEOGRAPHIC & OPERATOR CASCADE */}
+          {aadhaarEnabledCenters.length === 0 && (
+            <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between text-xs font-bold text-amber-900">
+              <span>
+                ⚠️ No Aadhaar Centers are mapped yet. Enable an Aadhaar Center and approve an Operator in Menu 5 to
+                track reports.
+              </span>
+              <button
+                onClick={() => setActiveMenu("operators")}
+                className="bg-amber-500 text-slate-950 font-black px-3 py-1.5 rounded-lg text-[10px] uppercase shrink-0"
+              >
+                Go to Menu 5 &rarr;
+              </button>
+            </div>
+          )}
+
+          {/* ROW 1: 4-TIER GEOGRAPHIC & OPERATOR CASCADE (STRICTLY MAPPED AADHAAR CENTERS ONLY) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">1. State</label>
+              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">
+                1. State (Aadhaar Mapped)
+              </label>
               <select
                 value={fState}
                 onChange={(e) => {
@@ -672,7 +688,7 @@ export default function AdminAadhaarCommandHub() {
                 }}
                 className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:border-blue-600"
               >
-                <option value="ALL">All States</option>
+                <option value="ALL">All Aadhaar States ({uniqueStates.length})</option>
                 {uniqueStates.map((st) => (
                   <option key={st} value={st}>
                     {st}
@@ -682,7 +698,9 @@ export default function AdminAadhaarCommandHub() {
             </div>
 
             <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">2. Master HQ</label>
+              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">
+                2. Master HQ (Aadhaar Mapped)
+              </label>
               <select
                 value={fHq}
                 onChange={(e) => {
@@ -692,7 +710,7 @@ export default function AdminAadhaarCommandHub() {
                 }}
                 className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:border-blue-600"
               >
-                <option value="ALL">All Master HQs</option>
+                <option value="ALL">All Aadhaar Master HQs ({hqOptions.length})</option>
                 {hqOptions.map((hq) => (
                   <option key={hq.id} value={hq.id}>
                     {hq.center_name}
@@ -702,35 +720,39 @@ export default function AdminAadhaarCommandHub() {
             </div>
 
             <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">3. Location (Center)</label>
+              <label className="block text-[9px] font-black uppercase text-amber-600 mb-1">
+                3. Mapped Aadhaar Center [Code]
+              </label>
               <select
                 value={fCenter}
                 onChange={(e) => {
                   setFCenter(e.target.value);
                   setFPartner("ALL");
                 }}
-                className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:border-blue-600"
+                className="w-full border-2 border-amber-200 p-2.5 rounded-lg text-xs font-black bg-amber-50/50 text-slate-900 outline-none focus:border-amber-500"
               >
-                <option value="ALL">All Locations</option>
+                <option value="ALL">All Mapped Aadhaar Centers ({centerOptions.length})</option>
                 {centerOptions.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.center_name} [{c.center_code || "NO-CODE"}]
+                    [{c.center_code || "NO-CODE"}] {c.center_name}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-[9px] font-black uppercase text-slate-400 mb-1">4. Operator</label>
+              <label className="block text-[9px] font-black uppercase text-emerald-700 mb-1">
+                4. Approved Aadhaar Operator
+              </label>
               <select
                 value={fPartner}
                 onChange={(e) => setFPartner(e.target.value)}
-                className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:border-blue-600"
+                className="w-full border-2 border-emerald-200 p-2.5 rounded-lg text-xs font-black bg-emerald-50/50 text-slate-900 outline-none focus:border-emerald-600"
               >
-                <option value="ALL">All Operators</option>
+                <option value="ALL">All Approved Operators ({operatorOptions.length})</option>
                 {operatorOptions.map((op) => (
                   <option key={op.id} value={op.id}>
-                    {op.partner_name} ({op.aadhaar_operator_id || "No-ID"} / {op.aadhaar_station_id || "No-Stn"})
+                    {op.partner_name} ({op.aadhaar_operator_id} / Stn: {op.aadhaar_station_id})
                   </option>
                 ))}
               </select>
@@ -749,7 +771,9 @@ export default function AdminAadhaarCommandHub() {
                 className="w-full border-2 border-indigo-200 p-2.5 rounded-lg text-xs font-black bg-indigo-50 text-indigo-900 outline-none focus:border-indigo-600"
               >
                 <option value="today">Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
-                <option value="yesterday">Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})</option>
+                <option value="yesterday">
+                  Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                </option>
                 <option value="current_week">Current Week</option>
                 <option value="current_month">Current Month</option>
                 <option value="previous_month">Previous Month</option>
@@ -843,7 +867,9 @@ export default function AdminAadhaarCommandHub() {
               </div>
               <div>
                 <p className="text-[10px] font-black uppercase text-slate-400">Net Base Fee (Excl. GST)</p>
-                <p className="text-2xl font-black mt-1">₹{kpi.base.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-black mt-1">
+                  ₹{kpi.base.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
               </div>
               <div>
                 <p className="text-[10px] font-black uppercase text-amber-400">18% GST Component</p>
@@ -863,7 +889,7 @@ export default function AdminAadhaarCommandHub() {
             <div className="bg-white rounded-2xl border border-red-200 shadow-sm overflow-hidden">
               <div className="p-4 bg-red-50 border-b border-red-100 flex justify-between items-center">
                 <h3 className="font-black text-red-800 text-xs uppercase tracking-widest">
-                  ⚠️ Operators Missing Daily Upload for {formatToDDMMYYYY(toDate)}
+                  ⚠️ Approved Operators Missing Daily Upload for {formatToDDMMYYYY(toDate)}
                 </h3>
                 <span className="bg-red-200 text-red-900 font-black px-2.5 py-0.5 rounded text-xs">
                   {missingTodayOperators.length} Pending
@@ -876,11 +902,15 @@ export default function AdminAadhaarCommandHub() {
                   </p>
                 ) : (
                   missingTodayOperators.map((op) => (
-                    <div key={op.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex justify-between items-center">
+                    <div
+                      key={op.id}
+                      className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex justify-between items-center"
+                    >
                       <div>
                         <p className="font-black text-xs text-slate-900">{op.partner_name}</p>
                         <p className="text-[10px] font-bold text-slate-500">
-                          {op.aadhaar_operator_id || "No-ID"} | Stn: {op.aadhaar_station_id || "N/A"}
+                          [{op.locations?.center_code || "NO-CODE"}] {op.aadhaar_operator_id} | Stn:{" "}
+                          {op.aadhaar_station_id}
                         </p>
                       </div>
                       <span className="text-[9px] font-black bg-red-100 text-red-700 px-2 py-1 rounded uppercase">
@@ -895,7 +925,7 @@ export default function AdminAadhaarCommandHub() {
         )}
 
         {/* ===================================================================== */}
-        {/* MENU 2: DAILY REPORTS LEDGER & RAW FILE VAULT                         */}
+        {/* MENU 2: DAILY REPORTS LEDGER, FILE VAULT & FORCE-EDIT AUDIT           */}
         {/* ===================================================================== */}
         {activeMenu === "daily_vault" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in">
@@ -910,7 +940,7 @@ export default function AdminAadhaarCommandHub() {
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
                   <tr>
                     <th className="p-3.5">Date (DD/MM/YYYY)</th>
-                    <th className="p-3.5">Center &amp; Operator</th>
+                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
                     <th className="p-3.5">Mode</th>
                     <th className="p-3.5 text-center">New</th>
                     <th className="p-3.5 text-center">MBU(F)</th>
@@ -921,6 +951,7 @@ export default function AdminAadhaarCommandHub() {
                     <th className="p-3.5 text-right">Cash (₹)</th>
                     <th className="p-3.5 text-center">Deposit</th>
                     <th className="p-3.5 text-center">Vault Files</th>
+                    <th className="p-3.5 text-right">Audit / Edit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -930,7 +961,8 @@ export default function AdminAadhaarCommandHub() {
                       <td className="p-3.5">
                         <p className="font-black text-slate-900">{r.active_partners?.partner_name}</p>
                         <p className="text-[10px] font-bold text-slate-500">
-                          {r.operator_id} | Stn: {r.station_id} | {r.active_partners?.locations?.center_name}
+                          [{r.active_partners?.locations?.center_code || "NO-CODE"}] {r.operator_id} | Stn:{" "}
+                          {r.station_id} | {r.active_partners?.locations?.center_name}
                         </p>
                       </td>
                       <td className="p-3.5">
@@ -984,12 +1016,20 @@ export default function AdminAadhaarCommandHub() {
                           <span className="text-[10px] text-slate-400 font-bold">None</span>
                         )}
                       </td>
+                      <td className="p-3.5 text-right">
+                        <button
+                          onClick={() => openReportEditModal(r)}
+                          className="bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-white font-black px-3 py-1.5 rounded text-[9px] uppercase tracking-wider transition shadow-sm"
+                        >
+                          ⚙️ Edit
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {filteredDailyReports.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="p-10 text-center text-slate-400 font-bold">
-                        No daily Aadhaar records match the selected cascade and date filters.
+                      <td colSpan={13} className="p-10 text-center text-slate-400 font-bold">
+                        No daily Aadhaar records match the selected Aadhaar Center cascade and date filters.
                       </td>
                     </tr>
                   )}
@@ -1014,7 +1054,7 @@ export default function AdminAadhaarCommandHub() {
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
                   <tr>
                     <th className="p-3.5">Week Range (DD/MM/YYYY)</th>
-                    <th className="p-3.5">Operator &amp; Station</th>
+                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
                     <th className="p-3.5 text-center">Weekly Packets</th>
                     <th className="p-3.5 text-center">Rejected Pkts</th>
                     <th className="p-3.5 text-right">Weekly Cash (₹)</th>
@@ -1031,7 +1071,8 @@ export default function AdminAadhaarCommandHub() {
                       <td className="p-3.5">
                         <p className="font-black text-slate-900">{w.active_partners?.partner_name}</p>
                         <p className="text-[10px] font-bold text-slate-500">
-                          {w.operator_id} | Stn: {w.station_id}
+                          [{w.active_partners?.locations?.center_code || "NO-CODE"}] {w.operator_id} | Stn:{" "}
+                          {w.station_id}
                         </p>
                       </td>
                       <td className="p-3.5 text-center font-black">{w.total_packets_qty}</td>
@@ -1093,7 +1134,7 @@ export default function AdminAadhaarCommandHub() {
                   <tr>
                     <th className="p-3.5">Penalty Date (DD/MM/YYYY)</th>
                     <th className="p-3.5">Overdue Report Date</th>
-                    <th className="p-3.5">Partner &amp; Station</th>
+                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
                     <th className="p-3.5 text-right">Penalty Charged</th>
                     <th className="p-3.5 text-center">Status</th>
                   </tr>
@@ -1106,6 +1147,7 @@ export default function AdminAadhaarCommandHub() {
                       <td className="p-3.5">
                         <p className="font-black text-slate-900">{p.active_partners?.partner_name}</p>
                         <p className="text-[10px] font-bold text-slate-500">
+                          [{p.active_partners?.locations?.center_code || "NO-CODE"}]{" "}
                           {p.active_partners?.aadhaar_operator_id} | Stn: {p.active_partners?.aadhaar_station_id}
                         </p>
                       </td>
@@ -1130,150 +1172,17 @@ export default function AdminAadhaarCommandHub() {
         )}
 
         {/* ===================================================================== */}
-        {/* MENU 5: OPERATOR ROLE FLIP & UPGRADE APPROVALS (NO MASTER CTOP)       */}
+        {/* MENU 5: MODULAR OPERATOR ROLE & AADHAAR CENTER MAPPING ENGINE         */}
         {/* ===================================================================== */}
         {activeMenu === "operators" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
-              <h3 className="font-black text-base text-slate-900 border-b pb-3 mb-4">
-                Direct Aadhaar Role Flip &amp; Station Bind
-              </h3>
-              <p className="text-xs font-bold text-slate-500 mb-4">
-                Flip any active partner to the Aadhaar role and bind their UIDAI Operator ID and Station ID (No Master CTOP required).
-              </p>
-              <form onSubmit={handleDirectOperatorMap} className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    Select Active Partner *
-                  </label>
-                  <select
-                    required
-                    value={mappingForm.partner_id}
-                    onChange={(e) => {
-                      const p = partners.find((x) => x.id === e.target.value);
-                      setMappingForm({
-                        partner_id: e.target.value,
-                        operator_id: p?.aadhaar_operator_id || "",
-                        station_id: p?.aadhaar_station_id || "",
-                      });
-                    }}
-                    className="w-full border-2 p-2.5 rounded-lg text-xs font-bold bg-slate-50"
-                  >
-                    <option value="" disabled>
-                      -- Choose Partner --
-                    </option>
-                    {partners.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.partner_name} ({p.locations?.center_name})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    UIDAI Operator ID (e.g., MYS_FAAFREEN) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={mappingForm.operator_id}
-                    onChange={(e) => setMappingForm({ ...mappingForm, operator_id: e.target.value })}
-                    className="w-full border-2 p-2.5 rounded-lg text-xs font-black uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    UIDAI Station ID (5 Digits, e.g., 21505) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={5}
-                    value={mappingForm.station_id}
-                    onChange={(e) =>
-                      setMappingForm({ ...mappingForm, station_id: e.target.value.replace(/\D/g, "") })
-                    }
-                    className="w-full border-2 p-2.5 rounded-lg text-xs font-black"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isSavingMapping}
-                  className="w-full py-3.5 bg-slate-900 hover:bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow transition"
-                >
-                  {isSavingMapping ? "Saving..." : "Activate Aadhaar Role & Bind IDs"}
-                </button>
-              </form>
-            </div>
-
-            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
-              <div className="p-4 bg-slate-900 text-white">
-                <h3 className="font-black text-xs uppercase tracking-widest">
-                  Partner Aadhaar Upgrade Requests ({upgradeRequests.length})
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
-                    <tr>
-                      <th className="p-3.5">Date</th>
-                      <th className="p-3.5">Partner &amp; Center</th>
-                      <th className="p-3.5">Requested IDs</th>
-                      <th className="p-3.5 text-center">Compliance PDF</th>
-                      <th className="p-3.5 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {upgradeRequests.map((req) => (
-                      <tr key={req.id} className="hover:bg-slate-50">
-                        <td className="p-3.5 font-bold">{formatToDDMMYYYY(req.created_at)}</td>
-                        <td className="p-3.5">
-                          <p className="font-black text-slate-900">{req.active_partners?.partner_name}</p>
-                          <p className="text-[10px] font-bold text-slate-500">
-                            {req.active_partners?.locations?.center_name}
-                          </p>
-                        </td>
-                        <td className="p-3.5">
-                          <p className="font-black text-blue-700">Op: {req.requested_operator_id}</p>
-                          <p className="text-[10px] font-bold text-slate-600">
-                            Stn: {req.requested_station_id} | NSEIT: {req.nseit_cert_no}
-                          </p>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <button
-                            onClick={() => handleDownloadVaultFile(req.compliance_pdf_url, "application_documents")}
-                            className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1 rounded text-[10px] font-black uppercase"
-                          >
-                            📄 View PDF
-                          </button>
-                        </td>
-                        <td className="p-3.5 text-right">
-                          {req.status === "Pending" ? (
-                            <div className="flex justify-end gap-1.5">
-                              <button
-                                onClick={() => handleUpgradeDecision(req, "Approved")}
-                                className="bg-emerald-600 text-white px-3 py-1 rounded text-[10px] font-black uppercase"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => handleUpgradeDecision(req, "Rejected")}
-                                className="bg-red-600 text-white px-3 py-1 rounded text-[10px] font-black uppercase"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] font-black uppercase text-slate-500">{req.status}</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <AdminOperatorMappingModule
+            locations={locations}
+            partners={partners}
+            upgradeRequests={upgradeRequests}
+            staffUser={staffUser}
+            onRefresh={initializeAdminAadhaarHub}
+            onDownloadVaultFile={handleDownloadVaultFile}
+          />
         )}
 
         {/* ===================================================================== */}
@@ -1286,7 +1195,8 @@ export default function AdminAadhaarCommandHub() {
                 Deploy New UIDAI Tariff Version
               </h3>
               <p className="text-[11px] font-bold text-slate-500 mb-4">
-                Setting a new Effective Date automatically closes the previous tariff on the prior day, ensuring backdated reports are never altered.
+                Setting a new Effective Date automatically closes the previous tariff on the prior day, ensuring
+                backdated reports are never altered.
               </p>
               <form onSubmit={handleCreateNewTariffVersion} className="space-y-3 text-xs">
                 <div>
@@ -1417,6 +1327,188 @@ export default function AdminAadhaarCommandHub() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* FORCE-EDIT / AUDIT MODAL FOR AADHAAR DAILY REPORTS (MENU 2)           */}
+        {/* ===================================================================== */}
+        {editingReport && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-slate-50 rounded-2xl shadow-2xl border border-slate-300 w-full max-w-3xl my-8 animate-in zoom-in-95 overflow-hidden">
+              <div className="p-5 bg-slate-900 text-white flex justify-between items-center border-b-4 border-amber-500">
+                <div>
+                  <h3 className="font-black text-lg">
+                    🆔 Audit &amp; Edit Aadhaar Report: {editingReport.active_partners?.partner_name}
+                  </h3>
+                  <p className="text-xs text-amber-400 font-bold mt-0.5">
+                    Date: {formatToDDMMYYYY(editingReport.report_date)} | Op: {editingReport.operator_id} | Stn:{" "}
+                    {editingReport.station_id}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setEditingReport(null)}
+                  className="text-2xl font-black text-slate-400 hover:text-white"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveReportEdit} className="p-6 space-y-5 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-white p-4 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="font-black uppercase text-slate-500 text-[10px]">1. New (₹0)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingReport.cat1_new_qty}
+                      onChange={(e) => handleEditCategoryQty("cat1_new_qty", e.target.value)}
+                      className="w-full border p-2 rounded font-bold mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-black uppercase text-slate-500 text-[10px]">2. MBU Free</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingReport.cat2_mbu_free_qty}
+                      onChange={(e) => handleEditCategoryQty("cat2_mbu_free_qty", e.target.value)}
+                      className="w-full border p-2 rounded font-bold mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-black uppercase text-amber-700 text-[10px]">3. MBU Paid</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingReport.cat3_mbu_chargeable_qty}
+                      onChange={(e) => handleEditCategoryQty("cat3_mbu_chargeable_qty", e.target.value)}
+                      className="w-full border border-amber-300 bg-amber-50 p-2 rounded font-bold mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-black uppercase text-blue-700 text-[10px]">4. Demographic</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingReport.cat4_demographic_qty}
+                      onChange={(e) => handleEditCategoryQty("cat4_demographic_qty", e.target.value)}
+                      className="w-full border border-blue-300 bg-blue-50 p-2 rounded font-bold mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-black uppercase text-purple-700 text-[10px]">5. Biometric</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingReport.cat5_biometric_qty}
+                      onChange={(e) => handleEditCategoryQty("cat5_biometric_qty", e.target.value)}
+                      className="w-full border border-purple-300 bg-purple-50 p-2 rounded font-bold mt-1"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border border-slate-200">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="font-black uppercase text-slate-600 text-[10px]">
+                        Total Cash Collected (₹)
+                      </label>
+                      <label className="flex items-center gap-1 text-[10px] font-black text-amber-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={manualCashOverride}
+                          onChange={(e) => setManualCashOverride(e.target.checked)}
+                        />
+                        Manual Override
+                      </label>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      disabled={!manualCashOverride}
+                      value={editingReport.total_cash_collected}
+                      onChange={(e) =>
+                        setEditingReport({
+                          ...editingReport,
+                          total_cash_collected: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full border p-2.5 rounded font-black text-sm disabled:bg-slate-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-black uppercase text-slate-600 text-[10px] block mb-1">
+                      Deposit Settlement Status
+                    </label>
+                    <select
+                      value={editingReport.deposit_status}
+                      onChange={(e) => setEditingReport({ ...editingReport, deposit_status: e.target.value })}
+                      className="w-full border p-2.5 rounded font-bold text-xs bg-white"
+                    >
+                      <option value="Pending Deposit">Pending Deposit</option>
+                      <option value="Deposit Submitted">Deposit Submitted</option>
+                      <option value="Settled">Settled</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 p-4 rounded-xl space-y-3">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-amber-400 block mb-1">
+                      Mandatory Audit Reason *
+                    </label>
+                    <select
+                      required
+                      value={auditReasonCategory}
+                      onChange={(e) => {
+                        setAuditReasonCategory(e.target.value);
+                        setAuditOtherText("");
+                      }}
+                      className="w-full bg-slate-800 border border-slate-700 text-white p-2.5 rounded-lg font-bold"
+                    >
+                      <option value="" disabled>
+                        -- Select Audit Reason --
+                      </option>
+                      <option value="5-Category Count Correction">5-Category Count Correction</option>
+                      <option value="UIDAI CSV/HTML Parity Override">UIDAI CSV/HTML Parity Override</option>
+                      <option value="Exemption / Zero-Day Correction">Exemption / Zero-Day Correction</option>
+                      <option value="Tariff / Cash Ledger Adjustment">Tariff / Cash Ledger Adjustment</option>
+                      <option value="Other">Other (Specify Below)</option>
+                    </select>
+                  </div>
+
+                  {auditReasonCategory === "Other" && (
+                    <input
+                      type="text"
+                      required
+                      placeholder="TYPE DETAILED AUDIT REASON..."
+                      value={auditOtherText}
+                      onChange={(e) => setAuditOtherText(e.target.value.toUpperCase())}
+                      className="w-full bg-slate-800 border border-amber-500 text-white p-2.5 rounded-lg font-black uppercase"
+                    />
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingReport(null)}
+                      className="px-4 py-2.5 bg-slate-700 text-white font-black uppercase rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingEdit}
+                      className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black uppercase rounded-lg shadow"
+                    >
+                      {isSavingEdit ? "Saving..." : "Apply Audit Overwrite"}
+                    </button>
+                  </div>
+                </div>
+              </form>
             </div>
           </div>
         )}
