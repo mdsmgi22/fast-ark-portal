@@ -1,6 +1,8 @@
+// FILE PATH: ./app/components/aadhaar/AadhaarSidebar.tsx
 "use client";
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { formatToDDMMYYYY, getISTDateString } from "../../lib/aadhaarEngine";
 
 export type AadhaarMenuTab = "overview" | "daily" | "deposit" | "weekly" | "history" | "upgrade";
@@ -10,6 +12,8 @@ interface SidebarProps {
   setActiveMenu: (menu: AadhaarMenuTab) => void;
   partner: any;
   isAadhaarAuthorized: boolean;
+  totalCollectionCash?: number;
+  totalDepositedCash?: number;
   pendingReportCash: number;
   unpaidPenaltyTotal: number;
   overdueDaysCount: number;
@@ -21,6 +25,8 @@ export default function AadhaarSidebar({
   setActiveMenu,
   partner,
   isAadhaarAuthorized,
+  totalCollectionCash = 0,
+  totalDepositedCash = 0,
   pendingReportCash,
   unpaidPenaltyTotal,
   overdueDaysCount,
@@ -51,8 +57,13 @@ export default function AadhaarSidebar({
     return () => clearInterval(timer);
   }, []);
 
-  const totalPayable = pendingReportCash + unpaidPenaltyTotal;
-  const isDepositUnlocked = isAadhaarAuthorized && totalPayable > 0;
+  // Balance Payable = (Total Collection + Unpaid Non-Waived Penalties) - Total Deposits
+  const totalPayable = Math.max(
+    0,
+    (totalCollectionCash > 0 ? totalCollectionCash - totalDepositedCash : pendingReportCash) +
+      unpaidPenaltyTotal
+  );
+  const isDepositUnlocked = isAadhaarAuthorized;
 
   const menuItems: {
     id: AadhaarMenuTab;
@@ -91,20 +102,20 @@ export default function AadhaarSidebar({
       label: "3. Instant Deposit (QR)",
       sub: !isAadhaarAuthorized
         ? "Requires Admin Approval"
-        : isDepositUnlocked
+        : totalPayable > 0
         ? "Scan / Tap & Pay Now"
-        : "Upload Daily Report First",
+        : "Record Remittance / View QR",
       locked: !isAadhaarAuthorized,
       badge: !isAadhaarAuthorized
         ? "🔒 Locked"
-        : isDepositUnlocked
+        : totalPayable > 0
         ? `₹${totalPayable.toLocaleString("en-IN")}`
-        : "Locked",
+        : "Settled",
       badgeColor: !isAadhaarAuthorized
         ? "bg-slate-800 text-red-400 border border-red-900/50"
-        : isDepositUnlocked
+        : totalPayable > 0
         ? "bg-emerald-500 text-slate-950 animate-pulse"
-        : "bg-slate-800 text-slate-500",
+        : "bg-slate-800 text-emerald-400",
     },
     {
       id: "weekly",
@@ -119,9 +130,9 @@ export default function AadhaarSidebar({
     {
       id: "history",
       icon: "📥",
-      shortLabel: "Reports",
-      label: "5. Reports & Downloads",
-      sub: isAadhaarAuthorized ? "PDF / CSV & File Vault" : "Requires Admin Approval",
+      shortLabel: "Vault",
+      label: "5. Reports & Deposit Ledger",
+      sub: isAadhaarAuthorized ? "Uploaded Files & Deposits" : "Requires Admin Approval",
       locked: !isAadhaarAuthorized,
       badge: !isAadhaarAuthorized ? "🔒 Locked" : undefined,
       badgeColor: "bg-slate-800 text-red-400 border border-red-900/50",
@@ -129,7 +140,7 @@ export default function AadhaarSidebar({
     {
       id: "upgrade",
       icon: "🗂️",
-      shortLabel: "IDs",
+      shortLabel: "Dossier",
       label: "6. Credentials & Upgrade",
       sub: isAadhaarAuthorized ? "Verified Station & IDs" : "Submit Request for Approval",
       locked: false,
@@ -148,17 +159,24 @@ export default function AadhaarSidebar({
 
   return (
     <>
-      {/* ===================================================================== */}
-      {/* MOBILE TOP BAR (VISIBLE ONLY ON PHONES / TABLETS < LG)                */}
-      {/* ===================================================================== */}
+      {/* MOBILE TOP BAR WITH OFFICIAL COMPANY LOGO */}
       <div className="lg:hidden bg-slate-950 text-white border-b border-slate-800 sticky top-0 z-40 px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center font-black text-lg text-slate-950">
-              🆔
+            <div className="bg-white px-2 py-1 rounded-lg flex items-center justify-center shadow-sm shrink-0">
+              <Image
+                src="/logo.png"
+                alt="Fast Ark Logo"
+                width={90}
+                height={28}
+                priority
+                className="object-contain h-6 w-auto"
+              />
             </div>
             <div>
-              <h1 className="font-black text-sm tracking-wide text-white leading-none">AADHAAR HUB</h1>
+              <h1 className="font-black text-xs tracking-wide text-white leading-none">
+                AADHAAR SEVA KENDRA
+              </h1>
               <p className="text-[9px] text-emerald-400 font-bold mt-0.5">
                 📅 {liveDateDDMMYYYY} • 🕒 {liveTimeIST}
               </p>
@@ -188,11 +206,15 @@ export default function AadhaarSidebar({
             <div className="grid grid-cols-2 gap-2 text-[10px]">
               <div className="bg-slate-900 p-2 rounded border border-slate-800">
                 <span className="text-slate-400 font-bold uppercase block">Operator ID</span>
-                <span className="font-black text-white">{partner?.aadhaar_operator_id || "NOT APPROVED"}</span>
+                <span className="font-black text-white">
+                  {partner?.aadhaar_operator_id || "NOT APPROVED"}
+                </span>
               </div>
               <div className="bg-slate-900 p-2 rounded border border-slate-800">
                 <span className="text-slate-400 font-bold uppercase block">Station ID</span>
-                <span className="font-black text-amber-400">{partner?.aadhaar_station_id || "NOT APPROVED"}</span>
+                <span className="font-black text-amber-400">
+                  {partner?.aadhaar_station_id || "NOT APPROVED"}
+                </span>
               </div>
             </div>
 
@@ -214,19 +236,26 @@ export default function AadhaarSidebar({
         )}
       </div>
 
-      {/* ===================================================================== */}
-      {/* DESKTOP LEFT SIDEBAR (VISIBLE ON LG+ SCREENS)                         */}
-      {/* ===================================================================== */}
+      {/* DESKTOP LEFT SIDEBAR WITH OFFICIAL COMPANY LOGO */}
       <aside className="hidden lg:flex lg:w-80 bg-slate-950 text-white flex-col justify-between border-r border-slate-800 shrink-0 min-h-screen select-none">
         <div>
           <div className="p-5 bg-slate-900 border-b border-slate-800">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 bg-amber-500 rounded-lg flex items-center justify-center font-black text-xl text-slate-950 shadow">
-                  🆔
+                <div className="bg-white px-2.5 py-1.5 rounded-lg flex items-center justify-center shadow shrink-0">
+                  <Image
+                    src="/logo.png"
+                    alt="Fast Ark Logo"
+                    width={110}
+                    height={32}
+                    priority
+                    className="object-contain h-7 w-auto"
+                  />
                 </div>
                 <div>
-                  <h1 className="font-black text-base tracking-wide text-white leading-none">AADHAAR HUB</h1>
+                  <h1 className="font-black text-sm tracking-wide text-white leading-none">
+                    AADHAAR HUB
+                  </h1>
                   <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest mt-1">
                     Fast Ark Seva Kendra
                   </p>
@@ -240,19 +269,21 @@ export default function AadhaarSidebar({
               </Link>
             </div>
 
-            {/* INDIAN STANDARD DATE (DD/MM/YYYY) & LIVE CLOCK */}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between text-xs">
               <div className="flex items-center gap-1.5">
                 <span>📅</span>
-                <span className="font-black text-emerald-400 tracking-wider">{liveDateDDMMYYYY || "DD/MM/YYYY"}</span>
+                <span className="font-black text-emerald-400 tracking-wider">
+                  {liveDateDDMMYYYY || "DD/MM/YYYY"}
+                </span>
               </div>
               <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2.5">
                 <span>🕒</span>
-                <span className="font-mono font-bold text-slate-200 text-[11px]">{liveTimeIST || "IST"}</span>
+                <span className="font-mono font-bold text-slate-200 text-[11px]">
+                  {liveTimeIST || "IST"}
+                </span>
               </div>
             </div>
 
-            {/* MAPPED OPERATOR, STATION & CENTER STATUS */}
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
               <div className="bg-slate-800/70 p-2 rounded border border-slate-700/70">
                 <p className="text-slate-400 font-bold uppercase">Operator ID</p>
@@ -269,7 +300,6 @@ export default function AadhaarSidebar({
             </div>
           </div>
 
-          {/* SIDEBAR MENU LIST */}
           <nav className="p-3 space-y-1.5">
             {menuItems.map((item) => {
               const isActive = activeMenu === item.id;
@@ -290,10 +320,16 @@ export default function AadhaarSidebar({
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-xl shrink-0">{item.icon}</span>
                     <div className="truncate">
-                      <p className="font-black text-xs uppercase tracking-wider truncate">{item.label}</p>
+                      <p className="font-black text-xs uppercase tracking-wider truncate">
+                        {item.label}
+                      </p>
                       <p
                         className={`text-[10px] font-bold truncate mt-0.5 ${
-                          item.locked ? "text-red-400/70" : isActive ? "text-blue-200" : "text-slate-500"
+                          item.locked
+                            ? "text-red-400/70"
+                            : isActive
+                            ? "text-blue-200"
+                            : "text-slate-500"
                         }`}
                       >
                         {item.sub}
@@ -301,7 +337,9 @@ export default function AadhaarSidebar({
                     </div>
                   </div>
                   {item.badge && (
-                    <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0 ml-2 ${item.badgeColor}`}>
+                    <span
+                      className={`text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0 ml-2 ${item.badgeColor}`}
+                    >
                       {item.badge}
                     </span>
                   )}
@@ -311,12 +349,14 @@ export default function AadhaarSidebar({
           </nav>
         </div>
 
-        {/* PINNED BOTTOM LEDGER & ₹100/DAY LATE PENALTY TRACKER */}
+        {/* PINNED BOTTOM LEDGER: COLLECTION MINUS DEPOSIT = BALANCE PAYABLE */}
         <div className="p-4 space-y-3 border-t border-slate-800 bg-slate-900/50">
           {isAadhaarAuthorized ? (
             <div
               className={`p-3.5 rounded-xl border ${
-                totalPayable > 0 ? "bg-red-950/60 border-red-800" : "bg-emerald-950/40 border-emerald-800/60"
+                totalPayable > 0
+                  ? "bg-red-950/60 border-red-800"
+                  : "bg-emerald-950/40 border-emerald-800/60"
               }`}
             >
               <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
@@ -324,19 +364,28 @@ export default function AadhaarSidebar({
               </p>
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-slate-400 font-bold">Report Cash Due:</span>
+                  <span className="text-slate-400 font-bold">Total Collection:</span>
                   <span className="font-black text-white">
-                    ₹{pendingReportCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    ₹{totalCollectionCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-emerald-400 font-bold">Less Deposited:</span>
+                  <span className="font-black text-emerald-400">
+                    - ₹{totalDepositedCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-red-400 font-bold">Late Penalty (₹100/d):</span>
                   <span className="font-black text-red-400">
-                    ₹{unpaidPenaltyTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} ({overdueDaysCount}d)
+                    + ₹{unpaidPenaltyTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} (
+                    {overdueDaysCount}d)
                   </span>
                 </div>
                 <div className="border-t border-slate-800 pt-1.5 mt-1.5 flex justify-between items-baseline">
-                  <span className="text-[10px] font-black uppercase text-amber-400">Total Payable:</span>
+                  <span className="text-[10px] font-black uppercase text-amber-400">
+                    Balance Payable:
+                  </span>
                   <span className="text-lg font-black text-white">
                     ₹{totalPayable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </span>
@@ -358,7 +407,8 @@ export default function AadhaarSidebar({
                 🔒 Dashboard Locked
               </p>
               <p className="text-[10px] font-bold text-slate-400 mt-1">
-                Admin approval of your Aadhaar credentials &amp; Center mapping is required to unlock uploads.
+                Admin approval of your Aadhaar credentials &amp; Center mapping is required to
+                unlock uploads.
               </p>
             </div>
           )}
@@ -373,9 +423,7 @@ export default function AadhaarSidebar({
         </div>
       </aside>
 
-      {/* ===================================================================== */}
-      {/* MOBILE STICKY BOTTOM TAB BAR (APP-STYLE NAVIGATION ON PHONES < LG)    */}
-      {/* ===================================================================== */}
+      {/* MOBILE STICKY BOTTOM TAB BAR */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950 border-t border-slate-800 grid grid-cols-6 gap-0.5 px-1 py-1.5 shadow-2xl">
         {menuItems.map((item) => {
           const isActive = activeMenu === item.id;
