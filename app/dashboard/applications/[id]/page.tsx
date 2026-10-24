@@ -6,6 +6,16 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 
+const formatToDDMMYYYY = (dateStr: string): string => {
+  if (!dateStr) return "N/A";
+  const clean = String(dateStr).split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
 export default function ApplicationReview() {
   const params = useParams();
   const router = useRouter();
@@ -74,7 +84,8 @@ export default function ApplicationReview() {
     new Set(locations.map((l) => l.state).filter(Boolean))
   ).sort();
   const masterHQs = locations.filter(
-    (l) => l.is_master_node && (filterState === "ALL" || l.state === filterState)
+    (l) =>
+      l.is_master_node && (filterState === "ALL" || l.state === filterState)
   );
 
   const getFilteredLocations = () => {
@@ -98,33 +109,47 @@ export default function ApplicationReview() {
 
   const handleViewKYC = async () => {
     try {
-      const safeName = app.name.replace(/[^a-zA-Z0-9]/g, "_");
-      const expectedPrefix = `${safeName}_`;
+      let targetFileName: string | null =
+        app?.role_metadata?.kyc_pdf_path || null;
 
-      const { data: files, error } = await supabase.storage
-        .from("application_documents")
-        .list("", { search: safeName });
+      if (!targetFileName) {
+        const safeName = String(app?.name || "").replace(/[^a-zA-Z0-9]/g, "_");
+        const expectedPrefix = `${safeName}_`;
 
-      if (error || !files || files.length === 0) {
-        return alert("No KYC documents found. They may have been deleted.");
+        const { data: files, error } = await supabase.storage
+          .from("application_documents")
+          .list("", { search: safeName });
+
+        if (error || !files || files.length === 0) {
+          return alert("No KYC documents found. They may have been deleted.");
+        }
+
+        // Strict prefix match & newest-first sort prevents opening an older or wrong applicant's PDF
+        const matchingPdfs = files
+          .filter(
+            (f) =>
+              f.name.startsWith(expectedPrefix) &&
+              f.name.toLowerCase().endsWith(".pdf")
+          )
+          .sort((a, b) => b.name.localeCompare(a.name));
+
+        if (matchingPdfs.length > 0) {
+          targetFileName = matchingPdfs[0].name;
+        }
       }
 
-      // Strict prefix match prevents opening another applicant's PDF
-      const pdfFile = files.find(
-        (f) =>
-          f.name.startsWith(expectedPrefix) &&
-          f.name.toLowerCase().endsWith(".pdf")
-      );
-      if (!pdfFile) return alert("Generated PDF not found.");
+      if (!targetFileName) return alert("Generated PDF not found.");
 
       const { data: urlData, error: urlError } = await supabase.storage
         .from("application_documents")
-        .createSignedUrl(pdfFile.name, 60 * 60);
+        .createSignedUrl(targetFileName, 60 * 60);
 
-      if (urlError) throw urlError;
+      if (urlError || !urlData?.signedUrl) throw urlError;
       window.open(urlData.signedUrl, "_blank");
     } catch (error: any) {
-      alert("Error opening KYC document: " + error.message);
+      alert(
+        "Error opening KYC document: " + (error?.message || "Unknown error")
+      );
     }
   };
 
@@ -132,8 +157,10 @@ export default function ApplicationReview() {
     .toUpperCase()
     .includes("AADHAAR");
 
+  const isPendingStatus = !app?.status || app?.status === "Pending";
+
   const handleApprove = async () => {
-    if (app.status !== "Pending") {
+    if (!isPendingStatus) {
       return alert("This application has already been processed.");
     }
 
@@ -160,7 +187,8 @@ export default function ApplicationReview() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!session) throw new Error("Authentication error. Please log in again.");
+      if (!session)
+        throw new Error("Authentication error. Please log in again.");
 
       if (isAadhaarApplication) {
         await supabase
@@ -227,7 +255,7 @@ export default function ApplicationReview() {
   };
 
   const handleReject = async () => {
-    if (app.status !== "Pending") {
+    if (!isPendingStatus) {
       return alert("This application has already been processed.");
     }
 
@@ -354,7 +382,9 @@ export default function ApplicationReview() {
                   <p className="text-sm text-red-600 font-bold uppercase mb-1">
                     Rejection Reason:
                   </p>
-                  <p className="text-red-900 font-medium">{app.reject_reason}</p>
+                  <p className="text-red-900 font-medium">
+                    {app.reject_reason}
+                  </p>
                 </div>
               )}
 
@@ -373,7 +403,9 @@ export default function ApplicationReview() {
                   <span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">
                     DOB
                   </span>
-                  <span className="font-bold text-slate-800">{app.dob}</span>
+                  <span className="font-bold text-slate-800">
+                    {formatToDDMMYYYY(app.dob)}
+                  </span>
                 </div>
                 <div>
                   <span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">
@@ -388,7 +420,11 @@ export default function ApplicationReview() {
                   <span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">
                     Gov ID
                   </span>
-                  <span className="font-bold text-slate-800">[ID Redacted]</span>
+                  <span className="font-bold text-slate-800">
+                    {app.gov_id_number
+                      ? `XXXX-XXXX-${String(app.gov_id_number).slice(-4)}`
+                      : "N/A"}
+                  </span>
                 </div>
                 <div>
                   <span className="text-gray-400 font-bold text-[10px] uppercase tracking-widest block mb-1">
@@ -567,7 +603,7 @@ export default function ApplicationReview() {
                       className="w-full border-2 border-blue-200 p-2.5 rounded-lg outline-none focus:border-blue-600 font-bold text-sm bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
                       value={selectedLocation}
                       onChange={(e) => setSelectedLocation(e.target.value)}
-                      disabled={isProcessing || app.status !== "Pending"}
+                      disabled={isProcessing || !isPendingStatus}
                     >
                       <option value="" disabled>
                         -- Select Official Center --
@@ -597,7 +633,7 @@ export default function ApplicationReview() {
                             setAadhaarOpId(e.target.value.toUpperCase())
                           }
                           placeholder="e.g. MYS_FAAFREEN"
-                          disabled={isProcessing || app.status !== "Pending"}
+                          disabled={isProcessing || !isPendingStatus}
                           className="w-full border border-amber-300 p-2 rounded bg-white font-black text-xs uppercase outline-none focus:border-amber-600"
                         />
                       </div>
@@ -613,7 +649,7 @@ export default function ApplicationReview() {
                             setAadhaarStnId(e.target.value.replace(/\D/g, ""))
                           }
                           placeholder="e.g. 21505"
-                          disabled={isProcessing || app.status !== "Pending"}
+                          disabled={isProcessing || !isPendingStatus}
                           className="w-full border border-amber-300 p-2 rounded bg-white font-black text-xs outline-none focus:border-amber-600"
                         />
                       </div>
@@ -631,7 +667,7 @@ export default function ApplicationReview() {
                 <button
                   onClick={handleApprove}
                   disabled={
-                    isProcessing || !selectedLocation || app.status !== "Pending"
+                    isProcessing || !selectedLocation || !isPendingStatus
                   }
                   className="w-full bg-slate-900 text-white py-3.5 rounded-lg font-black hover:bg-slate-800 transition-colors shadow-md disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                 >
@@ -650,9 +686,9 @@ export default function ApplicationReview() {
                 {!showRejectForm ? (
                   <button
                     onClick={() => setShowRejectForm(true)}
-                    disabled={isProcessing || app.status !== "Pending"}
+                    disabled={isProcessing || !isPendingStatus}
                     className={`w-full py-3 rounded-lg font-bold mt-3 transition-colors border ${
-                      app.status !== "Pending"
+                      !isPendingStatus
                         ? "hidden"
                         : "bg-red-50 text-red-700 hover:bg-red-100 border-red-100 disabled:opacity-50"
                     }`}

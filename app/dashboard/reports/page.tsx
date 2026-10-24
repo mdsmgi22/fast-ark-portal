@@ -144,11 +144,11 @@ export default function CorporateMISReportsPage() {
           supabase
             .from("partner_deposits")
             .select(
-              "*, active_partners(id, partner_name, role, aadhaar_operator_id, aadhaar_station_id, locations(id, center_name, center_code, state, dist, parent_master_id, role_aadhaar))"
+              "*, active_partners(id, partner_name, email, role, aadhaar_operator_id, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id, role_aadhaar))"
             )
-            .gte("created_at", `${fromDate}T00:00:00+05:30`)
-            .lte("created_at", `${toDate}T23:59:59+05:30`)
-            .order("created_at", { ascending: false }),
+            .gte("deposit_date", fromDate)
+            .lte("deposit_date", toDate)
+            .order("deposit_date", { ascending: false }),
           supabase
             .from("aadhaar_penalty_logs")
             .select("*")
@@ -452,9 +452,13 @@ export default function CorporateMISReportsPage() {
       const pDeposits = rawDeposits.filter(
         (d) => d.partner_id === p.id && d.status !== "Discrepancy"
       );
-      const pPenalties = rawPenalties.filter(
-        (pen) => pen.partner_id === p.id && !pen.is_waived
-      );
+      const pPenalties = rawPenalties.filter((pen) => {
+        if (pen.partner_id !== p.id || pen.is_waived) return false;
+        const pDate = normalizeToYYYYMMDD(
+          pen.penalty_for_date || pen.report_date || ""
+        );
+        return !pDate || (pDate >= fromDate && pDate <= toDate);
+      });
 
       let telecomCash = 0;
       let paybullCash = 0;
@@ -511,7 +515,15 @@ export default function CorporateMISReportsPage() {
         netClosingDue,
       };
     });
-  }, [operatorOptions, rawSales, rawAadhaar, rawDeposits, rawPenalties]);
+  }, [
+    operatorOptions,
+    rawSales,
+    rawAadhaar,
+    rawDeposits,
+    rawPenalties,
+    fromDate,
+    toDate,
+  ]);
 
   const activeRowCount = useMemo(() => {
     if (reportType === "aadhaar") {
@@ -1725,6 +1737,7 @@ export default function CorporateMISReportsPage() {
                     <th className="p-3.5 text-right">Telecom Cash</th>
                     <th className="p-3.5 text-right">Paybull Cash</th>
                     <th className="p-3.5 text-right">Aadhaar Cash</th>
+                    <th className="p-3.5 text-right">Unpaid Fines</th>
                     <th className="p-3.5 text-right">Total Generated</th>
                     <th className="p-3.5 text-right">Total Remitted</th>
                     <th className="p-3.5 text-right">Net Pending Due</th>
@@ -1752,6 +1765,9 @@ export default function CorporateMISReportsPage() {
                       </td>
                       <td className="p-3.5 text-right font-bold text-amber-700">
                         ₹{c.aadhaarCash.toLocaleString("en-IN")}
+                      </td>
+                      <td className="p-3.5 text-right font-bold text-red-500">
+                        ₹{c.unpaidPenalties.toLocaleString("en-IN")}
                       </td>
                       <td className="p-3.5 text-right font-black">
                         ₹{c.totalGenerated.toLocaleString("en-IN")}

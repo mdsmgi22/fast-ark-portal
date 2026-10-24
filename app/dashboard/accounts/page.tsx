@@ -99,12 +99,12 @@ export default function AccountantVerificationDashboard() {
           .select(
             `
             *,
-            active_partners ( id, partner_name, email, aadhaar_operator_id, aadhaar_station_id, locations (id, state, dist, center_name, center_code, parent_master_id) )
+            active_partners ( id, partner_name, email, aadhaar_operator_id, aadhaar_station_id, locations (id, state, dist, center_name, center_code, parent_master_id, role_aadhaar) )
           `
           )
-          .gte("created_at", `${fromDate}T00:00:00+05:30`)
-          .lte("created_at", `${toDate}T23:59:59+05:30`)
-          .order("created_at", { ascending: false }),
+          .gte("deposit_date", fromDate)
+          .lte("deposit_date", toDate)
+          .order("deposit_date", { ascending: false }),
       ]);
 
       if (depRes.error) throw depRes.error;
@@ -307,7 +307,9 @@ export default function AccountantVerificationDashboard() {
         String(selectedDeposit.reference_no || "").replace(/^AADHAAR_/i, "");
       const refCode =
         selectedDeposit.reference_code ||
-        `FA-DEP-${String(selectedDeposit.id || "")
+        `${isAadhaarDeposit ? "FA-ADH" : "FA-DEP"}-${String(
+          selectedDeposit.id || ""
+        )
           .slice(0, 6)
           .toUpperCase()}`;
 
@@ -344,7 +346,8 @@ export default function AccountantVerificationDashboard() {
               deposit_id: selectedDeposit.id,
               amount: selectedDeposit.deposit_amount,
               utr_number: cleanUtr,
-              rejection_reason: newStatus === "Discrepancy" ? rejectionReason : null,
+              rejection_reason:
+                newStatus === "Discrepancy" ? rejectionReason : null,
             },
           }),
         ]);
@@ -430,7 +433,7 @@ export default function AccountantVerificationDashboard() {
         const cleanTxn = d.transaction_id || cleanUtr;
         const refCode =
           d.reference_code ||
-          `FA-DEP-${String(d.id || "")
+          `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(d.id || "")
             .slice(0, 6)
             .toUpperCase()}`;
 
@@ -759,7 +762,7 @@ export default function AccountantVerificationDashboard() {
                     String(dep.reference_no || "").replace(/^AADHAAR_/i, "");
                   const refCode =
                     dep.reference_code ||
-                    `FA-DEP-${String(dep.id || "")
+                    `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(dep.id || "")
                       .slice(0, 6)
                       .toUpperCase()}`;
 
@@ -868,7 +871,14 @@ export default function AccountantVerificationDashboard() {
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-black bg-indigo-50 text-indigo-800 border border-indigo-200 px-2.5 py-0.5 rounded">
                       {selectedDeposit.reference_code ||
-                        `FA-DEP-${String(selectedDeposit.id || "")
+                        `${
+                          selectedDeposit.deposit_stream === "AADHAAR" ||
+                          String(selectedDeposit.reference_no || "")
+                            .toUpperCase()
+                            .startsWith("AADHAAR_")
+                            ? "FA-ADH"
+                            : "FA-DEP"
+                        }-${String(selectedDeposit.id || "")
                           .slice(0, 6)
                           .toUpperCase()}`}
                     </span>
@@ -1018,7 +1028,7 @@ export default function AccountantVerificationDashboard() {
                   </div>
                 ) : secureImageUrl ? (
                   <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
-                    {selectedDeposit.deposit_slip_url
+                    {String(selectedDeposit.deposit_slip_url || "")
                       .toLowerCase()
                       .endsWith(".pdf") ? (
                       <iframe

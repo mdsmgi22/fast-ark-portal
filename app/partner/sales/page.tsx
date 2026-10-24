@@ -6,13 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { reportAndMaskError, logSystemTelemetry } from "../../lib/errorCodes";
-
-// Formats YYYY-MM-DD strictly to DD/MM/YYYY for Indian locale UI Display
-const formatToDDMMYYYY = (dateStr: string) => {
-  if (!dateStr) return "";
-  const [y, m, d] = dateStr.split("-");
-  return `${d}/${m}/${y}`;
-};
+import { formatToDDMMYYYY, getISTDateString } from "../../lib/aadhaarEngine";
 
 export default function PartnerSalesReport() {
   const router = useRouter();
@@ -43,7 +37,7 @@ export default function PartnerSalesReport() {
   const [confirmSubmit, setConfirmSubmit] = useState(false);
 
   const [form, setForm] = useState({
-    report_date: new Date().toISOString().split("T")[0],
+    report_date: getISTDateString(0),
 
     // 1. BSNL CBP
     cbp_landline_qty: 0,
@@ -98,7 +92,9 @@ export default function PartnerSalesReport() {
 
         const { data: partnerData } = await supabase
           .from("active_partners")
-          .select("id, partner_name, email, role, center_id, locations(center_name, center_code)")
+          .select(
+            "id, partner_name, email, role, center_id, locations(center_name, center_code)"
+          )
           .ilike("email", session.user.email || "")
           .maybeSingle();
 
@@ -233,18 +229,21 @@ export default function PartnerSalesReport() {
     }
   };
 
-  // Dynamic Time Engine
+  // Dynamic IST-Safe Time Engine
   const calculateDiffDays = () => {
     if (!form.report_date) return 0;
-    const rDate = new Date(form.report_date);
-    const tDate = new Date();
-    rDate.setHours(0, 0, 0, 0);
-    tDate.setHours(0, 0, 0, 0);
-    return Math.round((tDate.getTime() - rDate.getTime()) / (1000 * 60 * 60 * 24));
+    const todayISTStr = getISTDateString(0);
+    const rDate = new Date(`${form.report_date}T00:00:00+05:30`);
+    const tDate = new Date(`${todayISTStr}T00:00:00+05:30`);
+    return Math.round(
+      (tDate.getTime() - rDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
   };
 
   const diffDaysDynamic = calculateDiffDays();
-  const isBackdateLocked = !isEditMode && diffDaysDynamic > 7 && diffDaysDynamic <= 30;
+  const isFutureDate = !isEditMode && diffDaysDynamic < 0;
+  const isBackdateLocked =
+    !isEditMode && diffDaysDynamic > 7 && diffDaysDynamic <= 30;
   const isTooOld = !isEditMode && diffDaysDynamic > 30;
 
   // Dual-Platform Mathematical Engine
@@ -276,7 +275,9 @@ export default function PartnerSalesReport() {
     bsnlCbpCash + bsnlCtopCash + bsnlSimCash + bsnlOtherCash + paybullTotalCash;
 
   const isZeroBusiness =
-    grandTotalCashCollection === 0 && totalSimQty === 0 && form.cheque_amt === 0;
+    grandTotalCashCollection === 0 &&
+    totalSimQty === 0 &&
+    form.cheque_amt === 0;
 
   // Backdate Request Engine
   const handleBackdateRequest = async () => {
@@ -355,6 +356,11 @@ export default function PartnerSalesReport() {
         type: "error",
         text: "[ERR-REL-203] Partner profile not loaded.",
       });
+    if (isFutureDate)
+      return setStatusBanner({
+        type: "error",
+        text: "Validation Error: You cannot log a sales report for a future date.",
+      });
     if (isBackdateLocked || isTooOld)
       return setStatusBanner({
         type: "error",
@@ -376,8 +382,8 @@ export default function PartnerSalesReport() {
     setSubmitting(true);
     setStatusBanner(null);
     try {
-      if (!isEditMode && diffDaysDynamic > 7)
-        throw new Error("Backdate lock bypass blocked.");
+      if (!isEditMode && (diffDaysDynamic > 7 || diffDaysDynamic < 0))
+        throw new Error("Date lock bypass blocked.");
 
       if (!isEditMode) {
         const { data: duplicateCheck } = await supabase
@@ -636,6 +642,7 @@ export default function PartnerSalesReport() {
               <input
                 type="date"
                 required
+                max={getISTDateString(0)}
                 disabled={isEditMode}
                 value={form.report_date}
                 onChange={(e) =>
@@ -676,7 +683,11 @@ export default function PartnerSalesReport() {
                 { id: 1, label: "1. CBP", amt: bsnlCbpCash },
                 { id: 2, label: "2. CTOP", amt: bsnlCtopCash + form.frc_amt },
                 { id: 3, label: "3. SIM", amt: bsnlSimCash - form.frc_amt },
-                { id: 4, label: "4. Chq", amt: bsnlOtherCash + form.cheque_amt },
+                {
+                  id: 4,
+                  label: "4. Chq",
+                  amt: bsnlOtherCash + form.cheque_amt,
+                },
                 { id: 5, label: "5. PB", amt: paybullTotalCash },
               ].map((tab) => (
                 <button
@@ -702,7 +713,7 @@ export default function PartnerSalesReport() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div
               className={`lg:col-span-8 space-y-5 ${
-                isBackdateLocked || isTooOld
+                isBackdateLocked || isTooOld || isFutureDate
                   ? "opacity-50 pointer-events-none grayscale"
                   : ""
               }`}
@@ -1383,7 +1394,9 @@ export default function PartnerSalesReport() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-400 font-bold">BSNL CTOP:</span>
+                      <span className="text-slate-400 font-bold">
+                        BSNL CTOP:
+                      </span>
                       <span className="text-white font-black">
                         ₹
                         {bsnlCtopCash.toLocaleString("en-IN", {
@@ -1465,38 +1478,52 @@ export default function PartnerSalesReport() {
                   </div>
 
                   {/* ZERO BUSINESS MENU TRIGGER */}
-                  {isZeroBusiness && !isBackdateLocked && !isTooOld && (
-                    <div className="mt-4 bg-amber-50 p-4 rounded-xl border-2 border-amber-400 animate-in fade-in zoom-in-95">
-                      <label className="block text-[10px] font-black uppercase tracking-widest text-amber-900 mb-2">
-                        ⚠️ &apos;0&apos; Entry Detected - Select Reason *
-                      </label>
-                      <select
-                        required
-                        value={form.zero_business_reason}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            zero_business_reason: e.target.value,
-                          })
-                        }
-                        className="w-full border-2 border-amber-300 p-3 rounded-lg text-sm font-bold bg-white text-amber-900 outline-none focus:border-amber-600"
-                      >
-                        <option value="" disabled>
-                          -- Select Reason --
-                        </option>
-                        <option value="ABSENT">1. ABSENT / ON LEAVE</option>
-                        <option value="NO BUSINESS">2. NO BUSINESS</option>
-                        <option value="TECHNICAL ISSUES">
-                          3. TECHNICAL ISSUES
-                        </option>
-                        <option value="OTHER REASONS">4. OTHER REASONS</option>
-                      </select>
-                    </div>
-                  )}
+                  {isZeroBusiness &&
+                    !isBackdateLocked &&
+                    !isTooOld &&
+                    !isFutureDate && (
+                      <div className="mt-4 bg-amber-50 p-4 rounded-xl border-2 border-amber-400 animate-in fade-in zoom-in-95">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-amber-900 mb-2">
+                          ⚠️ &apos;0&apos; Entry Detected - Select Reason *
+                        </label>
+                        <select
+                          required
+                          value={form.zero_business_reason}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              zero_business_reason: e.target.value,
+                            })
+                          }
+                          className="w-full border-2 border-amber-300 p-3 rounded-lg text-sm font-bold bg-white text-amber-900 outline-none focus:border-amber-600"
+                        >
+                          <option value="" disabled>
+                            -- Select Reason --
+                          </option>
+                          <option value="ABSENT">1. ABSENT / ON LEAVE</option>
+                          <option value="NO BUSINESS">2. NO BUSINESS</option>
+                          <option value="TECHNICAL ISSUES">
+                            3. TECHNICAL ISSUES
+                          </option>
+                          <option value="OTHER REASONS">
+                            4. OTHER REASONS
+                          </option>
+                        </select>
+                      </div>
+                    )}
                 </div>
 
                 <div className="p-4 bg-slate-950">
-                  {isTooOld ? (
+                  {isFutureDate ? (
+                    <div className="bg-red-900/50 border border-red-500 p-4 rounded-xl text-center">
+                      <p className="text-red-400 font-black uppercase tracking-widest text-sm">
+                        Future Date Blocked
+                      </p>
+                      <p className="text-red-200 text-xs font-bold mt-1">
+                        You cannot log a sales report for a future date.
+                      </p>
+                    </div>
+                  ) : isTooOld ? (
                     <div className="bg-red-900/50 border border-red-500 p-4 rounded-xl text-center">
                       <p className="text-red-400 font-black uppercase tracking-widest text-sm">
                         System Blocked

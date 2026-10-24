@@ -1,7 +1,7 @@
 // FILE PATH: ./app/partner/deposit/page.tsx
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
@@ -31,7 +31,9 @@ export default function PartnerDepositPage() {
 
   // Desktop Split-Pane & Mobile 3-Tab Switcher ("form" | "viewer" | "ledger")
   const [rightPanel, setRightPanel] = useState<"ledger" | "viewer">("ledger");
-  const [mobileTab, setMobileTab] = useState<"form" | "viewer" | "ledger">("form");
+  const [mobileTab, setMobileTab] = useState<"form" | "viewer" | "ledger">(
+    "form"
+  );
 
   // Data States
   const [deposits, setDeposits] = useState<any[]>([]);
@@ -93,6 +95,12 @@ export default function PartnerDepositPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["ArrowUp", "ArrowDown", "e", "E", "+", "-"].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
+
   const handlePresetChange = (mode: DatePresetMode) => {
     setDatePreset(mode);
     if (mode !== "custom") {
@@ -127,7 +135,7 @@ export default function PartnerDepositPage() {
           .from("partner_deposits")
           .select("*")
           .eq("partner_id", partnerData.id)
-          .order("created_at", { ascending: false }),
+          .order("deposit_date", { ascending: false }),
         supabase
           .from("daily_sales_reports")
           .select("*")
@@ -265,12 +273,22 @@ export default function PartnerDepositPage() {
       );
     }
 
+    if (!form.deposit_date || form.deposit_date > getISTDateString(0)) {
+      return showBanner(
+        "error",
+        "Validation Error: Deposit Date cannot be in the future."
+      );
+    }
+
     const amt = parseFloat(form.deposit_amount);
     if (isNaN(amt) || amt <= 0)
       return showBanner("error", "Deposit Amount must be greater than zero.");
 
     const cleanUtr = form.utr_number.trim().replace(/\s+/g, "").toUpperCase();
-    const cleanTxnId = (form.transaction_id || cleanUtr).trim().toUpperCase();
+    const cleanTxnId = (form.transaction_id || cleanUtr)
+      .trim()
+      .replace(/\s+/g, "")
+      .toUpperCase();
     const finalRefCode =
       form.reference_code ||
       generateSystemReferenceCode("FA-DEP", form.deposit_date);
@@ -404,6 +422,7 @@ export default function PartnerDepositPage() {
         deposit_date: todayStr,
       });
       setSlipImage(null);
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
       setImagePreview(null);
       setOcrRawAmount(null);
       setOcrRawRef(null);
@@ -449,20 +468,51 @@ export default function PartnerDepositPage() {
   const handleEditSubmit = async (id: string) => {
     const cleanUtr = String(editForm.utr_number || "")
       .trim()
+      .replace(/\s+/g, "")
       .toUpperCase();
     const cleanTxn = String(editForm.transaction_id || cleanUtr)
       .trim()
+      .replace(/\s+/g, "")
       .toUpperCase();
     const amt = parseFloat(editForm.deposit_amount);
 
     if (isNaN(amt) || amt <= 0)
       return showBanner("error", "Amount must be greater than zero.");
     if (cleanUtr.length < 4)
-      return showBanner("error", "Valid Unique UTR is required.");
+      return showBanner(
+        "error",
+        "Valid Unique UTR (minimum 4 characters) is required."
+      );
+    if (cleanTxn.length < 4)
+      return showBanner(
+        "error",
+        "Valid Transaction ID (minimum 4 characters) is required."
+      );
     if (!confirm("Update this pending deposit record?")) return;
 
     setIsSubmitting(true);
     try {
+      // Pre-flight duplicate UTR check excluding the current record being edited
+      const { data: dupCheck } = await supabase
+        .from("partner_deposits")
+        .select("id, reference_code")
+        .neq("id", id)
+        .or(
+          `utr_number.eq.${cleanUtr},reference_no.eq.${cleanUtr},reference_no.eq.AADHAAR_${cleanUtr}`
+        )
+        .limit(1)
+        .maybeSingle();
+
+      if (dupCheck) {
+        setIsSubmitting(false);
+        return showBanner(
+          "error",
+          `[ERR-DUP-205] Fraud Prevention Block: UTR '${cleanUtr}' is already registered under Reference Code ${
+            dupCheck.reference_code || "EXISTING"
+          }.`
+        );
+      }
+
       const { error: richErr } = await supabase
         .from("partner_deposits")
         .update({
@@ -472,7 +522,8 @@ export default function PartnerDepositPage() {
           transaction_id: cleanTxn,
           deposit_method: editForm.deposit_method,
         })
-        .eq("id", id);
+        .eq("id", id)
+        .in("status", ["Pending", "Pending Verification"]);
 
       if (richErr && richErr.code === "42703") {
         const { error: fbErr } = await supabase
@@ -482,7 +533,8 @@ export default function PartnerDepositPage() {
             reference_no: cleanUtr,
             deposit_method: editForm.deposit_method,
           })
-          .eq("id", id);
+          .eq("id", id)
+          .in("status", ["Pending", "Pending Verification"]);
         if (fbErr) throw fbErr;
       } else if (richErr) {
         throw richErr;
@@ -751,7 +803,10 @@ export default function PartnerDepositPage() {
           </button>
           <button
             type="button"
-            onClick={() => setMobileTab("viewer")}
+            onClick={() => {
+              setMobileTab("viewer");
+              setRightPanel("viewer");
+            }}
             className={`py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition ${
               mobileTab === "viewer"
                 ? "bg-blue-600 text-white shadow"
@@ -762,7 +817,10 @@ export default function PartnerDepositPage() {
           </button>
           <button
             type="button"
-            onClick={() => setMobileTab("ledger")}
+            onClick={() => {
+              setMobileTab("ledger");
+              setRightPanel("ledger");
+            }}
             className={`py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition ${
               mobileTab === "ledger"
                 ? "bg-emerald-600 text-white shadow"
@@ -817,6 +875,7 @@ export default function PartnerDepositPage() {
                     onChange={(e) => {
                       setIsExempted(e.target.checked);
                       setSlipImage(null);
+                      if (imagePreview) URL.revokeObjectURL(imagePreview);
                       setImagePreview(null);
                       setOcrRawAmount(null);
                       setOcrRawRef(null);
@@ -995,11 +1054,13 @@ export default function PartnerDepositPage() {
                   type="number"
                   inputMode="decimal"
                   step="0.01"
+                  min="0"
                   value={form.deposit_amount}
                   onChange={(e) =>
                     setForm({ ...form, deposit_amount: e.target.value })
                   }
                   onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                  onKeyDown={handleNumericKeyDown}
                   className={numInputClass}
                   placeholder="0.00"
                 />
@@ -1051,7 +1112,7 @@ export default function PartnerDepositPage() {
 
               <div>
                 <label className="text-[10px] font-black text-blue-700 uppercase tracking-widest block mb-1.5">
-                  4. Unique UTR Number (12-Digit UPI / Bank RRN) *
+                  4. Unique UTR Number (12-Digit UPI / Bank Ref) *
                 </label>
                 <input
                   required
@@ -1169,7 +1230,10 @@ export default function PartnerDepositPage() {
                 <div className="hidden lg:flex bg-slate-800 p-1 rounded-lg">
                   <button
                     type="button"
-                    onClick={() => setRightPanel("viewer")}
+                    onClick={() => {
+                      setRightPanel("viewer");
+                      setMobileTab("viewer");
+                    }}
                     className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${
                       rightPanel === "viewer"
                         ? "bg-blue-600 text-white shadow"
@@ -1180,7 +1244,10 @@ export default function PartnerDepositPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setRightPanel("ledger")}
+                    onClick={() => {
+                      setRightPanel("ledger");
+                      setMobileTab("ledger");
+                    }}
                     className={`px-4 py-2 rounded text-xs font-black uppercase tracking-widest transition ${
                       rightPanel === "ledger"
                         ? "bg-blue-600 text-white shadow"
@@ -1234,6 +1301,7 @@ export default function PartnerDepositPage() {
                   <input
                     type="date"
                     value={filterToDate}
+                    max={getISTDateString(0)}
                     onChange={(e) => {
                       setDatePreset("custom");
                       setFilterToDate(e.target.value);
@@ -1245,7 +1313,7 @@ export default function PartnerDepositPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto bg-slate-50">
-              {rightPanel === "viewer" || mobileTab === "viewer" ? (
+              {rightPanel === "viewer" ? (
                 <div className="p-5 flex flex-col items-center justify-start min-h-full">
                   {imagePreview ? (
                     <div className="w-full flex flex-col items-center space-y-3">
@@ -1291,7 +1359,7 @@ export default function PartnerDepositPage() {
                 </div>
               ) : (
                 <>
-                  {/* MOBILE CARD FEED WITH INLINE EDIT FORM (FIX #6) */}
+                  {/* MOBILE CARD FEED WITH INLINE EDIT FORM */}
                   <div className="md:hidden divide-y divide-slate-200">
                     {filteredDeposits.length === 0 ? (
                       <div className="p-10 text-center text-slate-400 font-bold bg-white">
@@ -1367,6 +1435,7 @@ export default function PartnerDepositPage() {
                                   <input
                                     type="number"
                                     step="0.01"
+                                    min="0"
                                     value={editForm.deposit_amount}
                                     onChange={(e) =>
                                       setEditForm({
@@ -1374,6 +1443,10 @@ export default function PartnerDepositPage() {
                                         deposit_amount: e.target.value,
                                       })
                                     }
+                                    onWheel={(e) =>
+                                      (e.target as HTMLInputElement).blur()
+                                    }
+                                    onKeyDown={handleNumericKeyDown}
                                     className="w-full border border-amber-300 p-2 rounded-lg font-black text-slate-900"
                                   />
                                 </div>
@@ -1615,6 +1688,7 @@ export default function PartnerDepositPage() {
                                     <input
                                       type="number"
                                       step="0.01"
+                                      min="0"
                                       value={editForm.deposit_amount}
                                       onChange={(e) =>
                                         setEditForm({
@@ -1625,6 +1699,7 @@ export default function PartnerDepositPage() {
                                       onWheel={(e) =>
                                         (e.target as HTMLInputElement).blur()
                                       }
+                                      onKeyDown={handleNumericKeyDown}
                                       className="w-24 border border-amber-300 p-1.5 rounded outline-none font-black text-right text-xs bg-white"
                                     />
                                   ) : (
@@ -1673,10 +1748,11 @@ export default function PartnerDepositPage() {
                                         onChange={(e) =>
                                           setEditForm({
                                             ...editForm,
-                                            utr_number: e.target.value,
+                                            utr_number:
+                                              e.target.value.toUpperCase(),
                                           })
                                         }
-                                        className="border border-amber-300 p-1 rounded outline-none font-bold text-xs bg-white"
+                                        className="border border-amber-300 p-1 rounded outline-none font-bold text-xs uppercase bg-white"
                                       />
                                       <input
                                         type="text"
@@ -1685,10 +1761,11 @@ export default function PartnerDepositPage() {
                                         onChange={(e) =>
                                           setEditForm({
                                             ...editForm,
-                                            transaction_id: e.target.value,
+                                            transaction_id:
+                                              e.target.value.toUpperCase(),
                                           })
                                         }
-                                        className="border border-amber-300 p-1 rounded outline-none font-bold text-xs bg-white"
+                                        className="border border-amber-300 p-1 rounded outline-none font-bold text-xs uppercase bg-white"
                                       />
                                     </div>
                                   ) : (

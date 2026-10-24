@@ -1,3 +1,4 @@
+// FILE PATH: ./app/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -30,9 +31,16 @@ export default function AdminCommandCenter() {
   const [isRouting, setIsRouting] = useState(false);
 
   // SUPPORT DESK SPA ENGINE
-  const [activeView, setActiveView] = useState<"dashboard" | "support">("dashboard");
+  const [activeView, setActiveView] = useState<"dashboard" | "support">(
+    "dashboard"
+  );
 
-  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, locations: 0 });
+  const [stats, setStats] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    locations: 0,
+  });
   const [recentApps, setRecentApps] = useState<any[]>([]);
   const [enquiries, setEnquiries] = useState<any[]>([]);
 
@@ -47,8 +55,12 @@ export default function AdminCommandCenter() {
 
   // 7-OPTION DATE PRESET + 4-TIER CASCADE FILTER ENGINE STATES
   const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
-  const [fromDate, setFromDate] = useState(() => getDateRangeFromPreset("current_month").start);
-  const [toDate, setToDate] = useState(() => getDateRangeFromPreset("current_month").end);
+  const [fromDate, setFromDate] = useState(
+    () => getDateRangeFromPreset("current_month").start
+  );
+  const [toDate, setToDate] = useState(
+    () => getDateRangeFromPreset("current_month").end
+  );
 
   const [fState, setFState] = useState("ALL");
   const [fHq, setFHq] = useState("ALL");
@@ -77,24 +89,35 @@ export default function AdminCommandCenter() {
 
   const initializeDashboard = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
       const { data: staffData } = await supabase
         .from("back_office_staff")
         .select("*")
-        .eq("email", session.user.email)
-        .single();
+        .ilike("email", (session.user.email || "").trim())
+        .maybeSingle();
 
-      if (staffData) setAdminUser(staffData);
+      if (!staffData || staffData.status !== "Active") {
+        return router.push("/login");
+      }
 
       const safeRole = (staffData?.role || "").trim().toLowerCase();
+      if (safeRole === "supervisor") {
+        return router.push("/dashboard/supervisor-hub");
+      }
+
+      setAdminUser(staffData);
 
       const [locRes, partRes] = await Promise.all([
         supabase.from("locations").select("*").order("center_name"),
         supabase
           .from("active_partners")
-          .select("id, partner_name, role, role_aadhaar, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id)")
+          .select(
+            "id, partner_name, role, role_aadhaar, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id)"
+          )
           .eq("status", "Active")
           .order("partner_name"),
       ]);
@@ -131,10 +154,12 @@ export default function AdminCommandCenter() {
 
       const apps = appsData || [];
       setStats({
-        pending: apps.filter((app) => app.status === "Pending" || !app.status).length,
+        pending: apps.filter((app) => app.status === "Pending" || !app.status)
+          .length,
         approved: apps.filter((app) => app.status === "Approved").length,
         rejected: apps.filter((app) => app.status === "Rejected").length,
-        locations: locationsArray.filter((l) => l.is_active).length || 0,
+        locations:
+          locationsArray.filter((l) => l.is_active !== false).length || 0,
       });
       setRecentApps(apps.slice(0, 5));
     } catch (error: any) {
@@ -143,7 +168,12 @@ export default function AdminCommandCenter() {
   };
 
   useEffect(() => {
-    if (adminUser && ["admin", "accountant", "manager"].includes(adminUser.role.trim().toLowerCase())) {
+    if (
+      adminUser &&
+      ["admin", "accountant", "manager"].includes(
+        adminUser.role.trim().toLowerCase()
+      )
+    ) {
       fetchFinancialData();
     }
   }, [fromDate, toDate, adminUser]);
@@ -154,20 +184,26 @@ export default function AdminCommandCenter() {
       const [salesRes, aadhaarRes, depositsRes] = await Promise.all([
         supabase
           .from("daily_sales_reports")
-          .select(`*, active_partners (id, partner_name, locations (id, state, dist, center_name, parent_master_id))`)
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
           .gte("report_date", fromDate)
           .lte("report_date", toDate),
         supabase
           .from("aadhaar_daily_reports")
-          .select(`*, active_partners (id, partner_name, locations (id, state, dist, center_name, parent_master_id))`)
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
           .gte("report_date", fromDate)
           .lte("report_date", toDate),
         supabase
           .from("partner_deposits")
-          .select(`*, active_partners (id, partner_name, locations (id, state, dist, center_name, parent_master_id))`)
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
           .neq("status", "Discrepancy")
-          .gte("created_at", `${fromDate}T00:00:00+05:30`)
-          .lte("created_at", `${toDate}T23:59:59+05:30`),
+          .gte("deposit_date", fromDate)
+          .lte("deposit_date", toDate),
       ]);
 
       setRawSales(salesRes.data || []);
@@ -194,9 +230,23 @@ export default function AdminCommandCenter() {
     if (allPartners.length > 0) {
       calculateEngine(rawSales, rawAadhaar, rawDeposits, allPartners);
     }
-  }, [fState, fHq, fCenter, fPartner, rawSales, rawAadhaar, rawDeposits, allPartners]);
+  }, [
+    fState,
+    fHq,
+    fCenter,
+    fPartner,
+    rawSales,
+    rawAadhaar,
+    rawDeposits,
+    allPartners,
+  ]);
 
-  const calculateEngine = (sales: any[], aadhaar: any[], deposits: any[], directory: any[]) => {
+  const calculateEngine = (
+    sales: any[],
+    aadhaar: any[],
+    deposits: any[],
+    directory: any[]
+  ) => {
     const applyGeoFilter = (item: any) => {
       const p = item.active_partners || item;
       const locData = p?.locations;
@@ -204,7 +254,12 @@ export default function AdminCommandCenter() {
       if (!l) return false;
 
       if (fState !== "ALL" && l.state !== fState) return false;
-      if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq && l.id?.toString() !== fHq) return false;
+      if (
+        fHq !== "ALL" &&
+        l.parent_master_id?.toString() !== fHq &&
+        l.id?.toString() !== fHq
+      )
+        return false;
       if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
       if (fPartner !== "ALL" && p.id?.toString() !== fPartner) return false;
 
@@ -224,7 +279,10 @@ export default function AdminCommandCenter() {
       tCheque = 0,
       tSalesCash = 0,
       tDepositCash = 0;
-    const chartMap: Record<string, { date: string; Sales: number; Deposits: number }> = {};
+    const chartMap: Record<
+      string,
+      { date: string; Sales: number; Deposits: number }
+    > = {};
 
     filteredSales.forEach((s) => {
       const sCbp = Number(s.cbp_landline_amt || 0) + Number(s.cbp_gsm_amt || 0);
@@ -252,7 +310,8 @@ export default function AdminCommandCenter() {
       tSalesCash += totalCashRow;
 
       const dateKey = s.report_date;
-      if (!chartMap[dateKey]) chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+      if (!chartMap[dateKey])
+        chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
       chartMap[dateKey].Sales += totalCashRow;
     });
 
@@ -262,7 +321,8 @@ export default function AdminCommandCenter() {
       tSalesCash += aCash;
 
       const dateKey = a.report_date;
-      if (!chartMap[dateKey]) chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+      if (!chartMap[dateKey])
+        chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
       chartMap[dateKey].Sales += aCash;
     });
 
@@ -271,7 +331,8 @@ export default function AdminCommandCenter() {
       tDepositCash += amt;
 
       const dateKey = (d.deposit_date || d.created_at).split("T")[0];
-      if (!chartMap[dateKey]) chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+      if (!chartMap[dateKey])
+        chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
       chartMap[dateKey].Deposits += amt;
     });
 
@@ -285,23 +346,35 @@ export default function AdminCommandCenter() {
       totalSalesCash: tSalesCash,
       totalDeposits: tDepositCash,
     });
-    setChartData(Object.values(chartMap).sort((a, b) => a.date.localeCompare(b.date)));
+    setChartData(
+      Object.values(chartMap).sort((a, b) => a.date.localeCompare(b.date))
+    );
 
     // Recognize both Telecom Sales AND Aadhaar Daily Reports as valid activity
     const partnersWithActivity = new Set([
       ...filteredSales.map((s) => s.partner_id),
       ...filteredAadhaar.map((a) => a.partner_id),
     ]);
-    const partnersWithDeposits = new Set(filteredDeposits.map((d) => d.partner_id));
+    const partnersWithDeposits = new Set(
+      filteredDeposits.map((d) => d.partner_id)
+    );
 
-    setMissingSales(filteredDirectory.filter((p) => !partnersWithActivity.has(p.id)));
-    setMissingDeposits(filteredDirectory.filter((p) => !partnersWithDeposits.has(p.id)));
+    setMissingSales(
+      filteredDirectory.filter((p) => !partnersWithActivity.has(p.id))
+    );
+    setMissingDeposits(
+      filteredDirectory.filter((p) => !partnersWithDeposits.has(p.id))
+    );
   };
 
-  const uniqueStates = Array.from(new Set(allLocations.map((l) => l.state).filter(Boolean))).sort();
+  const uniqueStates = Array.from(
+    new Set(allLocations.map((l) => l.state).filter(Boolean))
+  ).sort();
 
   const hqLocations = allLocations
-    .filter((l) => l.is_master_node && (fState === "ALL" || l.state === fState))
+    .filter(
+      (l) => l.is_master_node && (fState === "ALL" || l.state === fState)
+    )
     .sort((a, b) => a.center_name.localeCompare(b.center_name));
 
   const centerLocations = allLocations
@@ -319,7 +392,12 @@ export default function AdminCommandCenter() {
       const l: any = Array.isArray(locData) ? locData[0] : locData;
       if (!l) return false;
       if (fState !== "ALL" && l.state !== fState) return false;
-      if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq && l.id?.toString() !== fHq) return false;
+      if (
+        fHq !== "ALL" &&
+        l.parent_master_id?.toString() !== fHq &&
+        l.id?.toString() !== fHq
+      )
+        return false;
       if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
       return true;
     })
@@ -364,7 +442,10 @@ export default function AdminCommandCenter() {
           >
             <span>&larr;</span> Back to Command Center
           </button>
-          <SupportDeskModule allLocations={allLocations} currentUserRole={safeRole} />
+          <SupportDeskModule
+            allLocations={allLocations}
+            currentUserRole={safeRole}
+          />
         </div>
       </div>
     );
@@ -385,11 +466,21 @@ export default function AdminCommandCenter() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-4">
           <div>
             <h1 className="text-4xl font-black text-slate-900">
-              {isAccountant ? "Finance Command" : isStaff ? "Operations Desk" : "Admin Command Center"}
+              {isAccountant
+                ? "Finance Command"
+                : isStaff
+                ? "Operations Desk"
+                : "Admin Command Center"}
             </h1>
             <p className="text-slate-500 mt-2 font-medium">
-              Welcome back, <span className="font-bold text-slate-800">{adminUser?.name || "User"}</span> | Role:{" "}
-              <span className="font-black text-purple-600 uppercase tracking-widest">{rawRole || "System"}</span>
+              Welcome back,{" "}
+              <span className="font-bold text-slate-800">
+                {adminUser?.name || "User"}
+              </span>{" "}
+              | Role:{" "}
+              <span className="font-black text-purple-600 uppercase tracking-widest">
+                {rawRole || "System"}
+              </span>
             </p>
           </div>
 
@@ -418,11 +509,18 @@ export default function AdminCommandCenter() {
             <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
               <div>
                 <h2 className="text-white font-black text-lg tracking-wide flex items-center gap-2">
-                  <span>📈</span> Live Revenue &amp; Reconciliation (BSNL + Paybull + Aadhaar)
+                  <span>📈</span> Live Revenue &amp; Reconciliation (BSNL +
+                  Paybull + Aadhaar)
                 </h2>
                 <p className="text-xs font-bold text-slate-400 mt-1">
-                  Active Window: <span className="text-blue-400">{formatToDDMMYYYY(fromDate)}</span> to{" "}
-                  <span className="text-blue-400">{formatToDDMMYYYY(toDate)}</span>
+                  Active Window:{" "}
+                  <span className="text-blue-400">
+                    {formatToDDMMYYYY(fromDate)}
+                  </span>{" "}
+                  to{" "}
+                  <span className="text-blue-400">
+                    {formatToDDMMYYYY(toDate)}
+                  </span>
                 </p>
               </div>
 
@@ -434,12 +532,21 @@ export default function AdminCommandCenter() {
                   <select
                     value={datePreset}
                     disabled={isRefreshingFinance}
-                    onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
+                    onChange={(e) =>
+                      handlePresetChange(e.target.value as DatePresetMode)
+                    }
                     className="bg-slate-800 border-2 border-indigo-500/70 text-white font-black text-xs rounded-lg p-2 outline-none focus:border-indigo-400"
                   >
-                    <option value="today">1. Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
+                    <option value="today">
+                      1. Today (
+                      {formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
+                    </option>
                     <option value="yesterday">
-                      2. Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                      2. Yesterday (
+                      {formatToDDMMYYYY(
+                        getDateRangeFromPreset("yesterday").start
+                      )}
+                      )
                     </option>
                     <option value="current_week">3. Current Week</option>
                     <option value="current_month">4. Current Month</option>
@@ -559,10 +666,15 @@ export default function AdminCommandCenter() {
                   onChange={(e) => setFPartner(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 text-white text-xs font-bold rounded p-2.5 outline-none focus:border-blue-500 transition"
                 >
-                  <option value="ALL">All Operators ({filteredPartners.length})</option>
+                  <option value="ALL">
+                    All Operators ({filteredPartners.length})
+                  </option>
                   {filteredPartners.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.partner_name} {p.aadhaar_station_id ? `(Stn: ${p.aadhaar_station_id})` : ""}
+                      {p.partner_name}{" "}
+                      {p.aadhaar_station_id
+                        ? `(Stn: ${p.aadhaar_station_id})`
+                        : ""}
                     </option>
                   ))}
                 </select>
@@ -572,46 +684,91 @@ export default function AdminCommandCenter() {
             {/* 8-CARD MULTI-STREAM REVENUE SUMMARY */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-slate-700">
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total CBP</p>
-                <p className="text-lg font-black text-white">₹{financials.cbp.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                  Total CBP
+                </p>
+                <p className="text-lg font-black text-white">
+                  ₹{financials.cbp.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total CTOP</p>
-                <p className="text-lg font-black text-white">₹{financials.ctop.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                  Total CTOP
+                </p>
+                <p className="text-lg font-black text-white">
+                  ₹{financials.ctop.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">SIM / FRC / MNP</p>
-                <p className="text-lg font-black text-white">₹{financials.sim.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                  SIM / FRC / MNP
+                </p>
+                <p className="text-lg font-black text-white">
+                  ₹{financials.sim.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest mb-1">Paybull Cash</p>
-                <p className="text-lg font-black text-indigo-400">₹{financials.paybull.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest mb-1">
+                  Paybull Cash
+                </p>
+                <p className="text-lg font-black text-indigo-400">
+                  ₹{financials.paybull.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-amber-400 font-bold uppercase tracking-widest mb-1">Aadhaar Cash</p>
-                <p className="text-lg font-black text-amber-400">₹{financials.aadhaar.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-amber-400 font-bold uppercase tracking-widest mb-1">
+                  Aadhaar Cash
+                </p>
+                <p className="text-lg font-black text-amber-400">
+                  ₹{financials.aadhaar.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 flex flex-col justify-center">
-                <p className="text-[9px] text-amber-500/70 font-bold uppercase tracking-widest mb-1">Cheque Amt</p>
-                <p className="text-lg font-black text-amber-500">₹{financials.cheque.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-amber-500/70 font-bold uppercase tracking-widest mb-1">
+                  Cheque Amt
+                </p>
+                <p className="text-lg font-black text-amber-500">
+                  ₹{financials.cheque.toLocaleString("en-IN")}
+                </p>
               </div>
 
               <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-blue-500 flex flex-col justify-center">
-                <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mb-1">Total Generated</p>
-                <p className="text-xl font-black text-white">₹{financials.totalSalesCash.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mb-1">
+                  Total Generated
+                </p>
+                <p className="text-xl font-black text-white">
+                  ₹{financials.totalSalesCash.toLocaleString("en-IN")}
+                </p>
               </div>
               <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-green-500 flex flex-col justify-center">
-                <p className="text-[9px] text-green-400 font-black uppercase tracking-widest mb-1">Total Deposited</p>
-                <p className="text-xl font-black text-white">₹{financials.totalDeposits.toLocaleString("en-IN")}</p>
+                <p className="text-[9px] text-green-400 font-black uppercase tracking-widest mb-1">
+                  Total Deposited
+                </p>
+                <p className="text-xl font-black text-white">
+                  ₹{financials.totalDeposits.toLocaleString("en-IN")}
+                </p>
               </div>
             </div>
 
             {chartData.length > 0 && (
               <div className="p-6 bg-slate-900 w-full h-80 border-t border-slate-700">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} />
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#334155"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#94a3b8"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(val) => formatToDDMMYYYY(val)}
+                    />
                     <YAxis
                       stroke="#94a3b8"
                       fontSize={12}
@@ -620,12 +777,33 @@ export default function AdminCommandCenter() {
                       tickFormatter={(val) => `₹${val / 1000}k`}
                     />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "#0f172a", border: "none", borderRadius: "8px", color: "#fff" }}
+                      labelFormatter={(label) =>
+                        `Date: ${formatToDDMMYYYY(String(label))}`
+                      }
+                      contentStyle={{
+                        backgroundColor: "#0f172a",
+                        border: "none",
+                        borderRadius: "8px",
+                        color: "#fff",
+                      }}
                       cursor={{ fill: "#1e293b" }}
                     />
-                    <Legend iconType="circle" wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                    <Bar dataKey="Sales" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Cash Generated (All Streams)" />
-                    <Bar dataKey="Deposits" fill="#22c55e" radius={[4, 4, 0, 0]} name="Cash Remitted" />
+                    <Legend
+                      iconType="circle"
+                      wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="Sales"
+                      fill="#3b82f6"
+                      radius={[4, 4, 0, 0]}
+                      name="Cash Generated (All Streams)"
+                    />
+                    <Bar
+                      dataKey="Deposits"
+                      fill="#22c55e"
+                      radius={[4, 4, 0, 0]}
+                      name="Cash Remitted"
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -654,11 +832,17 @@ export default function AdminCommandCenter() {
                     const locData = p.locations;
                     const l: any = Array.isArray(locData) ? locData[0] : locData;
                     return (
-                      <div key={p.id} className="text-sm border-b pb-2 flex justify-between items-center">
+                      <div
+                        key={p.id}
+                        className="text-sm border-b pb-2 flex justify-between items-center"
+                      >
                         <div>
-                          <p className="font-bold text-slate-800">{p.partner_name}</p>
+                          <p className="font-bold text-slate-800">
+                            {p.partner_name}
+                          </p>
                           <p className="text-xs text-slate-500">
-                            [{l?.center_code || "NO-CODE"}] {l?.center_name} ({l?.dist})
+                            [{l?.center_code || "NO-CODE"}] {l?.center_name} (
+                            {l?.dist})
                           </p>
                         </div>
                         <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
@@ -690,11 +874,17 @@ export default function AdminCommandCenter() {
                     const locData = p.locations;
                     const l: any = Array.isArray(locData) ? locData[0] : locData;
                     return (
-                      <div key={p.id} className="text-sm border-b pb-2 flex justify-between items-center">
+                      <div
+                        key={p.id}
+                        className="text-sm border-b pb-2 flex justify-between items-center"
+                      >
                         <div>
-                          <p className="font-bold text-slate-800">{p.partner_name}</p>
+                          <p className="font-bold text-slate-800">
+                            {p.partner_name}
+                          </p>
                           <p className="text-xs text-slate-500">
-                            [{l?.center_code || "NO-CODE"}] {l?.center_name} ({l?.dist})
+                            [{l?.center_code || "NO-CODE"}] {l?.center_name} (
+                            {l?.dist})
                           </p>
                         </div>
                         <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
@@ -715,8 +905,12 @@ export default function AdminCommandCenter() {
               onClick={() => routeTo("/dashboard/applications")}
               className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-yellow-400 hover:shadow-md transition group block cursor-pointer"
             >
-              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Action Required</p>
-              <h2 className="text-3xl font-black text-slate-800">{stats.pending}</h2>
+              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">
+                Action Required
+              </p>
+              <h2 className="text-3xl font-black text-slate-800">
+                {stats.pending}
+              </h2>
               <p className="text-yellow-600 font-bold mt-2 text-xs flex items-center justify-between">
                 Pending Apps <span>→</span>
               </p>
@@ -726,24 +920,38 @@ export default function AdminCommandCenter() {
               onClick={() => routeTo("/dashboard/partners")}
               className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-green-500 hover:shadow-md transition group block cursor-pointer"
             >
-              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Network Growth</p>
-              <h2 className="text-3xl font-black text-slate-800">{stats.approved}</h2>
+              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">
+                Network Growth
+              </p>
+              <h2 className="text-3xl font-black text-slate-800">
+                {stats.approved}
+              </h2>
               <p className="text-green-600 font-bold mt-2 text-xs flex items-center justify-between">
                 Approved Partners <span>→</span>
               </p>
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-red-500">
-              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Declined</p>
-              <h2 className="text-3xl font-black text-slate-800">{stats.rejected}</h2>
-              <p className="text-red-600 font-bold mt-2 text-xs">Rejected Apps</p>
+              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">
+                Declined
+              </p>
+              <h2 className="text-3xl font-black text-slate-800">
+                {stats.rejected}
+              </h2>
+              <p className="text-red-600 font-bold mt-2 text-xs">
+                Rejected Apps
+              </p>
             </div>
             <div
               onClick={() => routeTo("/dashboard/locations")}
               className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-l-blue-600 hover:shadow-md transition group block cursor-pointer"
             >
-              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">Infrastructure</p>
-              <h2 className="text-3xl font-black text-slate-800">{stats.locations}</h2>
+              <p className="text-slate-500 font-bold uppercase text-xs tracking-wider mb-1">
+                Infrastructure
+              </p>
+              <h2 className="text-3xl font-black text-slate-800">
+                {stats.locations}
+              </h2>
               <p className="text-blue-600 font-bold mt-2 text-xs flex items-center justify-between">
                 Active Centers <span>→</span>
               </p>
@@ -752,7 +960,11 @@ export default function AdminCommandCenter() {
         )}
 
         <h2 className="text-xl font-black text-slate-800 border-l-4 border-blue-600 pl-3 pt-2">
-          {isAccountant ? "Financial Modules" : isStaff ? "Assigned Tasks" : "Enterprise Modules"}
+          {isAccountant
+            ? "Financial Modules"
+            : isStaff
+            ? "Assigned Tasks"
+            : "Enterprise Modules"}
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
@@ -766,7 +978,8 @@ export default function AdminCommandCenter() {
               Aadhaar Seva Kendra Hub
             </h3>
             <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-              Audit 5-category CSV/HTML uploads, weekly reconciliations, ₹100/day penalties, and UIDAI tariffs.
+              Audit 5-category CSV/HTML uploads, weekly reconciliations,
+              ₹100/day penalties, and UIDAI tariffs.
             </p>
           </div>
 
@@ -796,9 +1009,12 @@ export default function AdminCommandCenter() {
                   Auto-Scan
                 </span>
               </div>
-              <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">Compliance Engine</h3>
+              <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">
+                Compliance Engine
+              </h3>
               <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                Automated Defaulter Tracking for unlogged sales, cash limit breaches, and ignored alerts.
+                Automated Defaulter Tracking for unlogged sales, cash limit
+                breaches, and ignored alerts.
               </p>
             </div>
           )}
@@ -814,7 +1030,8 @@ export default function AdminCommandCenter() {
                   Corporate MIS Export
                 </h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                  Generate filtered Excel/CSV &amp; PDF reports for sales, deposits, and Aadhaar.
+                  Generate filtered Excel/CSV &amp; PDF reports for sales,
+                  deposits, and Aadhaar.
                 </p>
               </div>
 
@@ -839,7 +1056,9 @@ export default function AdminCommandCenter() {
               className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-400 transition group block cursor-pointer"
             >
               <div className="text-3xl mb-3">🏦</div>
-              <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">Accountant Portal</h3>
+              <h3 className="font-black text-lg text-slate-900 group-hover:text-amber-600">
+                Accountant Portal
+              </h3>
               <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
                 Verify partner cash deposits, OCR slips, and clear ledgers.
               </p>
@@ -853,9 +1072,12 @@ export default function AdminCommandCenter() {
                 className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-400 transition group block cursor-pointer"
               >
                 <div className="text-3xl mb-3">📊</div>
-                <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">MIS &amp; Balances</h3>
+                <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">
+                  MIS &amp; Balances
+                </h3>
                 <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                  Log daily Opening/Closing balances and manage operational ledgers.
+                  Log daily Opening/Closing balances and manage operational
+                  ledgers.
                 </p>
               </div>
 
@@ -870,7 +1092,8 @@ export default function AdminCommandCenter() {
                       Telecom &amp; OCSC Data
                     </h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                      Manage Master CTOP accounts, Sanchar Soft credentials, and Agent mappings.
+                      Manage Master CTOP accounts, Sanchar Soft credentials, and
+                      Agent mappings.
                     </p>
                   </div>
 
@@ -896,7 +1119,8 @@ export default function AdminCommandCenter() {
                       Logistics &amp; Supply
                     </h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                      Approve CTOP/CBP top-ups and mark physical SIMs dispatched.
+                      Approve CTOP/CBP top-ups and mark physical SIMs
+                      dispatched.
                     </p>
                   </div>
 
@@ -909,7 +1133,8 @@ export default function AdminCommandCenter() {
                       Corporate Banking Hub
                     </h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                      Manage remittance channels, virtual accounts, and UPI configurations.
+                      Manage remittance channels, virtual accounts, and UPI
+                      configurations.
                     </p>
                   </div>
 
@@ -918,9 +1143,12 @@ export default function AdminCommandCenter() {
                     className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-400 transition group block cursor-pointer"
                   >
                     <div className="text-3xl mb-3">💬</div>
-                    <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">Partner Alerts</h3>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">
+                      Partner Alerts
+                    </h3>
                     <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                      Dispatch secure priority alerts directly to partner dashboards.
+                      Dispatch secure priority alerts directly to partner
+                      dashboards.
                     </p>
                   </div>
                 </>
@@ -938,7 +1166,8 @@ export default function AdminCommandCenter() {
                 Productivity Matrix
               </h3>
               <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                View real-time staff performance analytics and strict audit trails.
+                View real-time staff performance analytics and strict audit
+                trails.
               </p>
             </div>
           )}
@@ -947,9 +1176,13 @@ export default function AdminCommandCenter() {
         {isManagerOrAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4 animate-in fade-in">
             <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-fit">
-              <h2 className="text-lg font-black mb-6 text-slate-800 border-b pb-2">Website Enquiries</h2>
+              <h2 className="text-lg font-black mb-6 text-slate-800 border-b pb-2">
+                Website Enquiries
+              </h2>
               {enquiries.length === 0 ? (
-                <div className="p-8 text-center text-gray-500 font-medium">No recent enquiries found.</div>
+                <div className="p-8 text-center text-gray-500 font-medium">
+                  No recent enquiries found.
+                </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {enquiries.map((enquiry) => (
@@ -958,7 +1191,9 @@ export default function AdminCommandCenter() {
                       className="p-4 bg-slate-50 rounded-lg border border-gray-200 hover:shadow-sm transition"
                     >
                       <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-black text-blue-700">{enquiry.name}</h3>
+                        <h3 className="font-black text-blue-700">
+                          {enquiry.name}
+                        </h3>
                         <span className="text-[10px] text-gray-500 font-bold uppercase">
                           {new Date(enquiry.created_at).toLocaleDateString()}
                         </span>
@@ -983,17 +1218,26 @@ export default function AdminCommandCenter() {
               </div>
               <div className="flex-1">
                 {recentApps.length === 0 ? (
-                  <p className="p-6 text-center text-gray-500 font-medium">No recent activity.</p>
+                  <p className="p-6 text-center text-gray-500 font-medium">
+                    No recent activity.
+                  </p>
                 ) : (
                   <ul className="divide-y divide-gray-100">
                     {recentApps.map((app) => (
-                      <li key={app.id} className="p-4 hover:bg-slate-50 transition">
+                      <li
+                        key={app.id}
+                        className="p-4 hover:bg-slate-50 transition"
+                      >
                         <div
-                          onClick={() => routeTo(`/dashboard/applications/${app.id}`)}
+                          onClick={() =>
+                            routeTo(`/dashboard/applications/${app.id}`)
+                          }
                           className="block cursor-pointer"
                         >
                           <div className="flex justify-between items-start mb-1">
-                            <span className="font-bold text-slate-800">{app.name}</span>
+                            <span className="font-bold text-slate-800">
+                              {app.name}
+                            </span>
                             <span
                               className={`text-[10px] font-black px-2 py-0.5 rounded-sm uppercase ${
                                 app.status === "Approved"
@@ -1006,7 +1250,9 @@ export default function AdminCommandCenter() {
                               {app.status || "Pending"}
                             </span>
                           </div>
-                          <div className="text-xs text-blue-600 font-bold uppercase">{app.requested_role}</div>
+                          <div className="text-xs text-blue-600 font-bold uppercase">
+                            {app.requested_role}
+                          </div>
                           <div className="text-[10px] text-gray-400 mt-1 font-bold">
                             {new Date(app.created_at).toLocaleDateString()}
                           </div>

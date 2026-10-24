@@ -1,3 +1,4 @@
+// FILE PATH: ./app/dashboard/sales-verification/page.tsx
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
@@ -15,13 +16,21 @@ const normalizeToYYYYMMDD = (dateStr: string) => {
   if (!dateStr) return "";
   if (dateStr.includes("/")) {
     const parts = dateStr.split("/");
-    if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    if (parts.length === 3)
+      return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(
+        2,
+        "0"
+      )}`;
   }
   if (dateStr.includes("-")) {
     const dateOnly = dateStr.split("T")[0];
     const parts = dateOnly.split("-");
     if (parts[0].length === 4) return dateOnly;
-    if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    if (parts[2].length === 4)
+      return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(
+        2,
+        "0"
+      )}`;
   }
   return dateStr.split("T")[0];
 };
@@ -31,7 +40,9 @@ export default function StaffSalesVerification() {
   const [loading, setLoading] = useState(true);
 
   // Active Ledger Stream Toggle (Telecom/Paybull vs Aadhaar Kendra)
-  const [activeStream, setActiveStream] = useState<"telecom" | "aadhaar">("telecom");
+  const [activeStream, setActiveStream] = useState<"telecom" | "aadhaar">(
+    "telecom"
+  );
 
   // Master Directory & Ledger Streams
   const [allLocations, setAllLocations] = useState<any[]>([]);
@@ -43,8 +54,12 @@ export default function StaffSalesVerification() {
 
   // --- 7-OPTION DATE PRESET + 4-TIER CASCADING FILTER STATE ---
   const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
-  const [fromDate, setFromDate] = useState<string>(() => getDateRangeFromPreset("current_month").start);
-  const [toDate, setToDate] = useState<string>(() => getDateRangeFromPreset("current_month").end);
+  const [fromDate, setFromDate] = useState<string>(
+    () => getDateRangeFromPreset("current_month").start
+  );
+  const [toDate, setToDate] = useState<string>(
+    () => getDateRangeFromPreset("current_month").end
+  );
 
   const [fState, setFState] = useState("ALL");
   const [fHq, setFHq] = useState("ALL");
@@ -62,7 +77,8 @@ export default function StaffSalesVerification() {
   const [isAadhaarEditOpen, setIsAadhaarEditOpen] = useState(false);
   const [editingAadhaar, setEditingAadhaar] = useState<any>(null);
   const [manualCashOverride, setManualCashOverride] = useState(false);
-  const [aadhaarCorrectionCategory, setAadhaarCorrectionCategory] = useState("");
+  const [aadhaarCorrectionCategory, setAadhaarCorrectionCategory] =
+    useState("");
   const [aadhaarOtherText, setAadhaarOtherText] = useState("");
 
   const handlePresetChange = (mode: DatePresetMode) => {
@@ -81,39 +97,47 @@ export default function StaffSalesVerification() {
   const fetchAuditData = async () => {
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [locRes, partRes, salesRes, aadhaarRes, depsRes, tarRes] = await Promise.all([
-        supabase.from("locations").select("*").order("center_name"),
-        supabase
-          .from("active_partners")
-          .select(
-            "id, partner_name, role, role_aadhaar, aadhaar_operator_id, aadhaar_station_id, center_id, locations (id, state, dist, center_name, center_code, parent_master_id)"
-          )
-          .order("partner_name"),
-        supabase
-          .from("daily_sales_reports")
-          .select(
-            `*, active_partners ( id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id) )`
-          )
-          .gte("report_date", fromDate)
-          .lte("report_date", toDate)
-          .order("report_date", { ascending: false }),
-        supabase
-          .from("aadhaar_daily_reports")
-          .select(
-            `*, active_partners ( id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id) )`
-          )
-          .gte("report_date", fromDate)
-          .lte("report_date", toDate)
-          .order("report_date", { ascending: false }),
-        supabase
-          .from("partner_deposits")
-          .select("partner_id, status, created_at, deposit_amount, reference_no")
-          .order("created_at", { ascending: false }),
-        supabase.from("aadhaar_tariff_history").select("*").order("effective_from", { ascending: false }),
-      ]);
+      const [locRes, partRes, salesRes, aadhaarRes, depsRes, tarRes] =
+        await Promise.all([
+          supabase.from("locations").select("*").order("center_name"),
+          supabase
+            .from("active_partners")
+            .select(
+              "id, partner_name, role, role_aadhaar, aadhaar_operator_id, aadhaar_station_id, center_id, locations (id, state, dist, center_name, center_code, parent_master_id)"
+            )
+            .order("partner_name"),
+          supabase
+            .from("daily_sales_reports")
+            .select(
+              `*, active_partners ( id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id) )`
+            )
+            .gte("report_date", fromDate)
+            .lte("report_date", toDate)
+            .order("report_date", { ascending: false }),
+          supabase
+            .from("aadhaar_daily_reports")
+            .select(
+              `*, active_partners ( id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id) )`
+            )
+            .gte("report_date", fromDate)
+            .lte("report_date", toDate)
+            .order("report_date", { ascending: false }),
+          supabase
+            .from("partner_deposits")
+            .select(
+              "partner_id, status, deposit_date, created_at, deposit_amount, reference_no, deposit_stream"
+            )
+            .order("deposit_date", { ascending: false }),
+          supabase
+            .from("aadhaar_tariff_history")
+            .select("*")
+            .order("effective_from", { ascending: false }),
+        ]);
 
       if (salesRes.error) throw salesRes.error;
 
@@ -141,7 +165,10 @@ export default function StaffSalesVerification() {
   // 4-TIER CASCADING FILTER OPTIONS (STATE -> MASTER HQ -> LOCATION -> OPERATOR)
   // =========================================================================
   const uniqueStates = useMemo(
-    () => Array.from(new Set(allLocations.map((l) => l.state).filter(Boolean))).sort(),
+    () =>
+      Array.from(
+        new Set(allLocations.map((l) => l.state).filter(Boolean))
+      ).sort(),
     [allLocations]
   );
 
@@ -171,7 +198,8 @@ export default function StaffSalesVerification() {
         const l: any = Array.isArray(locData) ? locData[0] : locData;
         if (!l) return false;
         if (fState !== "ALL" && l.state !== fState) return false;
-        if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq) return false;
+        if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq)
+          return false;
         if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
         return true;
       }),
@@ -185,13 +213,29 @@ export default function StaffSalesVerification() {
 
     if (fState !== "ALL" && l?.state !== fState) return false;
     if (fHq !== "ALL" && l?.parent_master_id?.toString() !== fHq) return false;
-    if (fCenter !== "ALL" && l?.id?.toString() !== fCenter && row.center_id?.toString() !== fCenter) return false;
-    if (fPartner !== "ALL" && row.partner_id !== fPartner && p?.id !== fPartner) return false;
+    if (
+      fCenter !== "ALL" &&
+      l?.id?.toString() !== fCenter &&
+      row.center_id?.toString() !== fCenter
+    )
+      return false;
+    if (
+      fPartner !== "ALL" &&
+      row.partner_id !== fPartner &&
+      p?.id !== fPartner
+    )
+      return false;
     return true;
   };
 
-  const filteredSales = useMemo(() => rawSales.filter(matchesCascade), [rawSales, fState, fHq, fCenter, fPartner]);
-  const filteredAadhaar = useMemo(() => rawAadhaar.filter(matchesCascade), [rawAadhaar, fState, fHq, fCenter, fPartner]);
+  const filteredSales = useMemo(
+    () => rawSales.filter(matchesCascade),
+    [rawSales, fState, fHq, fCenter, fPartner]
+  );
+  const filteredAadhaar = useMemo(
+    () => rawAadhaar.filter(matchesCascade),
+    [rawAadhaar, fState, fHq, fCenter, fPartner]
+  );
 
   // =========================================================================
   // TELECOM & PAYBULL SALES EDIT / AUDIT HANDLERS
@@ -217,14 +261,23 @@ export default function StaffSalesVerification() {
   const handleEditInputChange = (field: string, value: string) => {
     const isQtyField = field.includes("qty");
     const num = isQtyField ? parseInt(value, 10) : parseFloat(value);
-    setEditingSale((prev: any) => ({ ...prev, [field]: isNaN(num) || num < 0 ? 0 : num }));
+    setEditingSale((prev: any) => ({
+      ...prev,
+      [field]: isNaN(num) || num < 0 ? 0 : num,
+    }));
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!correctionCategory) return alert("You must select a Correction Reason from the dropdown.");
-    if (correctionCategory === "Other" && otherCorrectionText.trim().length < 5) {
-      return alert("You must provide detailed remarks for 'Other' corrections.");
+    if (!correctionCategory)
+      return alert("You must select a Correction Reason from the dropdown.");
+    if (
+      correctionCategory === "Other" &&
+      otherCorrectionText.trim().length < 5
+    ) {
+      return alert(
+        "You must provide detailed remarks for 'Other' corrections."
+      );
     }
 
     if (
@@ -236,13 +289,17 @@ export default function StaffSalesVerification() {
 
     setIsSubmitting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const user = session?.user;
 
       if (!user) throw new Error("Staff authentication failed. Session lost.");
 
       const finalRemarks =
-        correctionCategory === "Other" ? `OTHER: ${otherCorrectionText}` : `CORRECTION: ${correctionCategory}`;
+        correctionCategory === "Other"
+          ? `OTHER: ${otherCorrectionText}`
+          : `CORRECTION: ${correctionCategory}`;
 
       const updatePayload = {
         cbp_landline_qty: editingSale.cbp_landline_qty,
@@ -280,7 +337,10 @@ export default function StaffSalesVerification() {
         edit_request_reason: null,
       };
 
-      const { error } = await supabase.from("daily_sales_reports").update(updatePayload).eq("id", editingSale.id);
+      const { error } = await supabase
+        .from("daily_sales_reports")
+        .update(updatePayload)
+        .eq("id", editingSale.id);
       if (error) throw error;
 
       await supabase.from("staff_activity_logs").insert([
@@ -299,7 +359,9 @@ export default function StaffSalesVerification() {
       await supabase.from("partner_messages").insert([
         {
           partner_id: editingSale.partner_id,
-          subject: `⚠ Financial Ledger Correction: ${formatToDDMMYYYY(editingSale.report_date)}`,
+          subject: `⚠ Financial Ledger Correction: ${formatToDDMMYYYY(
+            editingSale.report_date
+          )}`,
           body: `Your sales report for ${formatToDDMMYYYY(
             editingSale.report_date
           )} was audited and corrected by the Back-Office. Reason: ${finalRemarks}. Please check your updated ledger balance.`,
@@ -316,8 +378,12 @@ export default function StaffSalesVerification() {
     }
   };
 
-  const handlePermitEdit = async (saleId: string, action: "Approved" | "Rejected") => {
-    if (!confirm(`Are you sure you want to mark this request as ${action}?`)) return;
+  const handlePermitEdit = async (
+    saleId: string,
+    action: "Approved" | "Rejected"
+  ) => {
+    if (!confirm(`Are you sure you want to mark this request as ${action}?`))
+      return;
     try {
       const { error } = await supabase
         .from("daily_sales_reports")
@@ -335,7 +401,9 @@ export default function StaffSalesVerification() {
   // =========================================================================
   const getTariffForDate = (reportDate: string) => {
     const matched = tariffHistory.find(
-      (t) => t.effective_from <= reportDate && (!t.effective_to || t.effective_to >= reportDate)
+      (t) =>
+        t.effective_from <= reportDate &&
+        (!t.effective_to || t.effective_to >= reportDate)
     );
     return (
       matched || {
@@ -370,6 +438,29 @@ export default function StaffSalesVerification() {
     setIsAadhaarEditOpen(true);
   };
 
+  const handleDismissAadhaarRequest = async (rec: any) => {
+    if (
+      !confirm(
+        `Dismiss the partner's correction request for ${formatToDDMMYYYY(
+          rec.report_date
+        )} without modifying the report?`
+      )
+    )
+      return;
+    try {
+      const { error } = await supabase
+        .from("aadhaar_daily_reports")
+        .update({
+          edit_request_status: "Rejected",
+        })
+        .eq("id", rec.id);
+      if (error) throw error;
+      fetchAuditData();
+    } catch (err: any) {
+      alert("Error dismissing Aadhaar edit request: " + err.message);
+    }
+  };
+
   const handleAadhaarQtyChange = (field: string, val: string) => {
     const num = Math.max(0, parseInt(val, 10) || 0);
     setEditingAadhaar((prev: any) => {
@@ -377,9 +468,12 @@ export default function StaffSalesVerification() {
       if (!manualCashOverride) {
         const tariff = getTariffForDate(next.report_date);
         const calcCash =
-          Number(next.cat3_mbu_chargeable_qty || 0) * Number(tariff.mbu_chargeable_fee || 125) +
-          Number(next.cat4_demographic_qty || 0) * Number(tariff.demographic_fee || 75) +
-          Number(next.cat5_biometric_qty || 0) * Number(tariff.biometric_fee || 125);
+          Number(next.cat3_mbu_chargeable_qty || 0) *
+            Number(tariff.mbu_chargeable_fee || 125) +
+          Number(next.cat4_demographic_qty || 0) *
+            Number(tariff.demographic_fee || 75) +
+          Number(next.cat5_biometric_qty || 0) *
+            Number(tariff.biometric_fee || 125);
         next.total_cash_collected = calcCash;
       }
       return next;
@@ -388,9 +482,17 @@ export default function StaffSalesVerification() {
 
   const handleAadhaarEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!aadhaarCorrectionCategory) return alert("You must select an Aadhaar Correction Reason from the dropdown.");
-    if (aadhaarCorrectionCategory === "Other" && aadhaarOtherText.trim().length < 5) {
-      return alert("You must provide detailed remarks for 'Other' corrections.");
+    if (!aadhaarCorrectionCategory)
+      return alert(
+        "You must select an Aadhaar Correction Reason from the dropdown."
+      );
+    if (
+      aadhaarCorrectionCategory === "Other" &&
+      aadhaarOtherText.trim().length < 5
+    ) {
+      return alert(
+        "You must provide detailed remarks for 'Other' corrections."
+      );
     }
     if (
       !confirm(
@@ -401,7 +503,9 @@ export default function StaffSalesVerification() {
 
     setIsSubmitting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const user = session?.user;
       if (!user) throw new Error("Staff authentication failed.");
 
@@ -428,7 +532,9 @@ export default function StaffSalesVerification() {
         station_id: editingAadhaar.station_id.trim(),
         cat1_new_qty: Number(editingAadhaar.cat1_new_qty || 0),
         cat2_mbu_free_qty: Number(editingAadhaar.cat2_mbu_free_qty || 0),
-        cat3_mbu_chargeable_qty: Number(editingAadhaar.cat3_mbu_chargeable_qty || 0),
+        cat3_mbu_chargeable_qty: Number(
+          editingAadhaar.cat3_mbu_chargeable_qty || 0
+        ),
         cat4_demographic_qty: Number(editingAadhaar.cat4_demographic_qty || 0),
         cat5_biometric_qty: Number(editingAadhaar.cat5_biometric_qty || 0),
         total_packets_qty: totalPackets,
@@ -439,7 +545,10 @@ export default function StaffSalesVerification() {
         gst_amount: finalGst,
         total_cash_collected: finalCash,
         exemption_reason: editingAadhaar.exemption_reason || finalRemarks,
-        deposit_status: finalCash === 0 ? "Settled" : editingAadhaar.deposit_status,
+        deposit_status:
+          finalCash === 0 ? "Settled" : editingAadhaar.deposit_status,
+        edit_request_status: null,
+        edit_request_reason: null,
       };
 
       // Try updating with audit columns first; fallback cleanly if optional columns aren't added yet
@@ -478,7 +587,9 @@ export default function StaffSalesVerification() {
       await supabase.from("partner_messages").insert([
         {
           partner_id: editingAadhaar.partner_id,
-          subject: `🆔 Aadhaar Ledger Correction: ${formatToDDMMYYYY(editingAadhaar.report_date)}`,
+          subject: `🆔 Aadhaar Ledger Correction: ${formatToDDMMYYYY(
+            editingAadhaar.report_date
+          )}`,
           body: `Your Aadhaar Daily Report for ${formatToDDMMYYYY(
             editingAadhaar.report_date
           )} was audited and updated by the Back-Office (Total Packets: ${totalPackets}, Cash Collected: ₹${finalCash.toLocaleString(
@@ -499,8 +610,11 @@ export default function StaffSalesVerification() {
 
   const handleDownloadVaultFile = async (path: string | null) => {
     if (!path) return alert("No file attached (Manual / Exemption record).");
-    const { data, error } = await supabase.storage.from("aadhaar-reports").createSignedUrl(path, 120);
-    if (error || !data?.signedUrl) return alert("Failed to generate secure download link.");
+    const { data, error } = await supabase.storage
+      .from("aadhaar-reports")
+      .createSignedUrl(path, 120);
+    if (error || !data?.signedUrl)
+      return alert("Failed to generate secure download link.");
     window.open(data.signedUrl, "_blank");
   };
 
@@ -520,15 +634,20 @@ export default function StaffSalesVerification() {
         {/* HEADER & DUAL-STREAM SWITCHER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-6 gap-4">
           <div>
-            <Link href="/dashboard" className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-block">
+            <Link
+              href="/dashboard"
+              className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-block"
+            >
               &larr; Back to Admin Dashboard
             </Link>
             <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-              <span className="text-4xl">⚖️</span> Sales &amp; Aadhaar Audit Correction Hub
+              <span className="text-4xl">⚖️</span> Sales &amp; Aadhaar Audit
+              Correction Hub
             </h1>
             <p className="text-slate-500 font-medium mt-1">
-              Review raw Telecom, Paybull, and Aadhaar Kendra reports and enforce audited ledger corrections (
-              {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}).
+              Review raw Telecom, Paybull, and Aadhaar Kendra reports and
+              enforce audited ledger corrections ({formatToDDMMYYYY(fromDate)}{" "}
+              to {formatToDDMMYYYY(toDate)}).
             </p>
           </div>
 
@@ -536,7 +655,9 @@ export default function StaffSalesVerification() {
             <button
               onClick={() => setActiveStream("telecom")}
               className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${
-                activeStream === "telecom" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"
+                activeStream === "telecom"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               📡 Telecom &amp; Paybull ({filteredSales.length})
@@ -633,10 +754,15 @@ export default function StaffSalesVerification() {
                 onChange={(e) => setFPartner(e.target.value)}
                 className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
               >
-                <option value="ALL">All Operators ({operatorOptions.length})</option>
+                <option value="ALL">
+                  All Operators ({operatorOptions.length})
+                </option>
                 {operatorOptions.map((op) => (
                   <option key={op.id} value={op.id}>
-                    {op.partner_name} {op.aadhaar_station_id ? `(Stn: ${op.aadhaar_station_id})` : ""}
+                    {op.partner_name}{" "}
+                    {op.aadhaar_station_id
+                      ? `(Stn: ${op.aadhaar_station_id})`
+                      : ""}
                   </option>
                 ))}
               </select>
@@ -651,12 +777,18 @@ export default function StaffSalesVerification() {
               </label>
               <select
                 value={datePreset}
-                onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
+                onChange={(e) =>
+                  handlePresetChange(e.target.value as DatePresetMode)
+                }
                 className="w-full bg-indigo-50 border-2 border-indigo-200 text-indigo-950 font-black text-xs rounded-lg p-2.5 outline-none focus:border-indigo-600"
               >
-                <option value="today">1. Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})</option>
+                <option value="today">
+                  1. Today (
+                  {formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
+                </option>
                 <option value="yesterday">
-                  2. Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                  2. Yesterday (
+                  {formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
                 </option>
                 <option value="current_week">3. Current Week</option>
                 <option value="current_month">4. Current Month</option>
@@ -718,9 +850,15 @@ export default function StaffSalesVerification() {
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
                   <tr>
                     <th className="p-4 font-black">Report Date</th>
-                    <th className="p-4 font-black">Center [Code] &amp; Partner</th>
-                    <th className="p-4 font-black text-right">Total Sales Amt (₹)</th>
-                    <th className="p-4 font-black text-center">Status of Deposit</th>
+                    <th className="p-4 font-black">
+                      Center [Code] &amp; Partner
+                    </th>
+                    <th className="p-4 font-black text-right">
+                      Total Sales Amt (₹)
+                    </th>
+                    <th className="p-4 font-black text-center">
+                      Status of Deposit
+                    </th>
                     <th className="p-4 font-black text-center">Audit Status</th>
                     <th className="p-4 font-black text-right">Actions</th>
                   </tr>
@@ -728,8 +866,12 @@ export default function StaffSalesVerification() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredSales.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-12 text-center text-slate-400 font-bold">
-                        No Telecom/Paybull sales records match the current cascading filters.
+                      <td
+                        colSpan={6}
+                        className="p-12 text-center text-slate-400 font-bold"
+                      >
+                        No Telecom/Paybull sales records match the current
+                        cascading filters.
                       </td>
                     </tr>
                   ) : (
@@ -752,17 +894,25 @@ export default function StaffSalesVerification() {
 
                       const lDep = latestDeposits[sale.partner_id];
                       const locData = sale.active_partners?.locations;
-                      const loc: any = Array.isArray(locData) ? locData[0] : locData;
+                      const loc: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
 
                       return (
                         <tr
                           key={sale.id}
                           className={`hover:bg-slate-50 transition ${
-                            sale.edit_request_status === "Pending" ? "bg-amber-50/30" : ""
+                            sale.edit_request_status === "Pending"
+                              ? "bg-amber-50/30"
+                              : ""
                           }`}
                         >
                           <td className="p-4">
-                            <p className="font-black text-slate-900 text-lg">{formatToDDMMYYYY(sale.report_date)}</p>
+                            <p className="font-black text-slate-900 text-lg">
+                              {formatToDDMMYYYY(
+                                normalizeToYYYYMMDD(sale.report_date)
+                              )}
+                            </p>
                             {sale.zero_business_reason && (
                               <span className="text-[9px] bg-red-100 text-red-700 font-black uppercase tracking-widest px-2 py-0.5 rounded border border-red-200 mt-1 inline-block">
                                 Zero Biz: {sale.zero_business_reason}
@@ -771,9 +921,12 @@ export default function StaffSalesVerification() {
                           </td>
 
                           <td className="p-4">
-                            <p className="font-black text-blue-700">{sale.active_partners?.partner_name}</p>
+                            <p className="font-black text-blue-700">
+                              {sale.active_partners?.partner_name}
+                            </p>
                             <p className="text-xs font-bold text-slate-600">
-                              [{loc?.center_code || "NO-CODE"}] {loc?.center_name}
+                              [{loc?.center_code || "NO-CODE"}]{" "}
+                              {loc?.center_name}
                             </p>
                             <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mt-0.5">
                               {loc?.dist}, {loc?.state}
@@ -784,7 +937,9 @@ export default function StaffSalesVerification() {
                             <p className="text-xl font-black text-emerald-600">
                               ₹{totalCash.toLocaleString("en-IN")}
                             </p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">Gross Revenue</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">
+                              Gross Revenue
+                            </p>
                           </td>
 
                           <td className="p-4 text-center">
@@ -802,11 +957,16 @@ export default function StaffSalesVerification() {
                                   Latest: {lDep.status}
                                 </span>
                                 <p className="text-[9px] text-slate-400 font-bold mt-1">
-                                  Vol: ₹{Number(lDep.deposit_amount).toLocaleString("en-IN")}
+                                  Vol: ₹
+                                  {Number(lDep.deposit_amount).toLocaleString(
+                                    "en-IN"
+                                  )}
                                 </p>
                               </div>
                             ) : (
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">No Deposits Yet</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">
+                                No Deposits Yet
+                              </span>
                             )}
                           </td>
 
@@ -816,15 +976,27 @@ export default function StaffSalesVerification() {
                                 <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-800 border border-yellow-300 px-2 py-1 rounded shadow-sm animate-pulse">
                                   Partner Requests Edit
                                 </span>
+                                {sale.edit_request_reason && (
+                                  <span
+                                    className="text-[9px] font-bold text-amber-900 max-w-[190px] truncate"
+                                    title={sale.edit_request_reason}
+                                  >
+                                    {sale.edit_request_reason}
+                                  </span>
+                                )}
                                 <div className="flex gap-1 mt-1">
                                   <button
-                                    onClick={() => handlePermitEdit(sale.id, "Approved")}
+                                    onClick={() =>
+                                      handlePermitEdit(sale.id, "Approved")
+                                    }
                                     className="bg-green-500 text-white text-[9px] font-black uppercase px-2 py-1 rounded shadow-sm hover:bg-green-600"
                                   >
                                     Approve
                                   </button>
                                   <button
-                                    onClick={() => handlePermitEdit(sale.id, "Rejected")}
+                                    onClick={() =>
+                                      handlePermitEdit(sale.id, "Rejected")
+                                    }
                                     className="bg-red-500 text-white text-[9px] font-black uppercase px-2 py-1 rounded shadow-sm hover:bg-red-600"
                                   >
                                     Deny
@@ -837,13 +1009,18 @@ export default function StaffSalesVerification() {
                                   Overwritten by Admin
                                 </span>
                                 {sale.staff_edit_remarks && (
-                                  <span className="text-[9px] font-bold text-slate-500 mt-1 max-w-[160px] truncate">
+                                  <span
+                                    className="text-[9px] font-bold text-slate-500 mt-1 max-w-[160px] truncate"
+                                    title={sale.staff_edit_remarks}
+                                  >
                                     {sale.staff_edit_remarks}
                                   </span>
                                 )}
                               </div>
                             ) : (
-                              <span className="text-[10px] font-black uppercase text-slate-400">Original Data</span>
+                              <span className="text-[10px] font-black uppercase text-slate-400">
+                                Original Data
+                              </span>
                             )}
                           </td>
 
@@ -884,7 +1061,9 @@ export default function StaffSalesVerification() {
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
                   <tr>
                     <th className="p-4 font-black">Report Date</th>
-                    <th className="p-4 font-black">Center [Code] &amp; Operator</th>
+                    <th className="p-4 font-black">
+                      Center [Code] &amp; Operator
+                    </th>
                     <th className="p-4 font-black text-center">New</th>
                     <th className="p-4 font-black text-center">MBU(F)</th>
                     <th className="p-4 font-black text-center">MBU(P)</th>
@@ -900,19 +1079,36 @@ export default function StaffSalesVerification() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredAadhaar.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="p-12 text-center text-slate-400 font-bold">
-                        No Aadhaar Kendra daily reports match the current cascading filters.
+                      <td
+                        colSpan={12}
+                        className="p-12 text-center text-slate-400 font-bold"
+                      >
+                        No Aadhaar Kendra daily reports match the current
+                        cascading filters.
                       </td>
                     </tr>
                   ) : (
                     filteredAadhaar.map((rec) => {
                       const locData = rec.active_partners?.locations;
-                      const loc: any = Array.isArray(locData) ? locData[0] : locData;
+                      const loc: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
 
                       return (
-                        <tr key={rec.id} className="hover:bg-slate-50 transition">
+                        <tr
+                          key={rec.id}
+                          className={`hover:bg-slate-50 transition ${
+                            rec.edit_request_status === "Pending"
+                              ? "bg-amber-50/40"
+                              : ""
+                          }`}
+                        >
                           <td className="p-4">
-                            <p className="font-black text-slate-900 text-sm">{formatToDDMMYYYY(rec.report_date)}</p>
+                            <p className="font-black text-slate-900 text-sm">
+                              {formatToDDMMYYYY(
+                                normalizeToYYYYMMDD(rec.report_date)
+                              )}
+                            </p>
                             <span
                               className={`text-[9px] font-black uppercase px-2 py-0.5 rounded mt-1 inline-block ${
                                 rec.deposit_status === "Pending Deposit"
@@ -925,25 +1121,43 @@ export default function StaffSalesVerification() {
                           </td>
 
                           <td className="p-4">
-                            <p className="font-black text-blue-700">{rec.active_partners?.partner_name}</p>
+                            <p className="font-black text-blue-700">
+                              {rec.active_partners?.partner_name}
+                            </p>
                             <p className="text-[11px] font-bold text-slate-600">
-                              [{loc?.center_code || "NO-CODE"}] {loc?.center_name}
+                              [{loc?.center_code || "NO-CODE"}]{" "}
+                              {loc?.center_name}
                             </p>
                             <p className="text-[10px] text-amber-800 font-black uppercase mt-0.5">
                               Op: {rec.operator_id} | Stn: {rec.station_id}
                             </p>
                           </td>
 
-                          <td className="p-4 text-center font-bold">{rec.cat1_new_qty}</td>
-                          <td className="p-4 text-center font-bold">{rec.cat2_mbu_free_qty}</td>
-                          <td className="p-4 text-center font-bold text-amber-700">{rec.cat3_mbu_chargeable_qty}</td>
-                          <td className="p-4 text-center font-bold text-blue-700">{rec.cat4_demographic_qty}</td>
-                          <td className="p-4 text-center font-bold text-purple-700">{rec.cat5_biometric_qty}</td>
-                          <td className="p-4 text-center font-black text-sm">{rec.total_packets_qty}</td>
+                          <td className="p-4 text-center font-bold">
+                            {rec.cat1_new_qty}
+                          </td>
+                          <td className="p-4 text-center font-bold">
+                            {rec.cat2_mbu_free_qty}
+                          </td>
+                          <td className="p-4 text-center font-bold text-amber-700">
+                            {rec.cat3_mbu_chargeable_qty}
+                          </td>
+                          <td className="p-4 text-center font-bold text-blue-700">
+                            {rec.cat4_demographic_qty}
+                          </td>
+                          <td className="p-4 text-center font-bold text-purple-700">
+                            {rec.cat5_biometric_qty}
+                          </td>
+                          <td className="p-4 text-center font-black text-sm">
+                            {rec.total_packets_qty}
+                          </td>
 
                           <td className="p-4 text-right">
                             <p className="text-base font-black text-emerald-600">
-                              ₹{Number(rec.total_cash_collected || 0).toLocaleString("en-IN")}
+                              ₹
+                              {Number(
+                                rec.total_cash_collected || 0
+                              ).toLocaleString("en-IN")}
                             </p>
                             <p className="text-[9px] text-slate-400 font-bold">
                               Base: ₹{rec.base_amount} | GST: ₹{rec.gst_amount}
@@ -954,13 +1168,17 @@ export default function StaffSalesVerification() {
                             {rec.has_files ? (
                               <div className="flex justify-center gap-1">
                                 <button
-                                  onClick={() => handleDownloadVaultFile(rec.csv_file_url)}
+                                  onClick={() =>
+                                    handleDownloadVaultFile(rec.csv_file_url)
+                                  }
                                   className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                                 >
                                   CSV
                                 </button>
                                 <button
-                                  onClick={() => handleDownloadVaultFile(rec.html_file_url)}
+                                  onClick={() =>
+                                    handleDownloadVaultFile(rec.html_file_url)
+                                  }
                                   className="bg-indigo-600 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                                 >
                                   HTML
@@ -974,17 +1192,64 @@ export default function StaffSalesVerification() {
                           </td>
 
                           <td className="p-4 text-center">
-                            {rec.is_edited_by_staff || String(rec.exemption_reason || "").startsWith("CORRECTION:") || String(rec.exemption_reason || "").startsWith("OTHER:") ? (
+                            {rec.edit_request_status === "Pending" ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded animate-pulse">
+                                  ⏳ Correction Requested
+                                </span>
+                                {rec.edit_request_reason && (
+                                  <span
+                                    className="text-[9px] font-bold text-slate-600 max-w-[160px] truncate"
+                                    title={rec.edit_request_reason}
+                                  >
+                                    {rec.edit_request_reason}
+                                  </span>
+                                )}
+                                <div className="flex gap-1 mt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => openAadhaarEditModal(rec)}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded shadow-sm"
+                                  >
+                                    Audit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleDismissAadhaarRequest(rec)
+                                    }
+                                    className="bg-red-500 hover:bg-red-600 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded shadow-sm"
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              </div>
+                            ) : rec.is_edited_by_staff ||
+                              String(rec.exemption_reason || "").startsWith(
+                                "CORRECTION:"
+                              ) ||
+                              String(rec.exemption_reason || "").startsWith(
+                                "OTHER:"
+                              ) ? (
                               <div className="flex flex-col items-center">
                                 <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-800 border border-indigo-300 px-2 py-0.5 rounded">
                                   Overwritten by Admin
                                 </span>
-                                <span className="text-[9px] font-bold text-slate-500 mt-1 max-w-[140px] truncate">
-                                  {rec.staff_edit_remarks || rec.exemption_reason}
+                                <span
+                                  className="text-[9px] font-bold text-slate-500 mt-1 max-w-[140px] truncate"
+                                  title={
+                                    rec.staff_edit_remarks ||
+                                    rec.exemption_reason
+                                  }
+                                >
+                                  {rec.staff_edit_remarks ||
+                                    rec.exemption_reason}
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-[10px] font-black uppercase text-slate-400">Original</span>
+                              <span className="text-[10px] font-black uppercase text-slate-400">
+                                Original
+                              </span>
                             )}
                           </td>
 
@@ -1016,10 +1281,14 @@ export default function StaffSalesVerification() {
             <div className="p-5 bg-slate-900 flex justify-between items-center text-white rounded-t-2xl border-b-4 border-amber-500">
               <div>
                 <h3 className="font-black text-xl flex items-center gap-2">
-                  <span>⚠️</span> Force Correction (Telecom / Paybull): {editingSale.active_partners?.partner_name}
+                  <span>⚠️</span> Force Correction (Telecom / Paybull):{" "}
+                  {editingSale.active_partners?.partner_name}
                 </h3>
                 <p className="text-slate-400 text-xs font-bold tracking-widest uppercase mt-1">
-                  Target Ledger Date: {formatToDDMMYYYY(editingSale.report_date)}
+                  Target Ledger Date:{" "}
+                  {formatToDDMMYYYY(
+                    normalizeToYYYYMMDD(editingSale.report_date)
+                  )}
                 </p>
               </div>
               <button
@@ -1033,19 +1302,25 @@ export default function StaffSalesVerification() {
             <form onSubmit={handleEditSubmit} className="p-6 md:p-8 space-y-6">
               <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r shadow-sm">
                 <p className="text-sm font-black text-amber-900">
-                  WARNING: You are about to permanently alter a franchise&apos;s daily ledger.
+                  WARNING: You are about to permanently alter a franchise&apos;s
+                  daily ledger.
                 </p>
                 <p className="text-xs font-bold text-amber-700 mt-1">
-                  This action cannot be undone. An alert will be dispatched to the partner immediately.
+                  This action cannot be undone. An alert will be dispatched to
+                  the partner immediately.
                 </p>
               </div>
 
               {/* DYNAMIC TOTALS HEADER */}
               <div className="bg-white p-4 rounded-xl border-2 border-slate-200 shadow-sm flex flex-wrap gap-4 justify-between items-center">
-                <h4 className="font-black text-slate-800 text-sm uppercase tracking-widest">Live Audit Totals:</h4>
+                <h4 className="font-black text-slate-800 text-sm uppercase tracking-widest">
+                  Live Audit Totals:
+                </h4>
                 <div className="flex flex-wrap gap-4">
                   <div className="text-center bg-slate-50 p-2 rounded border border-slate-200 min-w-[100px]">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">BSNL CBP / CTOP</p>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                      BSNL CBP / CTOP
+                    </p>
                     <p className="font-black text-lg text-slate-800">
                       ₹
                       {(
@@ -1056,7 +1331,9 @@ export default function StaffSalesVerification() {
                     </p>
                   </div>
                   <div className="text-center bg-slate-50 p-2 rounded border border-slate-200 min-w-[100px]">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">BSNL SIM / Other</p>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                      BSNL SIM / Other
+                    </p>
                     <p className="font-black text-lg text-slate-800">
                       ₹
                       {(
@@ -1070,7 +1347,9 @@ export default function StaffSalesVerification() {
                     </p>
                   </div>
                   <div className="text-center bg-indigo-50 p-2 rounded border border-indigo-200 min-w-[100px]">
-                    <p className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">Paybull Cash</p>
+                    <p className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">
+                      Paybull Cash
+                    </p>
                     <p className="font-black text-lg text-indigo-800">
                       ₹
                       {(
@@ -1083,7 +1362,9 @@ export default function StaffSalesVerification() {
                     </p>
                   </div>
                   <div className="text-center bg-emerald-50 border border-emerald-200 p-2 rounded min-w-[120px]">
-                    <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest">Total Gross</p>
+                    <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest">
+                      Total Gross
+                    </p>
                     <p className="font-black text-xl text-emerald-700">
                       ₹
                       {(
@@ -1115,40 +1396,62 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">LL Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        LL Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.cbp_landline_qty}
-                        onChange={(e) => handleEditInputChange("cbp_landline_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "cbp_landline_qty",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">LL ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        LL ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.cbp_landline_amt}
-                        onChange={(e) => handleEditInputChange("cbp_landline_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "cbp_landline_amt",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">GSM Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        GSM Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.cbp_gsm_qty}
-                        onChange={(e) => handleEditInputChange("cbp_gsm_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("cbp_gsm_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">GSM ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        GSM ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.cbp_gsm_amt}
-                        onChange={(e) => handleEditInputChange("cbp_gsm_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("cbp_gsm_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
@@ -1162,40 +1465,62 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[10px] font-bold text-blue-800">CTOP Qty</label>
+                      <label className="text-[10px] font-bold text-blue-800">
+                        CTOP Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.ctop_recharge_qty}
-                        onChange={(e) => handleEditInputChange("ctop_recharge_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "ctop_recharge_qty",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-blue-800">CTOP ₹</label>
+                      <label className="text-[10px] font-bold text-blue-800">
+                        CTOP ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.ctop_recharge_amt}
-                        onChange={(e) => handleEditInputChange("ctop_recharge_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "ctop_recharge_amt",
+                            e.target.value
+                          )
+                        }
                         className={`${numInputClass} bg-blue-50 border-blue-200`}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-emerald-800">FRC Qty</label>
+                      <label className="text-[10px] font-bold text-emerald-800">
+                        FRC Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.frc_qty}
-                        onChange={(e) => handleEditInputChange("frc_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("frc_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-emerald-800">FRC ₹</label>
+                      <label className="text-[10px] font-bold text-emerald-800">
+                        FRC ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.frc_amt}
-                        onChange={(e) => handleEditInputChange("frc_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("frc_amt", e.target.value)
+                        }
                         className={`${numInputClass} bg-emerald-50 border-emerald-200`}
                       />
                     </div>
@@ -1209,98 +1534,153 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <div>
-                      <label className="text-[10px] font-bold text-purple-800">MNP Qty</label>
+                      <label className="text-[10px] font-bold text-purple-800">
+                        MNP Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.mnp_qty}
-                        onChange={(e) => handleEditInputChange("mnp_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("mnp_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div className="md:col-span-4">
-                      <label className="text-[10px] font-bold text-purple-800">MNP ₹</label>
+                      <label className="text-[10px] font-bold text-purple-800">
+                        MNP ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.mnp_amt}
-                        onChange={(e) => handleEditInputChange("mnp_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("mnp_amt", e.target.value)
+                        }
                         className={`${numInputClass} bg-purple-50 border-purple-200`}
                       />
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">New Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        New Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.sim_new_qty}
-                        onChange={(e) => handleEditInputChange("sim_new_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("sim_new_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Upgrd Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Upgrd Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.sim_upgrade_qty}
-                        onChange={(e) => handleEditInputChange("sim_upgrade_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "sim_upgrade_qty",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Postpd Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Postpd Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.sim_postpaid_qty}
-                        onChange={(e) => handleEditInputChange("sim_postpaid_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "sim_postpaid_qty",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Replc Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Replc Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.sim_replacement_qty}
-                        onChange={(e) => handleEditInputChange("sim_replacement_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "sim_replacement_qty",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Fancy Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Fancy Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.sim_fancy_qty}
-                        onChange={(e) => handleEditInputChange("sim_fancy_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("sim_fancy_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
 
                     <div className="md:col-start-3">
-                      <label className="text-[10px] font-bold text-slate-500">Postpd ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Postpd ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.sim_postpaid_amt}
-                        onChange={(e) => handleEditInputChange("sim_postpaid_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "sim_postpaid_amt",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Replc ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Replc ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.sim_replacement_amt}
-                        onChange={(e) => handleEditInputChange("sim_replacement_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange(
+                            "sim_replacement_amt",
+                            e.target.value
+                          )
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Fancy ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Fancy ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.sim_fancy_amt}
-                        onChange={(e) => handleEditInputChange("sim_fancy_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("sim_fancy_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
@@ -1314,40 +1694,59 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Cheque Qty</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Cheque Qty
+                      </label>
                       <input
                         type="number"
                         value={editingSale.cheque_qty}
-                        onChange={(e) => handleEditInputChange("cheque_qty", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("cheque_qty", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Total Cheque ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Total Cheque ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.cheque_amt}
-                        onChange={(e) => handleEditInputChange("cheque_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("cheque_amt", e.target.value)
+                        }
                         className={`${numInputClass} bg-amber-50`}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Other Text</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Other Text
+                      </label>
                       <input
                         type="text"
                         value={editingSale.other_details || ""}
-                        onChange={(e) => setEditingSale({ ...editingSale, other_details: e.target.value })}
+                        onChange={(e) =>
+                          setEditingSale({
+                            ...editingSale,
+                            other_details: e.target.value,
+                          })
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500">Other Cash ₹</label>
+                      <label className="text-[10px] font-bold text-slate-500">
+                        Other Cash ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.other_amt}
-                        onChange={(e) => handleEditInputChange("other_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("other_amt", e.target.value)
+                        }
                         className={`${numInputClass} bg-emerald-50`}
                       />
                     </div>
@@ -1361,52 +1760,72 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <div>
-                      <label className="text-[10px] font-bold text-indigo-800">PB CBP ₹</label>
+                      <label className="text-[10px] font-bold text-indigo-800">
+                        PB CBP ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.pb_cbp_amt}
-                        onChange={(e) => handleEditInputChange("pb_cbp_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("pb_cbp_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-indigo-800">PB CTOP ₹</label>
+                      <label className="text-[10px] font-bold text-indigo-800">
+                        PB CTOP ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.pb_ctop_amt}
-                        onChange={(e) => handleEditInputChange("pb_ctop_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("pb_ctop_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-indigo-800">PB FRC ₹</label>
+                      <label className="text-[10px] font-bold text-indigo-800">
+                        PB FRC ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.pb_frc_amt}
-                        onChange={(e) => handleEditInputChange("pb_frc_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("pb_frc_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-indigo-800">PB MNP ₹</label>
+                      <label className="text-[10px] font-bold text-indigo-800">
+                        PB MNP ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.pb_mnp_amt}
-                        onChange={(e) => handleEditInputChange("pb_mnp_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("pb_mnp_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-indigo-800">PB Other ₹</label>
+                      <label className="text-[10px] font-bold text-indigo-800">
+                        PB Other ₹
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         value={editingSale.pb_other_amt}
-                        onChange={(e) => handleEditInputChange("pb_other_amt", e.target.value)}
+                        onChange={(e) =>
+                          handleEditInputChange("pb_other_amt", e.target.value)
+                        }
                         className={numInputClass}
                       />
                     </div>
@@ -1433,9 +1852,15 @@ export default function StaffSalesVerification() {
                       -- Select Strict Reason Code --
                     </option>
                     <option value="CBP correction">CBP correction</option>
-                    <option value="CTOP / FRC correction">CTOP / FRC correction</option>
-                    <option value="sim sales Correction">SIM sales Correction</option>
-                    <option value="Paybull Correction">Paybull Platform Correction</option>
+                    <option value="CTOP / FRC correction">
+                      CTOP / FRC correction
+                    </option>
+                    <option value="sim sales Correction">
+                      SIM sales Correction
+                    </option>
+                    <option value="Paybull Correction">
+                      Paybull Platform Correction
+                    </option>
                     <option value="cheque correction">Cheque correction</option>
                     <option value="All above">All above</option>
                     <option value="Other">Other (Specify Below)</option>
@@ -1452,7 +1877,9 @@ export default function StaffSalesVerification() {
                       type="text"
                       placeholder="TYPE DETAILED REASON HERE..."
                       value={otherCorrectionText}
-                      onChange={(e) => setOtherCorrectionText(e.target.value.toUpperCase())}
+                      onChange={(e) =>
+                        setOtherCorrectionText(e.target.value.toUpperCase())
+                      }
                       className="w-full bg-slate-800 border-2 border-amber-600 text-white font-black uppercase tracking-wider text-sm rounded-lg p-3 outline-none focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
@@ -1489,11 +1916,16 @@ export default function StaffSalesVerification() {
             <div className="p-5 bg-slate-900 flex justify-between items-center text-white rounded-t-2xl border-b-4 border-amber-500">
               <div>
                 <h3 className="font-black text-xl flex items-center gap-2">
-                  <span>🆔</span> Force Correction (Aadhaar Kendra): {editingAadhaar.active_partners?.partner_name}
+                  <span>🆔</span> Force Correction (Aadhaar Kendra):{" "}
+                  {editingAadhaar.active_partners?.partner_name}
                 </h3>
                 <p className="text-amber-400 text-xs font-bold tracking-widest uppercase mt-1">
-                  Target Date: {formatToDDMMYYYY(editingAadhaar.report_date)} | Operator:{" "}
-                  {editingAadhaar.operator_id} | Station: {editingAadhaar.station_id}
+                  Target Date:{" "}
+                  {formatToDDMMYYYY(
+                    normalizeToYYYYMMDD(editingAadhaar.report_date)
+                  )}{" "}
+                  | Operator: {editingAadhaar.operator_id} | Station:{" "}
+                  {editingAadhaar.station_id}
                 </p>
               </div>
               <button
@@ -1504,7 +1936,21 @@ export default function StaffSalesVerification() {
               </button>
             </div>
 
-            <form onSubmit={handleAadhaarEditSubmit} className="p-6 md:p-8 space-y-6">
+            <form
+              onSubmit={handleAadhaarEditSubmit}
+              className="p-6 md:p-8 space-y-6"
+            >
+              {editingAadhaar.edit_request_reason && (
+                <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">
+                    Partner Correction Request Note:
+                  </p>
+                  <p className="text-xs font-bold text-slate-900 mt-1">
+                    &quot;{editingAadhaar.edit_request_reason}&quot;
+                  </p>
+                </div>
+              )}
+
               {/* LIVE AADHAAR TOTALS BANNER */}
               {(() => {
                 const tariff = getTariffForDate(editingAadhaar.report_date);
@@ -1514,27 +1960,50 @@ export default function StaffSalesVerification() {
                   Number(editingAadhaar.cat3_mbu_chargeable_qty || 0) +
                   Number(editingAadhaar.cat4_demographic_qty || 0) +
                   Number(editingAadhaar.cat5_biometric_qty || 0);
-                const liveCash = Number(editingAadhaar.total_cash_collected || 0);
-                const liveBase = Number((liveCash / (1 + Number(tariff.gst_percent || 18) / 100)).toFixed(2));
+                const liveCash = Number(
+                  editingAadhaar.total_cash_collected || 0
+                );
+                const liveBase = Number(
+                  (
+                    liveCash /
+                    (1 + Number(tariff.gst_percent || 18) / 100)
+                  ).toFixed(2)
+                );
                 const liveGst = Number((liveCash - liveBase).toFixed(2));
 
                 return (
                   <div className="bg-slate-900 text-white p-4 rounded-xl grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                     <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-slate-400 uppercase font-black">Total Packets</p>
-                      <p className="text-2xl font-black text-white">{liveTotalPkts}</p>
+                      <p className="text-[9px] text-slate-400 uppercase font-black">
+                        Total Packets
+                      </p>
+                      <p className="text-2xl font-black text-white">
+                        {liveTotalPkts}
+                      </p>
                     </div>
                     <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-slate-400 uppercase font-black">Net Base Fee</p>
-                      <p className="text-xl font-black text-slate-200">₹{liveBase.toLocaleString("en-IN")}</p>
+                      <p className="text-[9px] text-slate-400 uppercase font-black">
+                        Net Base Fee
+                      </p>
+                      <p className="text-xl font-black text-slate-200">
+                        ₹{liveBase.toLocaleString("en-IN")}
+                      </p>
                     </div>
                     <div className="bg-slate-800 p-3 rounded-lg">
-                      <p className="text-[9px] text-amber-400 uppercase font-black">18% GST</p>
-                      <p className="text-xl font-black text-amber-400">₹{liveGst.toLocaleString("en-IN")}</p>
+                      <p className="text-[9px] text-amber-400 uppercase font-black">
+                        18% GST
+                      </p>
+                      <p className="text-xl font-black text-amber-400">
+                        ₹{liveGst.toLocaleString("en-IN")}
+                      </p>
                     </div>
                     <div className="bg-emerald-950 border border-emerald-700 p-3 rounded-lg">
-                      <p className="text-[9px] text-emerald-300 uppercase font-black">Total Cash Collected</p>
-                      <p className="text-2xl font-black text-emerald-400">₹{liveCash.toLocaleString("en-IN")}</p>
+                      <p className="text-[9px] text-emerald-300 uppercase font-black">
+                        Total Cash Collected
+                      </p>
+                      <p className="text-2xl font-black text-emerald-400">
+                        ₹{liveCash.toLocaleString("en-IN")}
+                      </p>
                     </div>
                   </div>
                 );
@@ -1543,56 +2012,89 @@ export default function StaffSalesVerification() {
               {/* 1. 5-CATEGORY PACKET COUNTS */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
                 <h4 className="font-black text-xs text-slate-600 uppercase tracking-widest border-b pb-2">
-                  1. 5-Category Enrolment &amp; Update Counts (Auto-Calculates Cash)
+                  1. 5-Category Enrolment &amp; Update Counts (Auto-Calculates
+                  Cash)
                 </h4>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase">1. New (₹0)</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase">
+                      1. New (₹0)
+                    </label>
                     <input
                       type="number"
                       min="0"
                       value={editingAadhaar.cat1_new_qty}
-                      onChange={(e) => handleAadhaarQtyChange("cat1_new_qty", e.target.value)}
+                      onChange={(e) =>
+                        handleAadhaarQtyChange("cat1_new_qty", e.target.value)
+                      }
                       className={numInputClass}
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-500 uppercase">2. MBU Free (₹0)</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase">
+                      2. MBU Free (₹0)
+                    </label>
                     <input
                       type="number"
                       min="0"
                       value={editingAadhaar.cat2_mbu_free_qty}
-                      onChange={(e) => handleAadhaarQtyChange("cat2_mbu_free_qty", e.target.value)}
+                      onChange={(e) =>
+                        handleAadhaarQtyChange(
+                          "cat2_mbu_free_qty",
+                          e.target.value
+                        )
+                      }
                       className={numInputClass}
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-amber-800 uppercase">3. MBU Paid</label>
+                    <label className="text-[10px] font-black text-amber-800 uppercase">
+                      3. MBU Paid
+                    </label>
                     <input
                       type="number"
                       min="0"
                       value={editingAadhaar.cat3_mbu_chargeable_qty}
-                      onChange={(e) => handleAadhaarQtyChange("cat3_mbu_chargeable_qty", e.target.value)}
+                      onChange={(e) =>
+                        handleAadhaarQtyChange(
+                          "cat3_mbu_chargeable_qty",
+                          e.target.value
+                        )
+                      }
                       className={`${numInputClass} bg-amber-50 border-amber-300`}
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-blue-800 uppercase">4. Demographic</label>
+                    <label className="text-[10px] font-black text-blue-800 uppercase">
+                      4. Demographic
+                    </label>
                     <input
                       type="number"
                       min="0"
                       value={editingAadhaar.cat4_demographic_qty}
-                      onChange={(e) => handleAadhaarQtyChange("cat4_demographic_qty", e.target.value)}
+                      onChange={(e) =>
+                        handleAadhaarQtyChange(
+                          "cat4_demographic_qty",
+                          e.target.value
+                        )
+                      }
                       className={`${numInputClass} bg-blue-50 border-blue-300`}
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-purple-800 uppercase">5. Biometric</label>
+                    <label className="text-[10px] font-black text-purple-800 uppercase">
+                      5. Biometric
+                    </label>
                     <input
                       type="number"
                       min="0"
                       value={editingAadhaar.cat5_biometric_qty}
-                      onChange={(e) => handleAadhaarQtyChange("cat5_biometric_qty", e.target.value)}
+                      onChange={(e) =>
+                        handleAadhaarQtyChange(
+                          "cat5_biometric_qty",
+                          e.target.value
+                        )
+                      }
                       className={`${numInputClass} bg-purple-50 border-purple-300`}
                     />
                   </div>
@@ -1607,37 +2109,52 @@ export default function StaffSalesVerification() {
                   </h4>
                   <div className="grid grid-cols-3 gap-3">
                     <div>
-                      <label className="text-[10px] font-bold text-emerald-700">Completed</label>
+                      <label className="text-[10px] font-bold text-emerald-700">
+                        Completed
+                      </label>
                       <input
                         type="number"
                         min="0"
                         value={editingAadhaar.completed_qty}
                         onChange={(e) =>
-                          setEditingAadhaar({ ...editingAadhaar, completed_qty: parseInt(e.target.value) || 0 })
+                          setEditingAadhaar({
+                            ...editingAadhaar,
+                            completed_qty: parseInt(e.target.value, 10) || 0,
+                          })
                         }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-blue-700">InProcess</label>
+                      <label className="text-[10px] font-bold text-blue-700">
+                        InProcess
+                      </label>
                       <input
                         type="number"
                         min="0"
                         value={editingAadhaar.inprocess_qty}
                         onChange={(e) =>
-                          setEditingAadhaar({ ...editingAadhaar, inprocess_qty: parseInt(e.target.value) || 0 })
+                          setEditingAadhaar({
+                            ...editingAadhaar,
+                            inprocess_qty: parseInt(e.target.value, 10) || 0,
+                          })
                         }
                         className={numInputClass}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-red-700">Rejected</label>
+                      <label className="text-[10px] font-bold text-red-700">
+                        Rejected
+                      </label>
                       <input
                         type="number"
                         min="0"
                         value={editingAadhaar.rejected_qty}
                         onChange={(e) =>
-                          setEditingAadhaar({ ...editingAadhaar, rejected_qty: parseInt(e.target.value) || 0 })
+                          setEditingAadhaar({
+                            ...editingAadhaar,
+                            rejected_qty: parseInt(e.target.value, 10) || 0,
+                          })
                         }
                         className={numInputClass}
                       />
@@ -1646,18 +2163,25 @@ export default function StaffSalesVerification() {
 
                   <div className="grid grid-cols-2 gap-3 pt-2">
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Operator ID</label>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">
+                        Operator ID
+                      </label>
                       <input
                         type="text"
                         value={editingAadhaar.operator_id}
                         onChange={(e) =>
-                          setEditingAadhaar({ ...editingAadhaar, operator_id: e.target.value.toUpperCase() })
+                          setEditingAadhaar({
+                            ...editingAadhaar,
+                            operator_id: e.target.value.toUpperCase(),
+                          })
                         }
                         className={`${numInputClass} uppercase`}
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Station ID</label>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">
+                        Station ID
+                      </label>
                       <input
                         type="text"
                         maxLength={5}
@@ -1683,7 +2207,9 @@ export default function StaffSalesVerification() {
                       <input
                         type="checkbox"
                         checked={manualCashOverride}
-                        onChange={(e) => setManualCashOverride(e.target.checked)}
+                        onChange={(e) =>
+                          setManualCashOverride(e.target.checked)
+                        }
                         className="accent-amber-600"
                       />
                       Manual Cash Override
@@ -1707,7 +2233,9 @@ export default function StaffSalesVerification() {
                         })
                       }
                       className={`${numInputClass} ${
-                        !manualCashOverride ? "bg-slate-100 text-slate-500 cursor-not-allowed" : "bg-amber-50 border-amber-400"
+                        !manualCashOverride
+                          ? "bg-slate-100 text-slate-500 cursor-not-allowed"
+                          : "bg-amber-50 border-amber-400"
                       }`}
                     />
                   </div>
@@ -1718,11 +2246,18 @@ export default function StaffSalesVerification() {
                     </label>
                     <select
                       value={editingAadhaar.deposit_status}
-                      onChange={(e) => setEditingAadhaar({ ...editingAadhaar, deposit_status: e.target.value })}
+                      onChange={(e) =>
+                        setEditingAadhaar({
+                          ...editingAadhaar,
+                          deposit_status: e.target.value,
+                        })
+                      }
                       className={numInputClass}
                     >
                       <option value="Pending Deposit">Pending Deposit</option>
-                      <option value="Deposit Submitted">Deposit Submitted</option>
+                      <option value="Deposit Submitted">
+                        Deposit Submitted
+                      </option>
                       <option value="Settled">Settled</option>
                     </select>
                   </div>
@@ -1747,10 +2282,18 @@ export default function StaffSalesVerification() {
                     <option value="" disabled>
                       -- Select Aadhaar Audit Reason Code --
                     </option>
-                    <option value="5-Category Count Correction">5-Category Count Correction</option>
-                    <option value="UIDAI CSV/HTML Parity Override">UIDAI CSV/HTML Parity Override</option>
-                    <option value="Exemption / Zero-Day Correction">Exemption / Zero-Day Correction</option>
-                    <option value="Tariff / Cash Ledger Adjustment">Tariff / Cash Ledger Adjustment</option>
+                    <option value="5-Category Count Correction">
+                      5-Category Count Correction
+                    </option>
+                    <option value="UIDAI CSV/HTML Parity Override">
+                      UIDAI CSV/HTML Parity Override
+                    </option>
+                    <option value="Exemption / Zero-Day Correction">
+                      Exemption / Zero-Day Correction
+                    </option>
+                    <option value="Tariff / Cash Ledger Adjustment">
+                      Tariff / Cash Ledger Adjustment
+                    </option>
                     <option value="Other">Other (Specify Below)</option>
                   </select>
                 </div>
@@ -1765,7 +2308,9 @@ export default function StaffSalesVerification() {
                       type="text"
                       placeholder="TYPE DETAILED REASON HERE..."
                       value={aadhaarOtherText}
-                      onChange={(e) => setAadhaarOtherText(e.target.value.toUpperCase())}
+                      onChange={(e) =>
+                        setAadhaarOtherText(e.target.value.toUpperCase())
+                      }
                       className="w-full bg-slate-800 border-2 border-amber-600 text-white font-black uppercase tracking-wider text-sm rounded-lg p-3 outline-none"
                     />
                   </div>
@@ -1784,7 +2329,9 @@ export default function StaffSalesVerification() {
                     disabled={isSubmitting}
                     className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black px-8 py-3.5 rounded-lg shadow-md transition disabled:opacity-50 tracking-widest uppercase text-xs"
                   >
-                    {isSubmitting ? "Overwriting..." : "Apply Aadhaar Overwrite"}
+                    {isSubmitting
+                      ? "Overwriting..."
+                      : "Apply Aadhaar Overwrite"}
                   </button>
                 </div>
               </div>

@@ -5,7 +5,9 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { QRCodeSVG } from "qrcode.react";
-import AadhaarSidebar, { AadhaarMenuTab } from "../../components/aadhaar/AadhaarSidebar";
+import AadhaarSidebar, {
+  AadhaarMenuTab,
+} from "../../components/aadhaar/AadhaarSidebar";
 import PartnerAadhaarHistoryVault from "../../components/aadhaar/PartnerAadhaarHistoryVault";
 import PartnerAadhaarUpgradeModule from "../../components/aadhaar/PartnerAadhaarUpgradeModule";
 import { scanPaymentReceiptOCR } from "../../lib/ocrEngine";
@@ -25,7 +27,9 @@ import {
   downloadAadhaarPDFReport,
 } from "../../lib/aadhaarEngine";
 
-const getMondayToSundayWindow = (dateStr: string): { monday: string; sunday: string } => {
+const getMondayToSundayWindow = (
+  dateStr: string
+): { monday: string; sunday: string } => {
   const base = dateStr ? new Date(`${dateStr}T00:00:00Z`) : new Date();
   const day = base.getUTCDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
@@ -83,12 +87,17 @@ export default function PartnerAadhaarPortal() {
   const [isSubmittingDaily, setIsSubmittingDaily] = useState<boolean>(false);
 
   // Correction Request State on Locked Daily Reports
-  const [requestingCorrectionId, setRequestingCorrectionId] = useState<string | null>(null);
+  const [requestingCorrectionId, setRequestingCorrectionId] = useState<
+    string | null
+  >(null);
   const [correctionReasonText, setCorrectionReasonText] = useState<string>("");
-  const [isSendingCorrectionReq, setIsSendingCorrectionReq] = useState<boolean>(false);
+  const [isSendingCorrectionReq, setIsSendingCorrectionReq] =
+    useState<boolean>(false);
 
   // Menu 3: Separated Remittance Tracks + Unique UTR, Transaction ID & Reference Code
-  const [remittanceTrack, setRemittanceTrack] = useState<"UPI_QR" | "BANK_TRANSFER">("UPI_QR");
+  const [remittanceTrack, setRemittanceTrack] = useState<
+    "UPI_QR" | "BANK_TRANSFER"
+  >("UPI_QR");
   const [qrPayAmount, setQrPayAmount] = useState<string>("");
   const [depositForm, setDepositForm] = useState({
     amount: "",
@@ -99,8 +108,10 @@ export default function PartnerAadhaarPortal() {
     date: getISTDateString(0),
   });
   const [isSlipExempted, setIsSlipExempted] = useState<boolean>(false);
-  const [slipExemptionCategory, setSlipExemptionCategory] = useState<string>("");
-  const [slipExemptionOtherText, setSlipExemptionOtherText] = useState<string>("");
+  const [slipExemptionCategory, setSlipExemptionCategory] =
+    useState<string>("");
+  const [slipExemptionOtherText, setSlipExemptionOtherText] =
+    useState<string>("");
   const [slipFile, setSlipFile] = useState<File | null>(null);
   const [slipPreviewUrl, setSlipPreviewUrl] = useState<string | null>(null);
   const [isScanningSlip, setIsScanningSlip] = useState<boolean>(false);
@@ -111,9 +122,17 @@ export default function PartnerAadhaarPortal() {
     utr: string | null;
     transactionId: string | null;
     date: string | null;
-  }>({ platform: null, amount: null, utr: null, transactionId: null, date: null });
-  const [confirmDepositCheck, setConfirmDepositCheck] = useState<boolean>(false);
-  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
+  }>({
+    platform: null,
+    amount: null,
+    utr: null,
+    transactionId: null,
+    date: null,
+  });
+  const [confirmDepositCheck, setConfirmDepositCheck] =
+    useState<boolean>(false);
+  const [isSubmittingDeposit, setIsSubmittingDeposit] =
+    useState<boolean>(false);
 
   // Menu 4: Weekly Reconciliation States (Monday-to-Sunday)
   const [weekStart, setWeekStart] = useState<string>(
@@ -137,10 +156,11 @@ export default function PartnerAadhaarPortal() {
   const [filterToDate, setFilterToDate] = useState<string>(
     () => getDateRangeFromPreset("current_month").end
   );
-  const [fileModeFilter, setFileModeFilter] = useState<"ALL" | "WITH_FILES" | "WITHOUT_FILES">(
-    "ALL"
-  );
-  const [confirmDownloadCheck, setConfirmDownloadCheck] = useState<boolean>(false);
+  const [fileModeFilter, setFileModeFilter] = useState<
+    "ALL" | "WITH_FILES" | "WITHOUT_FILES"
+  >("ALL");
+  const [confirmDownloadCheck, setConfirmDownloadCheck] =
+    useState<boolean>(false);
 
   // Menu 6: Credentials Form State
   const [upgradeForm, setUpgradeForm] = useState({
@@ -246,8 +266,10 @@ export default function PartnerAadhaarPortal() {
 
       if (upgData) {
         setUpgradeForm({
-          operator_id: upgData.requested_operator_id || pData.aadhaar_operator_id || "",
-          station_id: upgData.requested_station_id || pData.aadhaar_station_id || "",
+          operator_id:
+            upgData.requested_operator_id || pData.aadhaar_operator_id || "",
+          station_id:
+            upgData.requested_station_id || pData.aadhaar_station_id || "",
           nseit_no: upgData.nseit_cert_no || "",
         });
       } else if (pData.aadhaar_operator_id || pData.aadhaar_station_id) {
@@ -297,7 +319,7 @@ export default function PartnerAadhaarPortal() {
             .from("partner_deposits")
             .select("*")
             .eq("partner_id", pData.id)
-            .order("created_at", { ascending: false }),
+            .order("deposit_date", { ascending: false }),
           supabase
             .from("aadhaar_penalty_logs")
             .select("*")
@@ -346,20 +368,26 @@ export default function PartnerAadhaarPortal() {
       setPenalties(pList);
       if (upiRes.data?.upi_id) setCenterUpi(upiRes.data.upi_id);
 
-      // REQUIREMENT #4: Total Collection minus Total Deposit = Balance Payable
+      // Total Collection minus Total Deposit = Balance Payable
       const totalCollected = dList.reduce(
         (sum: number, r: any) => sum + Number(r.total_cash_collected || 0),
         0
       );
       const totalDeposited = aDeps
         .filter((d: any) => d.status !== "Discrepancy")
-        .reduce((sum: number, d: any) => sum + Number(d.deposit_amount || 0), 0);
+        .reduce(
+          (sum: number, d: any) => sum + Number(d.deposit_amount || 0),
+          0
+        );
       const penSum = pList.reduce(
         (sum: number, p: any) => sum + Number(p.penalty_amount || 0),
         0
       );
 
-      const netPayable = Math.max(0, totalCollected + penSum - totalDeposited);
+      const netPayable = Math.max(
+        0,
+        totalCollected + penSum - totalDeposited
+      );
       if (netPayable > 0) {
         setQrPayAmount(netPayable.toFixed(2));
       } else {
@@ -379,8 +407,11 @@ export default function PartnerAadhaarPortal() {
       partner?.locations?.role_aadhaar
   );
 
-  const isCredentialsLocked = isAadhaarAuthorized || latestUpgradeReq?.status === "Approved";
-  const existingDailyForSelectedDate = dailyReports.find((r) => r.report_date === reportDate);
+  const isCredentialsLocked =
+    isAadhaarAuthorized || latestUpgradeReq?.status === "Approved";
+  const existingDailyForSelectedDate = dailyReports.find(
+    (r) => r.report_date === reportDate
+  );
   const existingWeeklyForSelectedWindow = weeklyReports.find(
     (w) => w.start_date === weekStart && w.end_date === weekEnd
   );
@@ -445,14 +476,19 @@ export default function PartnerAadhaarPortal() {
   ]);
 
   const isZeroExemption =
-    isManualMode && exemptionReason !== "" && exemptionReason !== "ECMP_CRASH_MANUAL";
+    isManualMode &&
+    exemptionReason !== "" &&
+    exemptionReason !== "ECMP_CRASH_MANUAL";
   const manualCashTotal = isZeroExemption
     ? 0
     : manualCounts.cat3 * Number(activeTariff?.mbu_chargeable_fee || 125) +
       manualCounts.cat4 * Number(activeTariff?.demographic_fee || 75) +
       manualCounts.cat5 * Number(activeTariff?.biometric_fee || 125);
   const manualBaseTotal = Number(
-    (manualCashTotal / (1 + Number(activeTariff?.gst_percent || 18) / 100)).toFixed(2)
+    (
+      manualCashTotal /
+      (1 + Number(activeTariff?.gst_percent || 18) / 100)
+    ).toFixed(2)
   );
   const manualGstTotal = Number((manualCashTotal - manualBaseTotal).toFixed(2));
 
@@ -465,6 +501,12 @@ export default function PartnerAadhaarPortal() {
       );
       setActiveMenu("upgrade");
       return;
+    }
+    if (reportDate > getISTDateString(0)) {
+      return showBanner(
+        "error",
+        "Validation Error: You cannot submit a Daily Aadhaar Report for a future date."
+      );
     }
     if (existingDailyForSelectedDate) {
       return showBanner(
@@ -491,7 +533,10 @@ export default function PartnerAadhaarPortal() {
         if (!csvFile || !htmlFile || !parsedPreview) {
           throw new Error("Both matching CSV and HTML files are mandatory.");
         }
-        const safeOp = (partner.aadhaar_operator_id || "OP").replace(/[^a-zA-Z0-9]/g, "_");
+        const safeOp = (partner.aadhaar_operator_id || "OP").replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        );
         csvPath = `DAILY_${safeOp}_${reportDate}_${Date.now()}.csv`;
         htmlPath = `DAILY_${safeOp}_${reportDate}_${Date.now()}.html`;
 
@@ -502,16 +547,23 @@ export default function PartnerAadhaarPortal() {
         if (up1.error) throw up1.error;
         if (up2.error) throw up2.error;
       } else {
-        if (!exemptionReason) throw new Error("Please select a valid reason from the dropdown.");
+        if (!exemptionReason)
+          throw new Error("Please select a valid reason from the dropdown.");
       }
 
-      const finalCash = isManualMode ? manualCashTotal : parsedPreview.total_cash_collected;
+      const finalCash = isManualMode
+        ? manualCashTotal
+        : parsedPreview.total_cash_collected;
       const payload = {
         partner_id: partner.id,
         center_id: partner.center_id,
         report_date: reportDate,
-        operator_id: isManualMode ? partner.aadhaar_operator_id : parsedPreview.operator_id,
-        station_id: isManualMode ? partner.aadhaar_station_id : parsedPreview.station_id,
+        operator_id: isManualMode
+          ? partner.aadhaar_operator_id
+          : parsedPreview.operator_id,
+        station_id: isManualMode
+          ? partner.aadhaar_station_id
+          : parsedPreview.station_id,
         cat1_new_qty: isManualMode
           ? isZeroExemption
             ? 0
@@ -592,7 +644,9 @@ export default function PartnerAadhaarPortal() {
           "success",
           `✅ Daily Report for ${formatToDDMMYYYY(
             reportDate
-          )} saved! Instant Deposit QR unlocked for ₹${finalCash.toLocaleString("en-IN")}.`
+          )} saved! Instant Deposit QR unlocked for ₹${finalCash.toLocaleString(
+            "en-IN"
+          )}.`
         );
         setActiveMenu("deposit");
       } else {
@@ -642,15 +696,22 @@ export default function PartnerAadhaarPortal() {
         metadata: { reason: correctionReasonText.trim() },
       });
 
-      showBanner("success", "✅ Correction request sent to Back-Office Audit Hub.");
+      showBanner(
+        "success",
+        "✅ Correction request sent to Back-Office Audit Hub."
+      );
       setRequestingCorrectionId(null);
       setCorrectionReasonText("");
       await initializeAadhaarPortal();
     } catch (err: any) {
-      const safeMsg = await reportAndMaskError(err, "PARTNER_AADHAAR_CORRECTION", {
-        id: partner?.id,
-        email: partner?.email,
-      });
+      const safeMsg = await reportAndMaskError(
+        err,
+        "PARTNER_AADHAAR_CORRECTION",
+        {
+          id: partner?.id,
+          email: partner?.email,
+        }
+      );
       showBanner("error", safeMsg);
     } finally {
       setIsSendingCorrectionReq(false);
@@ -660,7 +721,9 @@ export default function PartnerAadhaarPortal() {
   // =========================================================================
   // UPGRADED OCR SLIP UPLOAD (USES `scanPaymentReceiptOCR` WITH CANVAS PRE-PROCESSOR)
   // =========================================================================
-  const handleSlipUploadOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSlipUploadOCR = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -669,7 +732,10 @@ export default function PartnerAadhaarPortal() {
     setSlipPreviewUrl(URL.createObjectURL(file));
     setConfirmDepositCheck(false);
 
-    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    if (
+      file.type === "application/pdf" ||
+      file.name.toLowerCase().endsWith(".pdf")
+    ) {
       setOcrSummary({
         platform: "PDF Receipt Attached",
         amount: null,
@@ -698,7 +764,8 @@ export default function PartnerAadhaarPortal() {
       const effectiveDate = ocrResult.date || depositForm.date;
       setDepositForm((prev) => ({
         ...prev,
-        amount: ocrResult.amount !== null ? String(ocrResult.amount) : prev.amount,
+        amount:
+          ocrResult.amount !== null ? String(ocrResult.amount) : prev.amount,
         utr: ocrResult.utr ? ocrResult.utr : prev.utr,
         transaction_id: ocrResult.transactionId
           ? ocrResult.transactionId
@@ -724,7 +791,7 @@ export default function PartnerAadhaarPortal() {
   };
 
   // =========================================================================
-  // SUBMIT INSTANT DEPOSIT (WITH UNIQUE UTR, TXN ID, REF CODE & DEDUCTION SYNC)
+  // SUBMIT INSTANT DEPOSIT (WITH UNIQUE UTR, TXN ID, REF CODE & FIFO PENALTY SETTLEMENT)
   // =========================================================================
   const handleInstantDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -734,14 +801,17 @@ export default function PartnerAadhaarPortal() {
         "error",
         "Collected / Remitted Amount must be greater than zero. Upload your receipt to auto-read via OCR or enter the receipt amount."
       );
-    if (!depositForm.date) return showBanner("error", "Please select the Deposit Date.");
+    if (!depositForm.date)
+      return showBanner("error", "Please select the Deposit Date.");
 
     const cleanUtr = depositForm.utr
       .trim()
       .replace(/^AADHAAR_/i, "")
       .replace(/\s+/g, "")
       .toUpperCase();
-    const cleanTxnId = (depositForm.transaction_id || cleanUtr).trim().toUpperCase();
+    const cleanTxnId = (depositForm.transaction_id || cleanUtr)
+      .trim()
+      .toUpperCase();
     const finalRefCode =
       depositForm.reference_code ||
       generateSystemReferenceCode("FA-ADH", depositForm.date);
@@ -759,7 +829,10 @@ export default function PartnerAadhaarPortal() {
       );
     }
     if (isSlipExempted && !slipExemptionCategory) {
-      return showBanner("error", "Please select a reason from the Missing Slip dropdown.");
+      return showBanner(
+        "error",
+        "Please select a reason from the Missing Slip dropdown."
+      );
     }
     if (
       isSlipExempted &&
@@ -772,7 +845,10 @@ export default function PartnerAadhaarPortal() {
       );
     }
     if (!confirmDepositCheck)
-      return showBanner("error", "Please check the verification box before submitting.");
+      return showBanner(
+        "error",
+        "Please check the verification box before submitting."
+      );
 
     setIsSubmittingDeposit(true);
     try {
@@ -780,7 +856,9 @@ export default function PartnerAadhaarPortal() {
       const { data: dupUtr } = await supabase
         .from("partner_deposits")
         .select("id, reference_code")
-        .or(`utr_number.eq.${cleanUtr},reference_no.eq.${cleanUtr},reference_no.eq.AADHAAR_${cleanUtr}`)
+        .or(
+          `utr_number.eq.${cleanUtr},reference_no.eq.${cleanUtr},reference_no.eq.AADHAAR_${cleanUtr}`
+        )
         .limit(1)
         .maybeSingle();
 
@@ -814,7 +892,8 @@ export default function PartnerAadhaarPortal() {
         partner_id: partner.id,
         center_id: partner.center_id,
         deposit_amount: amt,
-        deposit_method: remittanceTrack === "UPI_QR" ? "UPI" : depositForm.method,
+        deposit_method:
+          remittanceTrack === "UPI_QR" ? "UPI" : depositForm.method,
         reference_no: `AADHAAR_${cleanUtr}`,
         deposit_date: depositForm.date,
         deposit_slip_url: slipFileName,
@@ -882,22 +961,40 @@ export default function PartnerAadhaarPortal() {
       if (reportIdsToMarkSubmitted.length > 0) {
         await supabase
           .from("aadhaar_daily_reports")
-          .update({ deposit_status: "Deposit Submitted", deposit_id: depRow.id })
+          .update({
+            deposit_status: "Deposit Submitted",
+            deposit_id: depRow.id,
+          })
           .in("id", reportIdsToMarkSubmitted);
       }
 
-      // If remaining deposit covers active penalties, settle them and link settled_by_deposit_id
-      const remainingAfterReports = totalValidDepositedSoFar - runningAllocated;
-      const currentPenaltySum = penalties.reduce(
-        (s, p) => s + Number(p.penalty_amount || 0),
-        0
-      );
-      if (currentPenaltySum > 0 && remainingAfterReports >= currentPenaltySum) {
+      // FIFO Penalty Settlement: Settle active non-waived penalties chronologically as far as remaining deposit allows
+      let remainingAfterReports = totalValidDepositedSoFar - runningAllocated;
+      const chronologicalPenalties = [...penalties]
+        .filter((p) => !p.is_settled && !p.is_waived)
+        .sort((a, b) =>
+          String(a.penalty_for_date || "").localeCompare(
+            String(b.penalty_for_date || "")
+          )
+        );
+
+      const penaltyIdsToSettle: string[] = [];
+      for (const pen of chronologicalPenalties) {
+        const penAmt = Number(pen.penalty_amount || 0);
+        if (penAmt <= 0) continue;
+        if (remainingAfterReports >= penAmt) {
+          remainingAfterReports -= penAmt;
+          penaltyIdsToSettle.push(pen.id);
+        } else {
+          break;
+        }
+      }
+
+      if (penaltyIdsToSettle.length > 0) {
         await supabase
           .from("aadhaar_penalty_logs")
           .update({ is_settled: true, settled_by_deposit_id: depRow.id })
-          .eq("partner_id", partner.id)
-          .eq("is_settled", false);
+          .in("id", penaltyIdsToSettle);
       }
 
       await logSystemTelemetry({
@@ -917,7 +1014,9 @@ export default function PartnerAadhaarPortal() {
 
       showBanner(
         "success",
-        `✅ Remittance of ₹${amt.toLocaleString("en-IN")} recorded! Ref Code: ${finalRefCode} | UTR: ${cleanUtr}`
+        `✅ Remittance of ₹${amt.toLocaleString(
+          "en-IN"
+        )} recorded! Ref Code: ${finalRefCode} | UTR: ${cleanUtr}`
       );
       setSlipFile(null);
       if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
@@ -937,16 +1036,23 @@ export default function PartnerAadhaarPortal() {
         amount: "",
         utr: "",
         transaction_id: "",
-        reference_code: generateSystemReferenceCode("FA-ADH", getISTDateString(0)),
+        reference_code: generateSystemReferenceCode(
+          "FA-ADH",
+          getISTDateString(0)
+        ),
       }));
       setConfirmDepositCheck(false);
       await initializeAadhaarPortal();
       setActiveMenu("history");
     } catch (err: any) {
-      const safeMsg = await reportAndMaskError(err, "PARTNER_AADHAAR_DEPOSIT", {
-        id: partner?.id,
-        email: partner?.email,
-      });
+      const safeMsg = await reportAndMaskError(
+        err,
+        "PARTNER_AADHAAR_DEPOSIT",
+        {
+          id: partner?.id,
+          email: partner?.email,
+        }
+      );
       showBanner("error", safeMsg);
     } finally {
       setIsSubmittingDeposit(false);
@@ -1003,11 +1109,20 @@ export default function PartnerAadhaarPortal() {
         )} to ${formatToDDMMYYYY(weekEnd)} is already submitted.`
       );
     }
-    if (!weeklyPreview || !weekCsv || !weekHtml || !confirmWeeklyCheck || !isAadhaarAuthorized)
+    if (
+      !weeklyPreview ||
+      !weekCsv ||
+      !weekHtml ||
+      !confirmWeeklyCheck ||
+      !isAadhaarAuthorized
+    )
       return;
     setIsSubmittingWeekly(true);
     try {
-      const safeOp = (partner.aadhaar_operator_id || "OP").replace(/[^a-zA-Z0-9]/g, "_");
+      const safeOp = (partner.aadhaar_operator_id || "OP").replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      );
       const csvPath = `WEEKLY_${safeOp}_${weekStart}_to_${weekEnd}_${Date.now()}.csv`;
       const htmlPath = `WEEKLY_${safeOp}_${weekStart}_to_${weekEnd}_${Date.now()}.html`;
 
@@ -1019,7 +1134,8 @@ export default function PartnerAadhaarPortal() {
       let mismatchCount = 0;
       weeklyPreview.daily_breakdown.forEach((wb: any) => {
         const dMatch = dailyReports.find((dr) => dr.report_date === wb.date);
-        if (!dMatch || dMatch.total_packets_qty !== wb.totalPkts) mismatchCount++;
+        if (!dMatch || dMatch.total_packets_qty !== wb.totalPkts)
+          mismatchCount++;
       });
 
       const { error } = await supabase.from("aadhaar_weekly_reports").insert([
@@ -1085,17 +1201,24 @@ export default function PartnerAadhaarPortal() {
 
   const handleDownloadRawFile = async (path: string | null) => {
     if (!path)
-      return showBanner("info", "File not available (Manual / Exemption entry).");
+      return showBanner(
+        "info",
+        "File not available (Manual / Exemption entry)."
+      );
     const { data, error } = await supabase.storage
       .from("aadhaar-reports")
       .createSignedUrl(path, 120);
     if (error || !data?.signedUrl)
-      return showBanner("error", "[ERR-VLT-301] Unable to generate download link.");
+      return showBanner(
+        "error",
+        "[ERR-VLT-301] Unable to generate download link."
+      );
     window.open(data.signedUrl, "_blank");
   };
 
   const handleViewDepositSlip = async (path: string | null) => {
-    if (!path) return showBanner("info", "No deposit slip attached (Exempted).");
+    if (!path)
+      return showBanner("info", "No deposit slip attached (Exempted).");
     if (path.startsWith("http")) {
       window.open(path, "_blank");
       return;
@@ -1117,7 +1240,8 @@ export default function PartnerAadhaarPortal() {
   }
 
   const filteredHistory = dailyReports.filter((r) => {
-    const dMatch = r.report_date >= filterFromDate && r.report_date <= filterToDate;
+    const dMatch =
+      r.report_date >= filterFromDate && r.report_date <= filterToDate;
     const mMatch =
       fileModeFilter === "ALL"
         ? true
@@ -1155,7 +1279,7 @@ export default function PartnerAadhaarPortal() {
     }
   );
 
-  // REQUIREMENT #4: Deduction Formula (Total Collection - Total Deposit = Remaining Balance Payable)
+  // Deduction Formula (Total Collection - Total Deposit = Remaining Balance Payable)
   const totalCollectionCash = dailyReports.reduce(
     (s, r) => s + Number(r.total_cash_collected || 0),
     0
@@ -1166,7 +1290,10 @@ export default function PartnerAadhaarPortal() {
   const unpaidPenaltyTotal = penalties
     .filter((p) => !p.is_settled && !p.is_waived)
     .reduce((s, p) => s + Number(p.penalty_amount || 0), 0);
-  const pendingReportCash = Math.max(0, totalCollectionCash - totalDepositedCash);
+  const pendingReportCash = Math.max(
+    0,
+    totalCollectionCash - totalDepositedCash
+  );
   const totalPayableNow = Math.max(
     0,
     totalCollectionCash + unpaidPenaltyTotal - totalDepositedCash
@@ -1185,7 +1312,9 @@ export default function PartnerAadhaarPortal() {
     slipFile?.type === "application/pdf" ||
     (slipFile?.name || "").toLowerCase().endsWith(".pdf");
 
-  const effectiveMenu: AadhaarMenuTab = isAadhaarAuthorized ? activeMenu : "upgrade";
+  const effectiveMenu: AadhaarMenuTab = isAadhaarAuthorized
+    ? activeMenu
+    : "upgrade";
   const isDownloadReady = Boolean(
     filterFromDate &&
       filterToDate &&
@@ -1204,7 +1333,9 @@ export default function PartnerAadhaarPortal() {
         totalDepositedCash={totalDepositedCash}
         pendingReportCash={pendingReportCash}
         unpaidPenaltyTotal={unpaidPenaltyTotal}
-        overdueDaysCount={penalties.filter((p) => !p.is_waived && !p.is_settled).length}
+        overdueDaysCount={
+          penalties.filter((p) => !p.is_waived && !p.is_settled).length
+        }
         onSignOut={async () => {
           await supabase.auth.signOut();
           router.push("/partner/login");
@@ -1239,8 +1370,9 @@ export default function PartnerAadhaarPortal() {
                 <span>🚨</span> Late Payment Penalty Active (₹100 / Day)
               </h3>
               <p className="text-xs font-bold text-red-100 mt-1">
-                You have {penalties.length} overdue day(s) of unsettled Aadhaar collections.
-                ₹{unpaidPenaltyTotal} has been added to your closing ledger.
+                You have {penalties.length} overdue day(s) of unsettled Aadhaar
+                collections. ₹{unpaidPenaltyTotal} has been added to your
+                closing ledger.
               </p>
             </div>
             <button
@@ -1262,14 +1394,21 @@ export default function PartnerAadhaarPortal() {
                 </label>
                 <select
                   value={datePreset}
-                  onChange={(e) => handlePresetChange(e.target.value as DatePresetMode)}
+                  onChange={(e) =>
+                    handlePresetChange(e.target.value as DatePresetMode)
+                  }
                   className="w-full border-2 border-indigo-200 p-2 rounded-lg text-xs font-black text-indigo-950 bg-indigo-50 outline-none focus:border-indigo-600"
                 >
                   <option value="today">
-                    Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
+                    Today (
+                    {formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
                   </option>
                   <option value="yesterday">
-                    Yesterday ({formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
+                    Yesterday (
+                    {formatToDDMMYYYY(
+                      getDateRangeFromPreset("yesterday").start
+                    )}
+                    )
                   </option>
                   <option value="current_week">Current Week</option>
                   <option value="current_month">Current Month</option>
@@ -1302,6 +1441,7 @@ export default function PartnerAadhaarPortal() {
                 <input
                   type="date"
                   value={filterToDate}
+                  max={getISTDateString(0)}
                   onChange={(e) => {
                     setDatePreset("custom");
                     setFilterToDate(e.target.value);
@@ -1323,8 +1463,12 @@ export default function PartnerAadhaarPortal() {
                   }}
                   className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-black text-slate-800 bg-slate-50 outline-none focus:border-blue-600"
                 >
-                  <option value="ALL">📋 Both (With &amp; Without Files)</option>
-                  <option value="WITH_FILES">✅ With CSV &amp; HTML Files Only</option>
+                  <option value="ALL">
+                    📋 Both (With &amp; Without Files)
+                  </option>
+                  <option value="WITH_FILES">
+                    ✅ With CSV &amp; HTML Files Only
+                  </option>
                   <option value="WITHOUT_FILES">
                     ⚠️ Without Files (Manual / Exemption)
                   </option>
@@ -1342,9 +1486,10 @@ export default function PartnerAadhaarPortal() {
                   className="w-4 h-4 accent-blue-600"
                 />
                 <span className="text-[11px] font-bold text-slate-800">
-                  I confirm the selected filter details ({formatToDDMMYYYY(filterFromDate)} to{" "}
-                  {formatToDDMMYYYY(filterToDate)} • {filteredHistory.length} records) and
-                  request report download.
+                  I confirm the selected filter details (
+                  {formatToDDMMYYYY(filterFromDate)} to{" "}
+                  {formatToDDMMYYYY(filterToDate)} • {filteredHistory.length}{" "}
+                  records) and request report download.
                 </span>
               </label>
 
@@ -1368,7 +1513,9 @@ export default function PartnerAadhaarPortal() {
                 <button
                   type="button"
                   disabled={!isDownloadReady}
-                  onClick={() => downloadAadhaarCSVReport(filteredHistory, fileModeFilter)}
+                  onClick={() =>
+                    downloadAadhaarCSVReport(filteredHistory, fileModeFilter)
+                  }
                   className="flex-1 sm:flex-none bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
                 >
                   📊 Download CSV
@@ -1386,14 +1533,20 @@ export default function PartnerAadhaarPortal() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   1. New Enrolment
                 </p>
-                <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat1}</p>
-                <p className="text-[10px] font-bold text-emerald-600 mt-1">Free (₹0.00)</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">
+                  {totals.cat1}
+                </p>
+                <p className="text-[10px] font-bold text-emerald-600 mt-1">
+                  Free (₹0.00)
+                </p>
               </div>
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-teal-500">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   2. MBU Free
                 </p>
-                <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat2}</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">
+                  {totals.cat2}
+                </p>
                 <p className="text-[10px] font-bold text-teal-600 mt-1">
                   Mandatory Bio (₹0.00)
                 </p>
@@ -1402,7 +1555,9 @@ export default function PartnerAadhaarPortal() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   3. MBU Chargeable
                 </p>
-                <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat3}</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">
+                  {totals.cat3}
+                </p>
                 <p className="text-[10px] font-bold text-amber-600 mt-1">
                   Rate: ₹{activeTariff?.mbu_chargeable_fee || 125}
                 </p>
@@ -1411,7 +1566,9 @@ export default function PartnerAadhaarPortal() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   4. Demographic
                 </p>
-                <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat4}</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">
+                  {totals.cat4}
+                </p>
                 <p className="text-[10px] font-bold text-blue-600 mt-1">
                   Rate: ₹{activeTariff?.demographic_fee || 75}
                 </p>
@@ -1420,7 +1577,9 @@ export default function PartnerAadhaarPortal() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   5. Biometric Update
                 </p>
-                <p className="text-3xl font-black text-slate-900 mt-1">{totals.cat5}</p>
+                <p className="text-3xl font-black text-slate-900 mt-1">
+                  {totals.cat5}
+                </p>
                 <p className="text-[10px] font-bold text-purple-600 mt-1">
                   Rate: ₹{activeTariff?.biometric_fee || 125}
                 </p>
@@ -1432,7 +1591,9 @@ export default function PartnerAadhaarPortal() {
                 <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
                   Total Packets (Period)
                 </p>
-                <p className="text-3xl font-black text-white mt-1">{totals.pkts}</p>
+                <p className="text-3xl font-black text-white mt-1">
+                  {totals.pkts}
+                </p>
                 <p className="text-[10px] text-emerald-400 font-bold mt-1">
                   ✅ {totals.comp} Completed | ❌ {totals.rej} Rej
                 </p>
@@ -1497,8 +1658,8 @@ export default function PartnerAadhaarPortal() {
                   Daily Aadhaar Report Submission
                 </h2>
                 <p className="text-xs font-bold text-slate-500 mt-0.5">
-                  Select date (DD/MM/YYYY). Once a report is submitted for a date, duplicate
-                  submissions are strictly locked.
+                  Select date (DD/MM/YYYY). Once a report is submitted for a
+                  date, duplicate submissions are strictly locked.
                 </p>
               </div>
               {!existingDailyForSelectedDate && (
@@ -1565,12 +1726,12 @@ export default function PartnerAadhaarPortal() {
                     <span className="text-3xl">🔒</span>
                     <div>
                       <h3 className="font-black text-base uppercase tracking-wider text-emerald-400">
-                        Report Already Submitted for {formatToDDMMYYYY(reportDate)} — Date
-                        Locked
+                        Report Already Submitted for{" "}
+                        {formatToDDMMYYYY(reportDate)} — Date Locked
                       </h3>
                       <p className="text-xs font-bold text-slate-300 mt-0.5">
-                        Re-submitting or overwriting an existing daily report is strictly
-                        prohibited.
+                        Re-submitting or overwriting an existing daily report is
+                        strictly prohibited.
                       </p>
                     </div>
                   </div>
@@ -1581,7 +1742,9 @@ export default function PartnerAadhaarPortal() {
 
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
                   <div className="bg-slate-800 p-3 rounded-lg">
-                    <p className="text-[9px] text-slate-400 uppercase font-bold">1. New</p>
+                    <p className="text-[9px] text-slate-400 uppercase font-bold">
+                      1. New
+                    </p>
                     <p className="text-xl font-black">
                       {existingDailyForSelectedDate.cat1_new_qty}
                     </p>
@@ -1632,29 +1795,37 @@ export default function PartnerAadhaarPortal() {
                 </div>
 
                 <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  {existingDailyForSelectedDate.edit_request_status === "Pending" ? (
+                  {existingDailyForSelectedDate.edit_request_status ===
+                  "Pending" ? (
                     <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
                       ⏳ Correction Request Pending Back-Office Audit (
                       {existingDailyForSelectedDate.edit_request_reason})
                     </span>
-                  ) : requestingCorrectionId === existingDailyForSelectedDate.id ? (
+                  ) : requestingCorrectionId ===
+                    existingDailyForSelectedDate.id ? (
                     <div className="w-full flex flex-col sm:flex-row gap-2">
                       <input
                         type="text"
                         placeholder="Describe what needs correction by Admin..."
                         value={correctionReasonText}
-                        onChange={(e) => setCorrectionReasonText(e.target.value)}
+                        onChange={(e) =>
+                          setCorrectionReasonText(e.target.value)
+                        }
                         className="flex-1 bg-slate-800 border border-slate-700 text-white p-2.5 rounded-lg text-xs font-bold outline-none"
                       />
                       <button
                         type="button"
                         disabled={isSendingCorrectionReq}
                         onClick={() =>
-                          handleSendDailyCorrectionRequest(existingDailyForSelectedDate.id)
+                          handleSendDailyCorrectionRequest(
+                            existingDailyForSelectedDate.id
+                          )
                         }
                         className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-lg text-[10px] uppercase"
                       >
-                        {isSendingCorrectionReq ? "Sending..." : "Submit Request"}
+                        {isSendingCorrectionReq
+                          ? "Sending..."
+                          : "Submit Request"}
                       </button>
                       <button
                         type="button"
@@ -1667,13 +1838,15 @@ export default function PartnerAadhaarPortal() {
                   ) : (
                     <>
                       <span className="text-[11px] font-bold text-slate-400">
-                        Need an adjustment on this locked date? Only Corporate Admin can audit
-                        and edit submitted reports.
+                        Need an adjustment on this locked date? Only Corporate
+                        Admin can audit and edit submitted reports.
                       </span>
                       <button
                         type="button"
                         onClick={() => {
-                          setRequestingCorrectionId(existingDailyForSelectedDate.id);
+                          setRequestingCorrectionId(
+                            existingDailyForSelectedDate.id
+                          );
                           setCorrectionReasonText("");
                         }}
                         className="bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-amber-400 border border-amber-500/40 font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest transition shrink-0"
@@ -1692,12 +1865,16 @@ export default function PartnerAadhaarPortal() {
                       <input
                         type="file"
                         accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
-                        onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                        onChange={(e) =>
+                          setCsvFile(e.target.files?.[0] || null)
+                        }
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       />
                       <div className="text-3xl mb-1">📊</div>
                       <p className="font-black text-slate-800 text-sm">
-                        {csvFile ? `✅ ${csvFile.name}` : "Upload UIDAI Daily .CSV File *"}
+                        {csvFile
+                          ? `✅ ${csvFile.name}`
+                          : "Upload UIDAI Daily .CSV File *"}
                       </p>
                       <p className="text-[10px] font-bold text-slate-500 mt-1">
                         Contains 20-column packet telemetry
@@ -1708,12 +1885,16 @@ export default function PartnerAadhaarPortal() {
                       <input
                         type="file"
                         accept=".html,.htm,text/html"
-                        onChange={(e) => setHtmlFile(e.target.files?.[0] || null)}
+                        onChange={(e) =>
+                          setHtmlFile(e.target.files?.[0] || null)
+                        }
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       />
                       <div className="text-3xl mb-1">🌐</div>
                       <p className="font-black text-slate-800 text-sm">
-                        {htmlFile ? `✅ ${htmlFile.name}` : "Upload UIDAI Daily .HTML File *"}
+                        {htmlFile
+                          ? `✅ ${htmlFile.name}`
+                          : "Upload UIDAI Daily .HTML File *"}
                       </p>
                       <p className="text-[10px] font-bold text-slate-500 mt-1">
                         Verifies Station ID, Operator ID &amp; Date
@@ -1770,7 +1951,10 @@ export default function PartnerAadhaarPortal() {
                             onChange={(e) =>
                               setManualCounts({
                                 ...manualCounts,
-                                cat1: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                cat1: Math.max(
+                                  0,
+                                  parseInt(e.target.value, 10) || 0
+                                ),
                               })
                             }
                             className={noScrollNumClass}
@@ -1791,7 +1975,10 @@ export default function PartnerAadhaarPortal() {
                             onChange={(e) =>
                               setManualCounts({
                                 ...manualCounts,
-                                cat2: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                cat2: Math.max(
+                                  0,
+                                  parseInt(e.target.value, 10) || 0
+                                ),
                               })
                             }
                             className={noScrollNumClass}
@@ -1799,7 +1986,8 @@ export default function PartnerAadhaarPortal() {
                         </div>
                         <div>
                           <label className="text-[10px] font-black uppercase text-amber-800 block mb-1">
-                            3. MBU Paid (₹{activeTariff?.mbu_chargeable_fee || 125})
+                            3. MBU Paid (₹
+                            {activeTariff?.mbu_chargeable_fee || 125})
                           </label>
                           <input
                             type="number"
@@ -1812,7 +2000,10 @@ export default function PartnerAadhaarPortal() {
                             onChange={(e) =>
                               setManualCounts({
                                 ...manualCounts,
-                                cat3: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                cat3: Math.max(
+                                  0,
+                                  parseInt(e.target.value, 10) || 0
+                                ),
                               })
                             }
                             className={noScrollNumClass}
@@ -1833,7 +2024,10 @@ export default function PartnerAadhaarPortal() {
                             onChange={(e) =>
                               setManualCounts({
                                 ...manualCounts,
-                                cat4: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                cat4: Math.max(
+                                  0,
+                                  parseInt(e.target.value, 10) || 0
+                                ),
                               })
                             }
                             className={noScrollNumClass}
@@ -1854,7 +2048,10 @@ export default function PartnerAadhaarPortal() {
                             onChange={(e) =>
                               setManualCounts({
                                 ...manualCounts,
-                                cat5: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                cat5: Math.max(
+                                  0,
+                                  parseInt(e.target.value, 10) || 0
+                                ),
                               })
                             }
                             className={noScrollNumClass}
@@ -1875,7 +2072,8 @@ export default function PartnerAadhaarPortal() {
                   <div className="bg-slate-900 text-white p-5 rounded-xl space-y-4">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3">
                       <span className="text-xs font-black uppercase tracking-widest text-emerald-400">
-                        ✅ 5-Category Verification Summary ({formatToDDMMYYYY(reportDate)})
+                        ✅ 5-Category Verification Summary (
+                        {formatToDDMMYYYY(reportDate)})
                       </span>
                       <span className="text-xs font-bold text-slate-300">
                         Operator:{" "}
@@ -1959,7 +2157,9 @@ export default function PartnerAadhaarPortal() {
                           {(isManualMode
                             ? manualCashTotal
                             : parsedPreview.total_cash_collected
-                          ).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          ).toLocaleString("en-IN", {
+                            minimumFractionDigits: 2,
+                          })}
                         </p>
                       </div>
                     </div>
@@ -1981,8 +2181,9 @@ export default function PartnerAadhaarPortal() {
                             : parsedPreview.total_cash_collected
                           ).toLocaleString("en-IN")}
                         </strong>{" "}
-                        collected amount for <strong>{formatToDDMMYYYY(reportDate)}</strong>{" "}
-                        are accurate.
+                        collected amount for{" "}
+                        <strong>{formatToDDMMYYYY(reportDate)}</strong> are
+                        accurate.
                       </span>
                     </label>
 
@@ -2015,8 +2216,10 @@ export default function PartnerAadhaarPortal() {
                 </h2>
                 <p className="text-xs font-bold text-slate-500 mt-0.5">
                   Total Collection:{" "}
-                  <strong>₹{totalCollectionCash.toLocaleString("en-IN")}</strong> &bull; Less
-                  Deposited:{" "}
+                  <strong>
+                    ₹{totalCollectionCash.toLocaleString("en-IN")}
+                  </strong>{" "}
+                  &bull; Less Deposited:{" "}
                   <strong className="text-emerald-600">
                     -₹{totalDepositedCash.toLocaleString("en-IN")}
                   </strong>{" "}
@@ -2026,7 +2229,10 @@ export default function PartnerAadhaarPortal() {
                   </strong>{" "}
                   &rarr; Balance Payable:{" "}
                   <strong className="text-red-600 text-sm">
-                    ₹{totalPayableNow.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    ₹
+                    {totalPayableNow.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                    })}
                   </strong>
                 </p>
               </div>
@@ -2083,7 +2289,9 @@ export default function PartnerAadhaarPortal() {
                         {totalPayableNow > 0 && (
                           <button
                             type="button"
-                            onClick={() => setQrPayAmount(totalPayableNow.toFixed(2))}
+                            onClick={() =>
+                              setQrPayAmount(totalPayableNow.toFixed(2))
+                            }
                             className="text-[9px] font-black uppercase bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white px-2 py-0.5 rounded border border-blue-500/40 transition"
                           >
                             Reset to Balance Payable (₹{totalPayableNow})
@@ -2108,7 +2316,10 @@ export default function PartnerAadhaarPortal() {
                         <QRCodeSVG value={upiDeepLink} size={185} level="M" />
                       </div>
                       <p className="text-3xl font-black text-emerald-400">
-                        ₹{parsedQrAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        ₹
+                        {parsedQrAmount.toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
                       </p>
                       <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">
                         Scan with any UPI App or Tap Below on Mobile
@@ -2134,9 +2345,10 @@ export default function PartnerAadhaarPortal() {
                       Bank Cash Deposit / NEFT / IMPS / Cheque Remittance
                     </h3>
                     <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                      Upload your physical Bank Cash Deposit Challan or NEFT/IMPS advice on
-                      the right — the enhanced OCR engine will automatically read the
-                      collected amount, date, Unique UTR, and Transaction ID from your slip.
+                      Upload your physical Bank Cash Deposit Challan or
+                      NEFT/IMPS advice on the right — the enhanced OCR engine
+                      will automatically read the collected amount, date, Unique
+                      UTR, and Transaction ID from your slip.
                     </p>
                     <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
                       <span className="text-xs font-bold text-slate-400 uppercase">
@@ -2208,7 +2420,10 @@ export default function PartnerAadhaarPortal() {
                   </div>
                 </div>
 
-                <form onSubmit={handleInstantDepositSubmit} className="space-y-4">
+                <form
+                  onSubmit={handleInstantDepositSubmit}
+                  className="space-y-4"
+                >
                   <div className="space-y-3">
                     <label className="flex items-center gap-3 cursor-pointer bg-slate-50 p-3 rounded-lg border border-slate-200">
                       <input
@@ -2217,7 +2432,8 @@ export default function PartnerAadhaarPortal() {
                         onChange={(e) => {
                           setIsSlipExempted(e.target.checked);
                           setSlipFile(null);
-                          if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+                          if (slipPreviewUrl)
+                            URL.revokeObjectURL(slipPreviewUrl);
                           setSlipPreviewUrl(null);
                           setOcrSummary({
                             platform: null,
@@ -2256,8 +2472,8 @@ export default function PartnerAadhaarPortal() {
                         {isScanningSlip && (
                           <div className="mt-3 p-3 bg-blue-100/80 border border-blue-300 rounded-lg text-center">
                             <p className="text-[10px] font-black text-blue-800 uppercase animate-pulse">
-                              🔍 Pre-processing Contrast &amp; Reading Amount, Date, UTR &amp;
-                              Txn ID ({scanProgress}%)...
+                              🔍 Pre-processing Contrast &amp; Reading Amount,
+                              Date, UTR &amp; Txn ID ({scanProgress}%)...
                             </p>
                           </div>
                         )}
@@ -2280,7 +2496,9 @@ export default function PartnerAadhaarPortal() {
                             <option value="" disabled>
                               -- Select Missing Slip Reason --
                             </option>
-                            <option value="Missing">Missing / Lost Physical Slip</option>
+                            <option value="Missing">
+                              Missing / Lost Physical Slip
+                            </option>
                             <option value="Not downloaded">
                               Receipt Not Downloaded / UPI App Error
                             </option>
@@ -2299,7 +2517,9 @@ export default function PartnerAadhaarPortal() {
                               placeholder="TYPE DETAILED REASON HERE..."
                               value={slipExemptionOtherText}
                               onChange={(e) =>
-                                setSlipExemptionOtherText(e.target.value.toUpperCase())
+                                setSlipExemptionOtherText(
+                                  e.target.value.toUpperCase()
+                                )
                               }
                               className="w-full bg-white border-2 border-amber-300 text-slate-900 font-black uppercase text-xs rounded-lg p-2.5 outline-none"
                             />
@@ -2309,42 +2529,53 @@ export default function PartnerAadhaarPortal() {
                     )}
                   </div>
 
-                  {!isScanningSlip && !isSlipExempted && slipFile && ocrSummary.platform && (
-                    <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2.5 border border-slate-800">
-                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                        <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
-                          ✅ Enhanced OCR Capture Summary
-                        </span>
-                        <span className="text-[10px] font-black bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700">
-                          {ocrSummary.platform}
-                        </span>
+                  {!isScanningSlip &&
+                    !isSlipExempted &&
+                    slipFile &&
+                    ocrSummary.platform && (
+                      <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2.5 border border-slate-800">
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                          <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
+                            ✅ Enhanced OCR Capture Summary
+                          </span>
+                          <span className="text-[10px] font-black bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700">
+                            {ocrSummary.platform}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div className="bg-slate-800 p-2 rounded">
+                            <p className="text-[9px] text-slate-400 uppercase">
+                              OCR Amount
+                            </p>
+                            <p className="font-black text-emerald-400">
+                              {ocrSummary.amount !== null
+                                ? `₹${ocrSummary.amount.toLocaleString(
+                                    "en-IN"
+                                  )}`
+                                : "Enter Below"}
+                            </p>
+                          </div>
+                          <div className="bg-slate-800 p-2 rounded">
+                            <p className="text-[9px] text-slate-400 uppercase">
+                              OCR Date
+                            </p>
+                            <p className="font-bold text-slate-200">
+                              {ocrSummary.date
+                                ? formatToDDMMYYYY(ocrSummary.date)
+                                : "Verify Below"}
+                            </p>
+                          </div>
+                          <div className="bg-slate-800 p-2 rounded">
+                            <p className="text-[9px] text-slate-400 uppercase">
+                              OCR UTR
+                            </p>
+                            <p className="font-bold text-slate-200 truncate">
+                              {ocrSummary.utr || "Enter Below"}
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div className="bg-slate-800 p-2 rounded">
-                          <p className="text-[9px] text-slate-400 uppercase">OCR Amount</p>
-                          <p className="font-black text-emerald-400">
-                            {ocrSummary.amount !== null
-                              ? `₹${ocrSummary.amount.toLocaleString("en-IN")}`
-                              : "Enter Below"}
-                          </p>
-                        </div>
-                        <div className="bg-slate-800 p-2 rounded">
-                          <p className="text-[9px] text-slate-400 uppercase">OCR Date</p>
-                          <p className="font-bold text-slate-200">
-                            {ocrSummary.date
-                              ? formatToDDMMYYYY(ocrSummary.date)
-                              : "Verify Below"}
-                          </p>
-                        </div>
-                        <div className="bg-slate-800 p-2 rounded">
-                          <p className="text-[9px] text-slate-400 uppercase">OCR UTR</p>
-                          <p className="font-bold text-slate-200 truncate">
-                            {ocrSummary.utr || "Enter Below"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                    )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
@@ -2361,7 +2592,10 @@ export default function PartnerAadhaarPortal() {
                         onWheel={handleNumericWheel}
                         onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
-                          setDepositForm({ ...depositForm, amount: e.target.value })
+                          setDepositForm({
+                            ...depositForm,
+                            amount: e.target.value,
+                          })
                         }
                         className="w-full border-2 border-emerald-300 bg-emerald-50/30 p-3 rounded-lg font-black text-lg text-slate-900 outline-none focus:border-emerald-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
@@ -2400,7 +2634,7 @@ export default function PartnerAadhaarPortal() {
                       <input
                         type="text"
                         required
-                        placeholder="Unique UTR / RRN Number..."
+                        placeholder="Unique UTR / Reference Number..."
                         value={depositForm.utr}
                         onChange={(e) =>
                           setDepositForm({
@@ -2452,12 +2686,19 @@ export default function PartnerAadhaarPortal() {
                               : depositForm.method
                           }
                           onChange={(e) =>
-                            setDepositForm({ ...depositForm, method: e.target.value })
+                            setDepositForm({
+                              ...depositForm,
+                              method: e.target.value,
+                            })
                           }
                           className="w-full border-2 border-amber-300 p-2.5 rounded-lg font-black text-xs bg-amber-50/40 text-slate-900 outline-none focus:border-amber-600"
                         >
-                          <option value="Cash Deposit">Bank Counter Cash Deposit</option>
-                          <option value="NEFT/RTGS">NEFT / RTGS Transfer</option>
+                          <option value="Cash Deposit">
+                            Bank Counter Cash Deposit
+                          </option>
+                          <option value="NEFT/RTGS">
+                            NEFT / RTGS Transfer
+                          </option>
                           <option value="IMPS">IMPS Transfer</option>
                           <option value="Cheque">Bank Cheque Deposit</option>
                         </select>
@@ -2493,24 +2734,29 @@ export default function PartnerAadhaarPortal() {
                           minimumFractionDigits: 2,
                         })}
                       </strong>
-                      ), Unique UTR (<strong>{depositForm.utr || "N/A"}</strong>),
-                      Transaction ID (
-                      <strong>{depositForm.transaction_id || "N/A"}</strong>), and Reference
-                      Code (<strong>{depositForm.reference_code}</strong>) match my payment
-                      receipt.
+                      ), Unique UTR (<strong>{depositForm.utr || "N/A"}</strong>
+                      ), Transaction ID (
+                      <strong>{depositForm.transaction_id || "N/A"}</strong>),
+                      and Reference Code (
+                      <strong>{depositForm.reference_code}</strong>) match my
+                      payment receipt.
                     </span>
                   </label>
 
                   <button
                     type="submit"
-                    disabled={isSubmittingDeposit || isScanningSlip || !confirmDepositCheck}
+                    disabled={
+                      isSubmittingDeposit ||
+                      isScanningSlip ||
+                      !confirmDepositCheck
+                    }
                     className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-md disabled:opacity-40 transition"
                   >
                     {isSubmittingDeposit
                       ? "Submitting Remittance..."
-                      : `Submit ₹${parsedReceiptAmount.toLocaleString("en-IN")} Remittance (${
-                          depositForm.reference_code
-                        })`}
+                      : `Submit ₹${parsedReceiptAmount.toLocaleString(
+                          "en-IN"
+                        )} Remittance (${depositForm.reference_code})`}
                   </button>
                 </form>
               </div>
@@ -2527,13 +2773,13 @@ export default function PartnerAadhaarPortal() {
                   Weekly UIDAI Report Reconciliation (Monday to Sunday)
                 </h2>
                 <p className="text-xs font-bold text-slate-500 mt-0.5">
-                  Pick any date in the week — the system automatically snaps to Monday
-                  (Start) and consecutive Sunday (End).
+                  Pick any date in the week — the system automatically snaps to
+                  Monday (Start) and consecutive Sunday (End).
                 </p>
               </div>
               <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest">
-                📅 {formatToDDMMYYYY(weekStart)} (Mon) &rarr; {formatToDDMMYYYY(weekEnd)}{" "}
-                (Sun)
+                📅 {formatToDDMMYYYY(weekStart)} (Mon) &rarr;{" "}
+                {formatToDDMMYYYY(weekEnd)} (Sun)
               </span>
             </div>
 
@@ -2553,7 +2799,8 @@ export default function PartnerAadhaarPortal() {
               </div>
               <div>
                 <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                  2. Consecutive Week End (Locked to Sunday: {formatToDDMMYYYY(weekEnd)})
+                  2. Consecutive Week End (Locked to Sunday:{" "}
+                  {formatToDDMMYYYY(weekEnd)})
                 </label>
                 <input
                   type="date"
@@ -2567,16 +2814,17 @@ export default function PartnerAadhaarPortal() {
             {existingWeeklyForSelectedWindow ? (
               <div className="p-6 bg-slate-900 text-white rounded-2xl border-2 border-emerald-500/60 space-y-2">
                 <h3 className="font-black text-sm uppercase tracking-widest text-emerald-400">
-                  🔒 Weekly Reconciliation Already Submitted ({formatToDDMMYYYY(weekStart)}{" "}
-                  to {formatToDDMMYYYY(weekEnd)})
+                  🔒 Weekly Reconciliation Already Submitted (
+                  {formatToDDMMYYYY(weekStart)} to {formatToDDMMYYYY(weekEnd)})
                 </h3>
                 <p className="text-xs font-bold text-slate-300">
-                  Logged Packets: {existingWeeklyForSelectedWindow.total_packets_qty} | Cash:
-                  ₹
+                  Logged Packets:{" "}
+                  {existingWeeklyForSelectedWindow.total_packets_qty} | Cash: ₹
                   {Number(
                     existingWeeklyForSelectedWindow.total_cash_collected || 0
                   ).toLocaleString("en-IN")}{" "}
-                  | Status: {existingWeeklyForSelectedWindow.reconciliation_status}
+                  | Status:{" "}
+                  {existingWeeklyForSelectedWindow.reconciliation_status}
                 </p>
               </div>
             ) : (
@@ -2590,7 +2838,9 @@ export default function PartnerAadhaarPortal() {
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
                     <p className="font-black text-slate-800 text-sm">
-                      {weekCsv ? `✅ ${weekCsv.name}` : "Upload Weekly .CSV File *"}
+                      {weekCsv
+                        ? `✅ ${weekCsv.name}`
+                        : "Upload Weekly .CSV File *"}
                     </p>
                   </div>
                   <div className="border-2 border-dashed border-indigo-300 bg-indigo-50/50 rounded-xl p-5 text-center relative">
@@ -2601,7 +2851,9 @@ export default function PartnerAadhaarPortal() {
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
                     <p className="font-black text-slate-800 text-sm">
-                      {weekHtml ? `✅ ${weekHtml.name}` : "Upload Weekly .HTML File *"}
+                      {weekHtml
+                        ? `✅ ${weekHtml.name}`
+                        : "Upload Weekly .HTML File *"}
                     </p>
                   </div>
                 </div>
@@ -2616,16 +2868,23 @@ export default function PartnerAadhaarPortal() {
                   <div className="space-y-4">
                     <h3 className="font-black text-xs uppercase tracking-widest text-slate-600">
                       Day-by-Day Weekly vs. Daily Matching Matrix (
-                      {formatToDDMMYYYY(weekStart)} to {formatToDDMMYYYY(weekEnd)})
+                      {formatToDDMMYYYY(weekStart)} to{" "}
+                      {formatToDDMMYYYY(weekEnd)})
                     </h3>
                     <div className="overflow-x-auto border rounded-xl">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-900 text-white text-[10px] uppercase">
                           <tr>
                             <th className="p-3">Date (DD/MM/YYYY)</th>
-                            <th className="p-3 text-center">Weekly File Packets</th>
-                            <th className="p-3 text-center">Daily Report Logged</th>
-                            <th className="p-3 text-center">Rejected in Weekly</th>
+                            <th className="p-3 text-center">
+                              Weekly File Packets
+                            </th>
+                            <th className="p-3 text-center">
+                              Daily Report Logged
+                            </th>
+                            <th className="p-3 text-center">
+                              Rejected in Weekly
+                            </th>
                             <th className="p-3 text-right">Weekly Cash</th>
                             <th className="p-3 text-right">Match Status</th>
                           </tr>
@@ -2636,7 +2895,8 @@ export default function PartnerAadhaarPortal() {
                               (dr) => dr.report_date === wb.date
                             );
                             const isMatched =
-                              dMatch && dMatch.total_packets_qty === wb.totalPkts;
+                              dMatch &&
+                              dMatch.total_packets_qty === wb.totalPkts;
                             return (
                               <tr key={wb.date} className="hover:bg-slate-50">
                                 <td className="p-3 font-black">
@@ -2646,7 +2906,9 @@ export default function PartnerAadhaarPortal() {
                                   {wb.totalPkts}
                                 </td>
                                 <td className="p-3 text-center font-bold">
-                                  {dMatch ? dMatch.total_packets_qty : "MISSING"}
+                                  {dMatch
+                                    ? dMatch.total_packets_qty
+                                    : "MISSING"}
                                 </td>
                                 <td className="p-3 text-center font-bold text-red-600">
                                   {wb.rejected}
@@ -2677,13 +2939,18 @@ export default function PartnerAadhaarPortal() {
                         type="checkbox"
                         required
                         checked={confirmWeeklyCheck}
-                        onChange={(e) => setConfirmWeeklyCheck(e.target.checked)}
+                        onChange={(e) =>
+                          setConfirmWeeklyCheck(e.target.checked)
+                        }
                         className="w-4 h-4 accent-blue-600"
                       />
                       <span className="text-xs font-bold text-slate-800">
-                        I confirm the Monday-to-Sunday weekly reconciliation matrix (
-                        {weeklyPreview.total_packets_qty} packets, ₹
-                        {weeklyPreview.total_cash_collected.toLocaleString("en-IN")}).
+                        I confirm the Monday-to-Sunday weekly reconciliation
+                        matrix ({weeklyPreview.total_packets_qty} packets, ₹
+                        {weeklyPreview.total_cash_collected.toLocaleString(
+                          "en-IN"
+                        )}
+                        ).
                       </span>
                     </label>
 
