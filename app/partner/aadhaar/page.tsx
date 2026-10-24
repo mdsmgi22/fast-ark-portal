@@ -58,7 +58,7 @@ const getMondayToSundayWindow = (dateStr: string): { monday: string; sunday: str
   };
 };
 
-// Helper to extract YYYY-MM-DD from OCR receipt text
+// Helper: Extract YYYY-MM-DD from OCR receipt text
 const parseExtractedReceiptDate = (text: string): string | null => {
   const monthMap: Record<string, string> = {
     jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
@@ -79,6 +79,47 @@ const parseExtractedReceiptDate = (text: string): string | null => {
     const month = monthMap[monDdYyyy[1].toLowerCase().substring(0, 3)];
     if (month) return `${monDdYyyy[3]}-${month}-${monDdYyyy[2].padStart(2, "0")}`;
   }
+  return null;
+};
+
+// Helper: Multi-Pattern OCR Amount Extractor (GPay, PhonePe, Paytm, Bank Challan, NEFT/IMPS)
+const extractAmountFromOCRText = (text: string): number | null => {
+  // 1. Explicit Currency / Labeled Match (e.g., "₹ 4,800.00", "Rs. 4800", "Amount: 4,800", "Paid ₹4800")
+  const labeledMatches = Array.from(
+    text.matchAll(/(?:[₹]|rs\.?|inr|amount|amt|paid|total)\s*[:\s₹.-]*([0-9]{1,3}(?:,[0-9]{2,3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/gi)
+  );
+
+  for (const match of labeledMatches) {
+    if (match[1]) {
+      const val = parseFloat(match[1].replace(/,/g, ""));
+      if (!isNaN(val) && val > 0 && val <= 1000000 && !(val >= 2024 && val <= 2030)) {
+        return val;
+      }
+    }
+  }
+
+  // 2. Comma-formatted currency fallback (e.g., "4,800" or "12,500.00" where '₹' was missed by OCR)
+  const commaNumbers = text.match(/\b[1-9]\d{0,2}(?:,\d{2,3})+(?:\.\d{2})?\b/g);
+  if (commaNumbers) {
+    for (const numStr of commaNumbers) {
+      const val = parseFloat(numStr.replace(/,/g, ""));
+      if (!isNaN(val) && val > 0 && val <= 1000000) {
+        return val;
+      }
+    }
+  }
+
+  // 3. Decimal currency fallback (e.g., "4800.00")
+  const decimalNumbers = text.match(/\b\d{2,6}\.\d{2}\b/g);
+  if (decimalNumbers) {
+    for (const decStr of decimalNumbers) {
+      const val = parseFloat(decStr);
+      if (!isNaN(val) && val > 0 && val <= 1000000) {
+        return val;
+      }
+    }
+  }
+
   return null;
 };
 
@@ -117,7 +158,15 @@ export default function PartnerAadhaarPortal() {
   const [correctionReasonText, setCorrectionReasonText] = useState<string>("");
   const [isSendingCorrectionReq, setIsSendingCorrectionReq] = useState<boolean>(false);
 
-  // Instant Deposit, Missing Slip Exemption & OCR Viewer States (Menu 3)
+  // =========================================================================
+  // MENU 3: SEPARATED REMITTANCE TRACKS (UPI QR vs. BANK CASH / NEFT / IMPS)
+  // =========================================================================
+  const [remittanceTrack, setRemittanceTrack] = useState<"UPI_QR" | "BANK_TRANSFER">("UPI_QR");
+
+  // Track A Step 1: Isolated QR Generator Amount (Never conflicts with OCR Slip Amount)
+  const [qrPayAmount, setQrPayAmount] = useState<string>("");
+
+  // Track A Step 2 & Track B: Actual Remittance Submission State (Populated from OCR Slip)
   const [depositForm, setDepositForm] = useState({
     amount: "",
     method: "UPI",
@@ -197,7 +246,6 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // Auto-snap any picked date in Weekly Reconciliation to Monday -> Sunday
   const handleWeekDateSelection = (pickedDate: string) => {
     if (!pickedDate) return;
     const { monday, sunday } = getMondayToSundayWindow(pickedDate);
@@ -206,6 +254,25 @@ export default function PartnerAadhaarPortal() {
     setWeeklyPreview(null);
     setWeeklyError("");
     setConfirmWeeklyCheck(false);
+  };
+
+  // Switch between Track A (UPI QR) and Track B (Bank Cash / NEFT / IMPS) cleanly
+  const handleSwitchRemittanceTrack = (track: "UPI_QR" | "BANK_TRANSFER") => {
+    setRemittanceTrack(track);
+    setSlipFile(null);
+    if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+    setSlipPreviewUrl(null);
+    setIsSlipExempted(false);
+    setSlipExemptionCategory("");
+    setSlipExemptionOtherText("");
+    setOcrSummary({ platform: null, amount: null, utr: null, date: null });
+    setConfirmDepositCheck(false);
+    setDepositForm((prev) => ({
+      ...prev,
+      amount: "",
+      utr: "",
+      method: track === "UPI_QR" ? "UPI" : "Cash Deposit",
+    }));
   };
 
   useEffect(() => {
@@ -326,12 +393,15 @@ export default function PartnerAadhaarPortal() {
       setPenalties(pList);
       if (upiRes.data?.upi_id) setCenterUpi(upiRes.data.upi_id);
 
+      // Initialize ONLY the isolated QR Generator Amount with Pending Balance; keep Receipt Amount clean for OCR
       const pendingCash = dList
         .filter((r: any) => r.deposit_status === "Pending Deposit")
         .reduce((sum: number, r: any) => sum + Number(r.total_cash_collected || 0), 0);
       const penSum = pList.reduce((sum: number, p: any) => sum + Number(p.penalty_amount || 0), 0);
       if (pendingCash + penSum > 0) {
-        setDepositForm((prev) => ({ ...prev, amount: (pendingCash + penSum).toFixed(2) }));
+        setQrPayAmount((pendingCash + penSum).toFixed(2));
+      } else {
+        setQrPayAmount("");
       }
     } catch (err: any) {
       console.error("Aadhaar Init Error:", err.message);
@@ -349,7 +419,6 @@ export default function PartnerAadhaarPortal() {
 
   const isCredentialsLocked = isAadhaarAuthorized || latestUpgradeReq?.status === "Approved";
 
-  // Check if Daily or Weekly Report already exists for the selected date/week
   const existingDailyForSelectedDate = dailyReports.find((r) => r.report_date === reportDate);
   const existingWeeklyForSelectedWindow = weeklyReports.find(
     (w) => w.start_date === weekStart && w.end_date === weekEnd
@@ -840,7 +909,6 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // --- REQUEST ADMIN CORRECTION FOR LOCKED DAILY REPORT ---
   const handleSendDailyCorrectionRequest = async (reportId: string) => {
     if (correctionReasonText.trim().length < 5) {
       return showBanner("error", "Please enter a detailed reason (min 5 characters) for the Admin correction request.");
@@ -867,7 +935,10 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // --- MULTI-TEMPLATE OCR SLIP UPLOAD & LIVE PREVIEW ENGINE ---
+  // =========================================================================
+  // MULTI-TEMPLATE OCR SLIP UPLOAD — AUTO-READS COLLECTED AMOUNT INTO FORM
+  // (Strictly isolated from `qrPayAmount` so QR and OCR never conflict!)
+  // =========================================================================
   const handleSlipUploadOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -896,25 +967,45 @@ export default function PartnerAadhaarPortal() {
       await worker.terminate();
 
       const raw = text.toLowerCase();
-      let platform = "UPI / Bank Receipt";
-      if (raw.includes("google pay") || raw.includes("gpay")) platform = "Google Pay";
-      else if (raw.includes("phonepe")) platform = "PhonePe";
-      else if (raw.includes("paytm")) platform = "Paytm";
-      else if (raw.includes("challan") || raw.includes("cash deposit")) platform = "Bank Cash Slip";
+      let platform = remittanceTrack === "UPI_QR" ? "UPI Payment Receipt" : "Bank / NEFT Receipt";
+      let detectedMethod = depositForm.method;
 
-      let extractedUtr = "";
-      const labeledRef = text.match(
-        /(?:upi\s*ref(?:\s*no|\s*id)?|utr(?:\s*no)?|txn(?:\s*id)?|transaction\s*id)[:\s#.-]*([A-Za-z0-9]{6,22})/i
-      );
-      if (labeledRef && labeledRef[1]) extractedUtr = labeledRef[1].trim();
-
-      let extractedAmt: number | null = null;
-      const amtMatch = text.match(/(?:[₹]|rs\.?|inr|amt|amount|paid)\s*[:\s]*([0-9,]+(?:\.[0-9]{2})?)/i);
-      if (amtMatch && amtMatch[1]) {
-        const parsed = parseFloat(amtMatch[1].replace(/,/g, ""));
-        if (!isNaN(parsed) && parsed > 0 && parsed <= 1000000) extractedAmt = parsed;
+      if (raw.includes("google pay") || raw.includes("gpay")) {
+        platform = "Google Pay";
+        detectedMethod = "UPI";
+      } else if (raw.includes("phonepe")) {
+        platform = "PhonePe";
+        detectedMethod = "UPI";
+      } else if (raw.includes("paytm")) {
+        platform = "Paytm";
+        detectedMethod = "UPI";
+      } else if (raw.includes("challan") || raw.includes("cash deposit") || raw.includes("teller")) {
+        platform = "Bank Cash Slip";
+        detectedMethod = "Cash Deposit";
+      } else if (raw.includes("neft") || raw.includes("rtgs")) {
+        platform = "NEFT / RTGS";
+        detectedMethod = "NEFT/RTGS";
+      } else if (raw.includes("imps")) {
+        platform = "IMPS Transfer";
+        detectedMethod = "IMPS";
       }
 
+      // 1. Extract UTR / Reference Number
+      let extractedUtr = "";
+      const labeledRef = text.match(
+        /(?:upi\s*ref(?:\s*no|\s*id)?|utr(?:\s*no)?|txn(?:\s*id)?|transaction\s*id|journal(?:\s*no)?|scroll(?:\s*no)?|challan(?:\s*no)?)[:\s#.-]*([A-Za-z0-9]{6,22})/i
+      );
+      if (labeledRef && labeledRef[1]) {
+        extractedUtr = labeledRef[1].trim();
+      } else {
+        const upi12Digit = text.match(/\b\d{12}\b/);
+        if (upi12Digit) extractedUtr = upi12Digit[0];
+      }
+
+      // 2. Extract Collected / Remitted Amount directly from OCR copy
+      const extractedAmt = extractAmountFromOCRText(text);
+
+      // 3. Extract Transaction Date
       const extractedDate = parseExtractedReceiptDate(text);
 
       setOcrSummary({
@@ -924,10 +1015,13 @@ export default function PartnerAadhaarPortal() {
         date: extractedDate || null,
       });
 
+      // Populate the Receipt Submission Form (`depositForm`) from OCR without touching `qrPayAmount`
       setDepositForm((prev) => ({
         ...prev,
+        amount: extractedAmt !== null ? String(extractedAmt) : prev.amount,
         utr: extractedUtr ? extractedUtr : prev.utr,
         date: extractedDate ? extractedDate : prev.date,
+        method: remittanceTrack === "UPI_QR" ? "UPI" : detectedMethod === "UPI" ? prev.method : detectedMethod,
       }));
     } catch (err) {
       console.error("OCR Error:", err);
@@ -936,17 +1030,24 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // --- SUBMIT INSTANT DEPOSIT (SUPPORTS MISSING SLIP EXEMPTION DROPDOWN) ---
+  // --- SUBMIT INSTANT DEPOSIT (USES `depositForm.amount` READ FROM OCR / RECEIPT) ---
   const handleInstantDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(depositForm.amount) || 0;
-    if (amt <= 0) return showBanner("error", "Deposit amount must be greater than zero.");
+    if (amt <= 0)
+      return showBanner(
+        "error",
+        "Collected / Remitted Amount must be greater than zero. Upload your receipt to auto-read via OCR or enter the receipt amount."
+      );
     if (!depositForm.date) return showBanner("error", "Please select the Deposit Date.");
     if (depositForm.utr.trim().length < 4)
-      return showBanner("error", "Please enter a valid UTR / Reference ID (min 4 characters).");
+      return showBanner("error", "Please enter a valid UTR / Reference / Journal ID (min 4 characters).");
 
     if (!isSlipExempted && !slipFile) {
-      return showBanner("error", "Please upload the payment screenshot / bank slip, or select the Missing Slip Exemption option.");
+      return showBanner(
+        "error",
+        "Please upload the payment screenshot / bank slip, or select the Missing Slip Exemption option."
+      );
     }
     if (isSlipExempted && !slipExemptionCategory) {
       return showBanner("error", "Please select a reason from the Missing Slip dropdown.");
@@ -981,7 +1082,7 @@ export default function PartnerAadhaarPortal() {
             partner_id: partner.id,
             center_id: partner.center_id,
             deposit_amount: amt,
-            deposit_method: depositForm.method,
+            deposit_method: remittanceTrack === "UPI_QR" ? "UPI" : depositForm.method,
             reference_no: `AADHAAR_${cleanUtr}`,
             deposit_date: depositForm.date,
             deposit_slip_url: slipFileName,
@@ -1007,7 +1108,12 @@ export default function PartnerAadhaarPortal() {
         .eq("partner_id", partner.id)
         .eq("is_settled", false);
 
-      showBanner("success", "✅ Aadhaar Remittance submitted to Accounts! Your closing ledger is now clear.");
+      showBanner(
+        "success",
+        `✅ Aadhaar Remittance of ₹${amt.toLocaleString("en-IN")} (${
+          remittanceTrack === "UPI_QR" ? "UPI" : depositForm.method
+        }) submitted to Accounts!`
+      );
       setSlipFile(null);
       if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
       setSlipPreviewUrl(null);
@@ -1015,6 +1121,7 @@ export default function PartnerAadhaarPortal() {
       setSlipExemptionCategory("");
       setSlipExemptionOtherText("");
       setOcrSummary({ platform: null, amount: null, utr: null, date: null });
+      setDepositForm((prev) => ({ ...prev, amount: "", utr: "" }));
       setConfirmDepositCheck(false);
       await initializeAadhaarPortal();
       setActiveMenu("overview");
@@ -1161,12 +1268,16 @@ export default function PartnerAadhaarPortal() {
   const unpaidPenaltyTotal = penalties.reduce((s, p) => s + Number(p.penalty_amount || 0), 0);
   const totalPayableNow = pendingReportCash + unpaidPenaltyTotal;
 
-  const safeDepositAmount = (parseFloat(depositForm.amount) || 0).toFixed(2);
+  // QR Deep-Link uses ONLY the isolated `qrPayAmount` state
+  const parsedQrAmount = parseFloat(qrPayAmount) || 0;
+  const safeQrAmount = parsedQrAmount.toFixed(2);
   const upiDeepLink = `upi://pay?pa=${centerUpi}&pn=${encodeURIComponent(
     "Fast Ark Aadhaar"
-  )}&am=${safeDepositAmount}&cu=INR&tn=${encodeURIComponent(
+  )}&am=${safeQrAmount}&cu=INR&tn=${encodeURIComponent(
     `Aadhaar_${partner?.aadhaar_station_id || partner?.center_id}`
   )}`;
+
+  const parsedReceiptAmount = parseFloat(depositForm.amount) || 0;
 
   const isPdfSlip =
     slipFile?.type === "application/pdf" || (slipFile?.name || "").toLowerCase().endsWith(".pdf");
@@ -1304,7 +1415,6 @@ export default function PartnerAadhaarPortal() {
               </div>
             </div>
 
-            {/* MANDATORY DOWNLOAD CONFIRMATION GATE */}
             <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <label className="flex items-center gap-2.5 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 cursor-pointer">
                 <input
@@ -1417,7 +1527,7 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 2: DAILY REPORT UPLOAD (STRICT DUPLICATE DATE LOCK + CORRECTION REQUEST) */}
+        {/* VIEW 2: DAILY REPORT UPLOAD */}
         {isAadhaarAuthorized && effectiveMenu === "daily" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-4 gap-4">
@@ -1447,7 +1557,6 @@ export default function PartnerAadhaarPortal() {
               )}
             </div>
 
-            {/* STEP 1: DATE SELECTOR */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div>
                 <label className="block text-[10px] font-black uppercase text-slate-600 tracking-widest mb-1">
@@ -1483,7 +1592,6 @@ export default function PartnerAadhaarPortal() {
               </div>
             </div>
 
-            {/* STRICT DUPLICATE LOCK IF REPORT FOR THIS DATE ALREADY EXISTS */}
             {existingDailyForSelectedDate ? (
               <div className="bg-slate-900 text-white p-6 rounded-2xl border-2 border-emerald-500/60 space-y-5 shadow-xl">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
@@ -1538,7 +1646,6 @@ export default function PartnerAadhaarPortal() {
                   </div>
                 </div>
 
-                {/* SENIOR SAFEGUARD: REQUEST ADMIN CORRECTION WITHOUT ALLOWING PARTNER OVERWRITE */}
                 <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   {existingDailyForSelectedDate.edit_request_status === "Pending" ? (
                     <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
@@ -1842,279 +1949,445 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 3: INSTANT DEPOSIT (WITH MISSING SLIP EXEMPTION DROPDOWN & SCROLL-FREE AMOUNT) */}
+        {/* ===================================================================== */}
+        {/* VIEW 3: SEPARATED REMITTANCE WORKSPACE (UPI QR vs. CASH / NEFT / IMPS)*/}
+        {/* ===================================================================== */}
         {isAadhaarAuthorized && effectiveMenu === "deposit" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in items-start">
-            <div className="space-y-6">
-              <div className="bg-slate-900 text-white rounded-2xl p-6 flex flex-col items-center justify-center text-center border border-slate-800 shadow-xl">
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest mb-3">
-                  Instant Closing Settlement
+          <div className="space-y-6 animate-in fade-in">
+            {/* TOP REMITTANCE MODE SELECTOR BAR (SEPARATES UPI QR FROM BANK CASH / NEFT) */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 block">
+                  Choose Remittance Channel
                 </span>
-                <h2 className="text-2xl font-black">Scan or Tap to Pay Aadhaar Cash</h2>
-                <p className="text-xs text-slate-400 font-bold mt-1 mb-5">
-                  Routing to Center UPI: <span className="text-white">{centerUpi}</span>
+                <h2 className="text-xl font-black text-slate-900 mt-0.5">
+                  Aadhaar Cash Settlement &amp; OCR Receipt Verification
+                </h2>
+                <p className="text-xs font-bold text-slate-500 mt-0.5">
+                  Pending Ledger Due:{" "}
+                  <strong className="text-red-600">
+                    ₹{totalPayableNow.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </strong>{" "}
+                  (Report Cash: ₹{pendingReportCash.toLocaleString("en-IN")} + Late Fine: ₹
+                  {unpaidPenaltyTotal.toLocaleString("en-IN")})
                 </p>
+              </div>
 
-                <div className="bg-white p-4 rounded-2xl shadow-lg mb-4">
-                  <QRCodeSVG value={upiDeepLink} size={190} level="M" />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full lg:w-auto">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchRemittanceTrack("UPI_QR")}
+                  className={`px-5 py-3.5 rounded-xl font-black text-xs uppercase tracking-wider border-2 transition flex items-center justify-center gap-2 ${
+                    remittanceTrack === "UPI_QR"
+                      ? "bg-slate-900 text-white border-slate-900 shadow-lg"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <span>📲</span> Mode 1: Pay via UPI QR &amp; Upload Slip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchRemittanceTrack("BANK_TRANSFER")}
+                  className={`px-5 py-3.5 rounded-xl font-black text-xs uppercase tracking-wider border-2 transition flex items-center justify-center gap-2 ${
+                    remittanceTrack === "BANK_TRANSFER"
+                      ? "bg-amber-500 text-slate-950 border-amber-600 shadow-lg"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <span>🏦</span> Mode 2: Bank Cash / NEFT / IMPS
+                </button>
+              </div>
+            </div>
 
-                <p className="text-3xl font-black text-emerald-400">
-                  ₹{(parseFloat(depositForm.amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </p>
-                <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">
-                  Includes Report Cash (₹{pendingReportCash}) + Late Penalties (₹{unpaidPenaltyTotal})
-                </p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              {/* LEFT PANE: ISOLATED QR GENERATOR (IN UPI MODE) OR BANK INSTRUCTIONS + LIVE SLIP VIEWER */}
+              <div className="space-y-6">
+                {remittanceTrack === "UPI_QR" ? (
+                  <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-5">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 block">
+                          Step 1 of 2 — Isolated UPI QR Generator
+                        </span>
+                        <h3 className="text-lg font-black mt-0.5">Generate QR &amp; Pay via UPI App</h3>
+                      </div>
+                      <span className="bg-slate-800 text-slate-300 text-[10px] font-black px-2.5 py-1 rounded border border-slate-700">
+                        UPI ID: {centerUpi}
+                      </span>
+                    </div>
 
-                {(parseFloat(depositForm.amount) || 0) > 0 && (
-                  <a
-                    href={upiDeepLink}
-                    className="mt-5 w-full max-w-xs py-3.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex items-center justify-center gap-2"
-                  >
-                    <span>📲</span> Tap to Pay via UPI App (GPay / PhonePe)
-                  </a>
+                    {/* SEPARATE QR GENERATION AMOUNT INPUT (DOES NOT CONFLICT WITH OCR RECEIPT AMOUNT) */}
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-left space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
+                          QR Generation Amount (₹) — Separate from Receipt OCR
+                        </label>
+                        {totalPayableNow > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setQrPayAmount(totalPayableNow.toFixed(2))}
+                            className="text-[9px] font-black uppercase bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white px-2 py-0.5 rounded border border-blue-500/40 transition"
+                          >
+                            Reset to Ledger Due (₹{totalPayableNow})
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Enter amount to generate QR..."
+                        value={qrPayAmount}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
+                        onChange={(e) => setQrPayAmount(e.target.value)}
+                        className="w-full bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 text-white font-black text-xl p-3 rounded-lg outline-none transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <p className="text-[10px] font-bold text-slate-400">
+                        ℹ️ Changing this amount only updates the QR code below. Your final submitted remittance amount on
+                        the right will be read automatically from your uploaded payment screenshot.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col items-center text-center pt-2">
+                      <div className="bg-white p-4 rounded-2xl shadow-lg mb-4">
+                        <QRCodeSVG value={upiDeepLink} size={185} level="M" />
+                      </div>
+                      <p className="text-3xl font-black text-emerald-400">
+                        ₹{parsedQrAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">
+                        Scan with any UPI App or Tap Below on Mobile
+                      </p>
+
+                      {parsedQrAmount > 0 && (
+                        <a
+                          href={upiDeepLink}
+                          className="mt-4 w-full max-w-sm py-3.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex items-center justify-center gap-2"
+                        >
+                          <span>📲</span> Tap to Pay ₹{parsedQrAmount.toLocaleString("en-IN")} via UPI App
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-4">
+                    <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest inline-block">
+                      Bank Counter / Online Transfer Mode
+                    </span>
+                    <h3 className="text-xl font-black">
+                      Bank Cash Deposit / NEFT / IMPS / Cheque Remittance
+                    </h3>
+                    <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                      UPI QR generation is hidden in this mode to avoid confusion. Upload your physical Bank Cash
+                      Deposit Challan or NEFT/IMPS advice on the right — the OCR engine will automatically read the
+                      collected amount, date, and reference number from your slip.
+                    </p>
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Total Ledger Payable:</span>
+                      <span className="text-2xl font-black text-amber-400">
+                        ₹{totalPayableNow.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* LIVE UPLOADED RECEIPT / PDF PREVIEW */}
+                {!isSlipExempted && slipPreviewUrl && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-3.5 bg-slate-900 text-white flex justify-between items-center">
+                      <span className="text-xs font-black uppercase tracking-widest">📄 Uploaded Receipt Preview</span>
+                      <a
+                        href={slipPreviewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-1 rounded"
+                      >
+                        Open Full Screen ↗
+                      </a>
+                    </div>
+                    <div className="p-4 bg-slate-50 flex justify-center">
+                      {isPdfSlip ? (
+                        <iframe
+                          src={`${slipPreviewUrl}#toolbar=0`}
+                          className="w-full h-96 rounded-xl border border-slate-300 bg-white"
+                          title="Aadhaar Deposit PDF Preview"
+                        />
+                      ) : (
+                        <img
+                          src={slipPreviewUrl}
+                          alt="Uploaded Aadhaar Payment Slip"
+                          className="max-h-96 w-auto object-contain rounded-xl border border-slate-200 shadow bg-white"
+                        />
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {!isSlipExempted && slipPreviewUrl && (
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="p-3.5 bg-slate-900 text-white flex justify-between items-center">
-                    <span className="text-xs font-black uppercase tracking-widest">📄 Uploaded Receipt Preview</span>
-                    <a
-                      href={slipPreviewUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-1 rounded"
-                    >
-                      Open Full Screen ↗
-                    </a>
-                  </div>
-                  <div className="p-4 bg-slate-50 flex justify-center">
-                    {isPdfSlip ? (
-                      <iframe
-                        src={`${slipPreviewUrl}#toolbar=0`}
-                        className="w-full h-96 rounded-xl border border-slate-300 bg-white"
-                        title="Aadhaar Deposit PDF Preview"
+              {/* RIGHT PANE: OCR SLIP UPLOAD & RECEIPT VERIFICATION FORM */}
+              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
+                <div className="border-b border-slate-100 pb-3">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 block">
+                    {remittanceTrack === "UPI_QR"
+                      ? "Step 2 of 2 — Upload UPI Screenshot & Auto-Read OCR"
+                      : "Upload Bank Slip / Challan & Auto-Read OCR"}
+                  </span>
+                  <h3 className="font-black text-lg text-slate-900 mt-0.5">
+                    {remittanceTrack === "UPI_QR"
+                      ? "UPI Payment Receipt Verification"
+                      : "Bank Cash / NEFT / IMPS Receipt Verification"}
+                  </h3>
+                  <p className="text-xs font-bold text-slate-500 mt-0.5">
+                    Upload your payment copy first — the Collected Amount, Date, and UTR are automatically extracted
+                    from your receipt.
+                  </p>
+                </div>
+
+                <form onSubmit={handleInstantDepositSubmit} className="space-y-4">
+                  {/* 1. UPLOAD OCR COPY FIRST (OR SELECT MISSING SLIP EXEMPTION) */}
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-3 cursor-pointer bg-slate-50 p-3 rounded-lg border border-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={isSlipExempted}
+                        onChange={(e) => {
+                          setIsSlipExempted(e.target.checked);
+                          setSlipFile(null);
+                          if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+                          setSlipPreviewUrl(null);
+                          setOcrSummary({ platform: null, amount: null, utr: null, date: null });
+                          setSlipExemptionCategory("");
+                          setSlipExemptionOtherText("");
+                          setConfirmDepositCheck(false);
+                        }}
+                        className="w-5 h-5 accent-amber-600"
                       />
+                      <span className="font-bold text-xs text-slate-800">
+                        No deposit slip available (Select Missing Slip Reason)
+                      </span>
+                    </label>
+
+                    {!isSlipExempted ? (
+                      <div className="p-4 border-2 border-dashed border-blue-300 bg-blue-50/40 rounded-xl">
+                        <label className="block text-[10px] font-black uppercase text-blue-800 mb-1.5">
+                          1. Upload {remittanceTrack === "UPI_QR" ? "UPI Screenshot" : "Bank Deposit Slip / Advice"}{" "}
+                          (Auto-Reads Amount &amp; UTR) *
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf,.pdf"
+                          required={!isSlipExempted}
+                          onChange={handleSlipUploadOCR}
+                          className="w-full text-xs font-bold cursor-pointer"
+                        />
+                        {isScanningSlip && (
+                          <div className="mt-3 p-3 bg-blue-100/80 border border-blue-300 rounded-lg text-center">
+                            <p className="text-[10px] font-black text-blue-800 uppercase animate-pulse">
+                              🔍 Reading Collected Amount, Date &amp; UTR from OCR Copy ({scanProgress}%)...
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     ) : (
-                      <img
-                        src={slipPreviewUrl}
-                        alt="Uploaded Aadhaar Payment Slip"
-                        className="max-h-96 w-auto object-contain rounded-xl border border-slate-200 shadow bg-white"
-                      />
+                      <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3 animate-in fade-in">
+                        <div>
+                          <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
+                            1. Reason for Missing Deposit Slip *
+                          </label>
+                          <select
+                            required={isSlipExempted}
+                            value={slipExemptionCategory}
+                            onChange={(e) => {
+                              setSlipExemptionCategory(e.target.value);
+                              setSlipExemptionOtherText("");
+                            }}
+                            className="w-full bg-white border-2 border-amber-300 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-600"
+                          >
+                            <option value="" disabled>
+                              -- Select Missing Slip Reason --
+                            </option>
+                            <option value="Missing">Missing / Lost Physical Slip</option>
+                            <option value="Not downloaded">Receipt Not Downloaded / UPI App Error</option>
+                            <option value="Other">Other (Specify Below)</option>
+                          </select>
+                        </div>
+
+                        {slipExemptionCategory === "Other" && (
+                          <div>
+                            <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
+                              Detailed Exemption Remarks *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="TYPE DETAILED REASON HERE..."
+                              value={slipExemptionOtherText}
+                              onChange={(e) => setSlipExemptionOtherText(e.target.value.toUpperCase())}
+                              className="w-full bg-white border-2 border-amber-300 text-slate-900 font-black uppercase text-xs rounded-lg p-2.5 outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                </div>
-              )}
-            </div>
 
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-              <h3 className="font-black text-lg text-slate-900 border-b pb-3 mb-4">
-                Record Aadhaar Remittance &amp; Slip
-              </h3>
-              <form onSubmit={handleInstantDepositSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      1. Amount Remitted (₹) *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      required
-                      placeholder="0.00"
-                      value={depositForm.amount}
-                      onWheel={handleNumericWheel}
-                      onKeyDown={handleNumericKeyDown}
-                      onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-3 rounded-lg font-black text-lg text-slate-900 outline-none focus:border-blue-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
+                  {/* OCR EXTRACTION SUMMARY BANNER */}
+                  {!isScanningSlip && !isSlipExempted && slipFile && ocrSummary.platform && (
+                    <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2.5 border border-slate-800">
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                        <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
+                          ✅ OCR Auto-Populated from Receipt
+                        </span>
+                        <span className="text-[10px] font-black bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700">
+                          {ocrSummary.platform}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="bg-slate-800 p-2 rounded">
+                          <p className="text-[9px] text-slate-400 uppercase">OCR Read Amount</p>
+                          <p className="font-black text-emerald-400">
+                            {ocrSummary.amount !== null
+                              ? `₹${ocrSummary.amount.toLocaleString("en-IN")}`
+                              : "Enter Below"}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800 p-2 rounded">
+                          <p className="text-[9px] text-slate-400 uppercase">OCR Read Date</p>
+                          <p className="font-bold text-slate-200">
+                            {ocrSummary.date ? formatToDDMMYYYY(ocrSummary.date) : "Verify Below"}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800 p-2 rounded">
+                          <p className="text-[9px] text-slate-400 uppercase">OCR Read UTR</p>
+                          <p className="font-bold text-slate-200 truncate">{ocrSummary.utr || "Enter Below"}</p>
+                        </div>
+                      </div>
+
+                      {/* NON-BLOCKING VARIANCE NOTICE IF OCR AMOUNT DIFFERS FROM QR GENERATOR AMOUNT */}
+                      {remittanceTrack === "UPI_QR" &&
+                        ocrSummary.amount !== null &&
+                        parsedQrAmount > 0 &&
+                        Math.abs(ocrSummary.amount - parsedQrAmount) > 0.01 && (
+                          <div className="p-2.5 bg-amber-950/80 border border-amber-600/60 rounded-lg text-[11px] font-bold text-amber-300">
+                            ⚠️ Note: The OCR receipt amount (₹{ocrSummary.amount.toLocaleString("en-IN")}) differs from
+                            the Step 1 QR generator box (₹{parsedQrAmount.toLocaleString("en-IN")}). The actual receipt
+                            amount below will be recorded.
+                          </div>
+                        )}
+                    </div>
+                  )}
+
+                  {/* 2. COLLECTED / RECEIPT AMOUNT (AUTO-FILLED FROM OCR) & DEPOSIT DATE */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-emerald-700 mb-1">
+                        2. Collected Amount from OCR Slip (₹) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        placeholder="Auto-filled from OCR slip..."
+                        value={depositForm.amount}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
+                        onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
+                        className="w-full border-2 border-emerald-300 bg-emerald-50/30 p-3 rounded-lg font-black text-lg text-slate-900 outline-none focus:border-emerald-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-blue-700 mb-1">
+                        3. Deposit Date ({formatToDDMMYYYY(depositForm.date)}) *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        max={getISTDateString(0)}
+                        value={depositForm.date}
+                        onChange={(e) => setDepositForm({ ...depositForm, date: e.target.value })}
+                        className="w-full border-2 border-slate-200 p-3 rounded-lg font-bold text-sm text-slate-900 bg-white outline-none focus:border-blue-600 transition"
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-blue-700 mb-1">
-                      2. Deposit Date ({formatToDDMMYYYY(depositForm.date)}) *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      max={getISTDateString(0)}
-                      value={depositForm.date}
-                      onChange={(e) => setDepositForm({ ...depositForm, date: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-3 rounded-lg font-bold text-sm text-slate-900 bg-white outline-none focus:border-blue-600 transition"
-                    />
-                  </div>
-                </div>
+                  {/* 3. PAYMENT CHANNEL & UTR / REFERENCE NO */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        4. Remittance Method
+                      </label>
+                      {remittanceTrack === "UPI_QR" ? (
+                        <input
+                          type="text"
+                          readOnly
+                          value="UPI (QR / App Payment)"
+                          className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs bg-slate-100 text-slate-700 cursor-not-allowed"
+                        />
+                      ) : (
+                        <select
+                          value={depositForm.method === "UPI" ? "Cash Deposit" : depositForm.method}
+                          onChange={(e) => setDepositForm({ ...depositForm, method: e.target.value })}
+                          className="w-full border-2 border-amber-300 p-2.5 rounded-lg font-black text-xs bg-amber-50/40 text-slate-900 outline-none focus:border-amber-600"
+                        >
+                          <option value="Cash Deposit">Bank Counter Cash Deposit</option>
+                          <option value="NEFT/RTGS">NEFT / RTGS Transfer</option>
+                          <option value="IMPS">IMPS Transfer</option>
+                          <option value="Cheque">Bank Cheque Deposit</option>
+                        </select>
+                      )}
+                    </div>
 
-                {/* MISSING DEPOSIT SLIP EXEMPTION TOGGLE & DROPDOWN */}
-                <div className="space-y-3 pt-1 border-t border-slate-100">
-                  <label className="flex items-center gap-3 cursor-pointer bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        5. {remittanceTrack === "UPI_QR" ? "12-Digit UPI UTR No *" : "Bank UTR / Journal / Scroll No *"}
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder={
+                          remittanceTrack === "UPI_QR"
+                            ? "Auto-filled 12-digit UTR..."
+                            : "Enter Bank Ref / Challan No..."
+                        }
+                        value={depositForm.utr}
+                        onChange={(e) => setDepositForm({ ...depositForm, utr: e.target.value })}
+                        className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs outline-none focus:border-blue-600"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="flex items-start gap-2.5 bg-blue-50 p-3.5 rounded-xl border border-blue-200 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={isSlipExempted}
-                      onChange={(e) => {
-                        setIsSlipExempted(e.target.checked);
-                        setSlipFile(null);
-                        if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
-                        setSlipPreviewUrl(null);
-                        setOcrSummary({ platform: null, amount: null, utr: null, date: null });
-                        setSlipExemptionCategory("");
-                        setSlipExemptionOtherText("");
-                        setConfirmDepositCheck(false);
-                      }}
-                      className="w-5 h-5 accent-amber-600"
+                      required
+                      checked={confirmDepositCheck}
+                      onChange={(e) => setConfirmDepositCheck(e.target.checked)}
+                      className="w-4 h-4 accent-blue-600 mt-0.5 shrink-0"
                     />
-                    <span className="font-bold text-xs text-slate-800">
-                      No deposit slip available (Select Missing Slip Reason)
+                    <span className="text-xs font-bold text-blue-950 leading-snug">
+                      I confirm that the OCR-read Collected Amount (
+                      <strong>₹{parsedReceiptAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>),
+                      Deposit Date (<strong>{formatToDDMMYYYY(depositForm.date)}</strong>), and Reference/UTR (
+                      <strong>{depositForm.utr || "N/A"}</strong>) match my payment receipt.
                     </span>
                   </label>
 
-                  {!isSlipExempted ? (
-                    <div>
-                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                        3. Upload UPI Screenshot / Bank Slip (Auto-OCR) *
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*,application/pdf,.pdf"
-                        required={!isSlipExempted}
-                        onChange={handleSlipUploadOCR}
-                        className="w-full border-2 border-dashed border-slate-300 p-3 rounded-lg text-xs font-bold bg-slate-50 cursor-pointer"
-                      />
-                      {isScanningSlip && (
-                        <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                          <p className="text-[10px] font-black text-blue-700 uppercase animate-pulse">
-                            🔍 Scanning Slip Locally ({scanProgress}%)...
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3 animate-in fade-in">
-                      <div>
-                        <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
-                          3. Reason for Missing Deposit Slip *
-                        </label>
-                        <select
-                          required={isSlipExempted}
-                          value={slipExemptionCategory}
-                          onChange={(e) => {
-                            setSlipExemptionCategory(e.target.value);
-                            setSlipExemptionOtherText("");
-                          }}
-                          className="w-full bg-white border-2 border-amber-300 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-600"
-                        >
-                          <option value="" disabled>
-                            -- Select Missing Slip Reason --
-                          </option>
-                          <option value="Missing">Missing / Lost Physical Slip</option>
-                          <option value="Not downloaded">Receipt Not Downloaded / UPI App Error</option>
-                          <option value="Other">Other (Specify Below)</option>
-                        </select>
-                      </div>
-
-                      {slipExemptionCategory === "Other" && (
-                        <div>
-                          <label className="text-[10px] text-amber-800 font-black uppercase tracking-widest block mb-1">
-                            Detailed Exemption Remarks *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="TYPE DETAILED REASON HERE..."
-                            value={slipExemptionOtherText}
-                            onChange={(e) => setSlipExemptionOtherText(e.target.value.toUpperCase())}
-                            className="w-full bg-white border-2 border-amber-300 text-slate-900 font-black uppercase text-xs rounded-lg p-2.5 outline-none"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {!isScanningSlip && !isSlipExempted && slipFile && ocrSummary.platform && (
-                  <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2 border border-slate-800">
-                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                      <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">
-                        OCR Audit &amp; Capture
-                      </span>
-                      <span className="text-[10px] font-black bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700">
-                        {ocrSummary.platform}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="bg-slate-800 p-2 rounded">
-                        <p className="text-[9px] text-slate-400 uppercase">Scanned Amt</p>
-                        <p className="font-bold text-emerald-400">
-                          {ocrSummary.amount ? `₹${ocrSummary.amount.toLocaleString("en-IN")}` : "Verify"}
-                        </p>
-                      </div>
-                      <div className="bg-slate-800 p-2 rounded">
-                        <p className="text-[9px] text-slate-400 uppercase">Scanned Date</p>
-                        <p className="font-bold text-slate-200">
-                          {ocrSummary.date ? formatToDDMMYYYY(ocrSummary.date) : "Verify"}
-                        </p>
-                      </div>
-                      <div className="bg-slate-800 p-2 rounded">
-                        <p className="text-[9px] text-slate-400 uppercase">Scanned UTR</p>
-                        <p className="font-bold text-slate-200 truncate">{ocrSummary.utr || "Verify"}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      4. Payment Mode
-                    </label>
-                    <select
-                      value={depositForm.method}
-                      onChange={(e) => setDepositForm({ ...depositForm, method: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-xs bg-white outline-none focus:border-blue-600"
-                    >
-                      <option value="UPI">UPI QR / App</option>
-                      <option value="Cash Deposit">Bank Cash Slip</option>
-                      <option value="IMPS">IMPS / NEFT</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      5. UTR / Reference ID *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Enter UTR / Reference ID"
-                      value={depositForm.utr}
-                      onChange={(e) => setDepositForm({ ...depositForm, utr: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs outline-none focus:border-blue-600"
-                    />
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2.5 bg-blue-50 p-3 rounded-lg border border-blue-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    required
-                    checked={confirmDepositCheck}
-                    onChange={(e) => setConfirmDepositCheck(e.target.checked)}
-                    className="w-4 h-4 accent-blue-600"
-                  />
-                  <span className="text-xs font-bold text-blue-900">
-                    I confirm the UTR, deposit date ({formatToDDMMYYYY(depositForm.date)}), and amount are accurate.
-                  </span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={isSubmittingDeposit || isScanningSlip || !confirmDepositCheck}
-                  className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-md disabled:opacity-40 transition"
-                >
-                  {isSubmittingDeposit ? "Submitting Remittance..." : "Submit Deposit & Clear Ledger"}
-                </button>
-              </form>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingDeposit || isScanningSlip || !confirmDepositCheck}
+                    className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-md disabled:opacity-40 transition"
+                  >
+                    {isSubmittingDeposit
+                      ? "Submitting Remittance..."
+                      : `Submit ₹${parsedReceiptAmount.toLocaleString("en-IN")} ${
+                          remittanceTrack === "UPI_QR" ? "UPI" : depositForm.method
+                        } Remittance`}
+                  </button>
+                </form>
+              </div>
             </div>
           </div>
         )}
