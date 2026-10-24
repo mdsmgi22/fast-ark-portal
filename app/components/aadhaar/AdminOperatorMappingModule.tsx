@@ -26,23 +26,29 @@ export default function AdminOperatorMappingModule({
   const [mapHq, setMapHq] = useState("ALL");
   const [mapCenterId, setMapCenterId] = useState("");
   const [enableCenterAadhaar, setEnableCenterAadhaar] = useState(false);
+  const [confirmDirectBindCheck, setConfirmDirectBindCheck] = useState(false);
 
   const [mappingForm, setMappingForm] = useState({
     partner_id: "",
     operator_id: "",
     station_id: "",
+    nseit_no: "",
   });
   const [isSavingMapping, setIsSavingMapping] = useState(false);
 
-  // Upgrade Queue Filter & Inline Edit State
+  // Upgrade Queue Filter & Pre-Approval Inspection/Edit Modal State
   const [reqFilter, setReqFilter] = useState<"Pending" | "Approved" | "Rejected" | "ALL">("Pending");
-  const [editingReqId, setEditingReqId] = useState<string | null>(null);
+  const [inspectingReq, setInspectingReq] = useState<any | null>(null);
   const [reqEditForm, setReqEditForm] = useState({
     center_id: "",
     operator_id: "",
     station_id: "",
+    nseit_no: "",
   });
+  const [inspectSignedPdfUrl, setInspectSignedPdfUrl] = useState<string | null>(null);
+  const [confirmAdminApproveCheck, setConfirmAdminApproveCheck] = useState(false);
   const [isProcessingReq, setIsProcessingReq] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   // 1. Cascading Options for Direct Bind Form
   const uniqueStates = useMemo(
@@ -91,7 +97,30 @@ export default function AdminOperatorMappingModule({
     [partners]
   );
 
-  // --- HANDLER 1: DIRECT CASCADING AADHAAR CENTER & OPERATOR BIND ---
+  // --- HELPER: DIRECT FILE DOWNLOAD FROM SUPABASE STORAGE ---
+  const handleDirectDownloadPdf = async (path: string | null, fileNameLabel: string) => {
+    if (!path) return alert("No compliance PDF attached to this record.");
+    setIsDownloadingPdf(true);
+    try {
+      const { data, error } = await supabase.storage.from("application_documents").createSignedUrl(path, 3600);
+      if (error || !data?.signedUrl) throw error || new Error("Failed to generate download link.");
+
+      const response = await fetch(data.signedUrl);
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `FastArk_Aadhaar_Compliance_${fileNameLabel.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      alert("Download Error: " + err.message);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  // --- HANDLER 1: DIRECT CASCADING AADHAAR CENTER & OPERATOR BIND (WITH CONFIRMATION EMAIL) ---
   const handleDirectOperatorMap = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mapCenterId) {
@@ -105,62 +134,42 @@ export default function AdminOperatorMappingModule({
     if (!mappingForm.partner_id || !mappingForm.operator_id.trim() || mappingForm.station_id.trim().length !== 5) {
       return alert("Please select a Partner and enter a valid UIDAI Operator ID and 5-digit Station ID.");
     }
+    if (!confirmDirectBindCheck) {
+      return alert(
+        "Mandatory: Please check the Admin verification box confirming the Center Code, Operator ID, and Station ID before binding."
+      );
+    }
 
     setIsSavingMapping(true);
     try {
-      const targetPartner = partners.find((p) => p.id === mappingForm.partner_id);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Authentication session expired.");
 
-      // Step A: Ensure the physical Location is enabled as an Aadhaar Center
-      const { error: locErr } = await supabase
-        .from("locations")
-        .update({ role_aadhaar: true })
-        .eq("id", parseInt(mapCenterId));
-      if (locErr) throw locErr;
-
-      // Step B: Bind the Partner to that Aadhaar Center + Activate role_aadhaar & UIDAI IDs
-      const { error: partErr } = await supabase
-        .from("active_partners")
-        .update({
-          center_id: parseInt(mapCenterId),
-          role_aadhaar: true,
-          aadhaar_operator_id: mappingForm.operator_id.trim().toUpperCase(),
-          aadhaar_station_id: mappingForm.station_id.trim(),
-        })
-        .eq("id", mappingForm.partner_id);
-
-      if (partErr) throw partErr;
-
-      // Step C: If they had any pending upgrade request, mark it Approved
-      await supabase
-        .from("partner_upgrade_requests")
-        .update({ status: "Approved" })
-        .eq("partner_id", mappingForm.partner_id)
-        .eq("status", "Pending");
-
-      await supabase.from("partner_messages").insert([
-        {
-          partner_id: mappingForm.partner_id,
-          subject: "🆔 Aadhaar Seva Kendra Role Activated",
-          body: `Your profile has been mapped to Aadhaar Center [${selectedCenterObj?.center_code}] ${selectedCenterObj?.center_name} (Operator ID: ${mappingForm.operator_id.toUpperCase()} | Station ID: ${mappingForm.station_id}). Your Aadhaar Upload & QR Remittance dashboard is now unlocked.`,
+      const res = await fetch("/api/approve-aadhaar-upgrade", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
         },
-      ]);
+        body: JSON.stringify({
+          requestId: null,
+          partnerId: mappingForm.partner_id,
+          centerId: Number(mapCenterId),
+          operatorId: mappingForm.operator_id.trim().toUpperCase(),
+          stationId: mappingForm.station_id.trim(),
+          nseitCertNo: mappingForm.nseit_no.trim().toUpperCase() || "DIRECT_ADMIN_BIND",
+        }),
+      });
 
-      await supabase.from("staff_activity_logs").insert([
-        {
-          staff_id: staffUser?.id || "ADMIN",
-          staff_email: staffUser?.email,
-          action_type: "AADHAAR_ROLE_FLIP",
-          module: "AADHAAR_HUB",
-          target_id: mappingForm.partner_id,
-          details: `Mapped Aadhaar Center [${selectedCenterObj?.center_code}] & Activated Aadhaar Role for ${targetPartner?.partner_name}. Op: ${mappingForm.operator_id.toUpperCase()}, Stn: ${mappingForm.station_id}`,
-        },
-      ]);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to bind Aadhaar Operator.");
+      }
 
-      alert(
-        `✅ Aadhaar Center [${selectedCenterObj?.center_code}] enabled and Partner ${targetPartner?.partner_name} bound to Operator ID ${mappingForm.operator_id.toUpperCase()} & Station ${mappingForm.station_id}!`
-      );
-      setMappingForm({ partner_id: "", operator_id: "", station_id: "" });
+      alert(`✅ ${data.message}`);
+      setMappingForm({ partner_id: "", operator_id: "", station_id: "", nseit_no: "" });
       setEnableCenterAadhaar(false);
+      setConfirmDirectBindCheck(false);
       onRefresh();
     } catch (err: any) {
       alert("Mapping Error: " + err.message);
@@ -169,106 +178,142 @@ export default function AdminOperatorMappingModule({
     }
   };
 
-  // --- HANDLER 2: APPROVE OR REJECT PARTNER UPGRADE REQUEST ---
-  const startInspectingRequest = (req: any) => {
-    setEditingReqId(req.id);
+  // --- HANDLER 2: OPEN PRE-APPROVAL INSPECTION & EDIT MODAL ---
+  const openInspectionModal = async (req: any) => {
+    setInspectingReq(req);
+    setConfirmAdminApproveCheck(false);
     setReqEditForm({
       center_id: (req.center_id || req.active_partners?.center_id || "").toString(),
       operator_id: req.requested_operator_id || "",
       station_id: req.requested_station_id || "",
+      nseit_no: req.nseit_cert_no || "",
     });
+    setInspectSignedPdfUrl(null);
+
+    if (req.compliance_pdf_url) {
+      const { data } = await supabase.storage
+        .from("application_documents")
+        .createSignedUrl(req.compliance_pdf_url, 3600);
+      if (data?.signedUrl) setInspectSignedPdfUrl(data.signedUrl);
+    }
   };
 
-  const handleUpgradeDecision = async (req: any, decision: "Approved" | "Rejected") => {
-    let reason = "";
-    const finalCenterId = editingReqId === req.id ? reqEditForm.center_id : (req.center_id || req.active_partners?.center_id)?.toString();
-    const finalOpId = (editingReqId === req.id ? reqEditForm.operator_id : req.requested_operator_id || "").trim().toUpperCase();
-    const finalStnId = (editingReqId === req.id ? reqEditForm.station_id : req.requested_station_id || "").trim();
-
-    if (decision === "Rejected") {
-      const input = prompt("Enter reason for rejecting this Aadhaar Upgrade request:");
-      if (!input || input.trim().length < 4) return alert("A valid rejection reason is required.");
-      reason = input.trim();
-    } else {
-      if (!finalCenterId) {
-        return alert("Mandatory: You must assign an Aadhaar Center before approving this operator.");
-      }
-      if (!finalOpId || finalStnId.length !== 5) {
-        return alert("Mandatory: Operator ID and 5-digit Station ID must be valid before approval.");
-      }
-      const targetLoc = locations.find((l) => l.id?.toString() === finalCenterId);
-      if (
-        !confirm(
-          `Approve Aadhaar Upgrade for ${req.active_partners?.partner_name}?\n\n• Mapped Aadhaar Center: [${
-            targetLoc?.center_code || "NO-CODE"
-          }] ${targetLoc?.center_name}\n• Operator ID: ${finalOpId}\n• Station ID: ${finalStnId}\n\nThis will enable the Aadhaar Center and unlock the partner's upload dashboard.`
-        )
-      )
-        return;
+  // Save pre-approval edits to partner_upgrade_requests without approving yet
+  const handleSavePreApprovalEditsOnly = async () => {
+    if (!inspectingReq) return;
+    if (!reqEditForm.center_id || !reqEditForm.operator_id.trim() || reqEditForm.station_id.trim().length !== 5) {
+      return alert("Please ensure Center, Operator ID, and 5-digit Station ID are valid before saving edits.");
     }
 
     setIsProcessingReq(true);
     try {
-      if (decision === "Approved") {
-        // 1. Enable Aadhaar Role on the assigned Center
-        const { error: locErr } = await supabase
-          .from("locations")
-          .update({ role_aadhaar: true })
-          .eq("id", parseInt(finalCenterId));
-        if (locErr) throw locErr;
-
-        // 2. Bind Partner Role, Center, Operator ID, and Station ID
-        const { error: partErr } = await supabase
-          .from("active_partners")
-          .update({
-            center_id: parseInt(finalCenterId),
-            role_aadhaar: true,
-            aadhaar_operator_id: finalOpId,
-            aadhaar_station_id: finalStnId,
-          })
-          .eq("id", req.partner_id);
-        if (partErr) throw partErr;
-      }
-
-      const { error: reqErr } = await supabase
+      const { error } = await supabase
         .from("partner_upgrade_requests")
         .update({
-          status: decision,
-          reject_reason: reason || null,
-          requested_operator_id: finalOpId,
-          requested_station_id: finalStnId,
-          center_id: finalCenterId ? parseInt(finalCenterId) : req.center_id,
+          center_id: parseInt(reqEditForm.center_id),
+          requested_operator_id: reqEditForm.operator_id.trim().toUpperCase(),
+          requested_station_id: reqEditForm.station_id.trim(),
+          nseit_cert_no: reqEditForm.nseit_no.trim().toUpperCase(),
         })
-        .eq("id", req.id);
-      if (reqErr) throw reqErr;
+        .eq("id", inspectingReq.id);
 
-      await supabase.from("partner_messages").insert([
-        {
-          partner_id: req.partner_id,
-          subject: `🆔 Aadhaar Upgrade Request ${decision}`,
-          body:
-            decision === "Approved"
-              ? `Your Aadhaar Seva Kendra upgrade has been APPROVED! Operator ID: ${finalOpId} | Station ID: ${finalStnId}. Your Aadhaar Portal is now unlocked for daily CSV & HTML uploads.`
-              : `Your Aadhaar upgrade request was declined. Reason: ${reason}. Please review and resubmit in Menu 6.`,
-        },
-      ]);
-
-      await supabase.from("staff_activity_logs").insert([
-        {
-          staff_id: staffUser?.id || "ADMIN",
-          staff_email: staffUser?.email,
-          action_type: decision === "Approved" ? "APPROVAL" : "REJECTION",
-          module: "AADHAAR_HUB",
-          target_id: req.id,
-          details: `${decision} Aadhaar Upgrade Request for ${req.active_partners?.partner_name} (Op: ${finalOpId}, Stn: ${finalStnId}).`,
-        },
-      ]);
-
-      alert(`✅ Upgrade request marked as ${decision}.`);
-      setEditingReqId(null);
+      if (error) throw error;
+      alert("✅ Pre-approval corrections saved to the request record.");
       onRefresh();
     } catch (err: any) {
-      alert("Error processing upgrade: " + err.message);
+      alert("Error saving corrections: " + err.message);
+    } finally {
+      setIsProcessingReq(false);
+    }
+  };
+
+  // Approve or Reject Request (Triggers Confirmation Email on Approval)
+  const handleUpgradeDecision = async (req: any, decision: "Approved" | "Rejected") => {
+    const finalCenterId = reqEditForm.center_id || (req.center_id || req.active_partners?.center_id)?.toString();
+    const finalOpId = (reqEditForm.operator_id || req.requested_operator_id || "").trim().toUpperCase();
+    const finalStnId = (reqEditForm.station_id || req.requested_station_id || "").trim();
+    const finalNseit = (reqEditForm.nseit_no || req.nseit_cert_no || "").trim().toUpperCase();
+
+    if (decision === "Rejected") {
+      const input = prompt("Enter reason for rejecting this Aadhaar Upgrade request:");
+      if (!input || input.trim().length < 4) return alert("A valid rejection reason is required.");
+      const reason = input.trim();
+
+      setIsProcessingReq(true);
+      try {
+        const { error: reqErr } = await supabase
+          .from("partner_upgrade_requests")
+          .update({
+            status: "Rejected",
+            reject_reason: reason,
+          })
+          .eq("id", req.id);
+        if (reqErr) throw reqErr;
+
+        await supabase.from("partner_messages").insert([
+          {
+            partner_id: req.partner_id,
+            subject: "🆔 Aadhaar Upgrade Request Rejected",
+            body: `Your Aadhaar upgrade request was declined by Corporate Admin. Reason: ${reason}. Please review and resubmit in Menu 6.`,
+          },
+        ]);
+
+        alert("✅ Upgrade request marked as Rejected.");
+        setInspectingReq(null);
+        onRefresh();
+      } catch (err: any) {
+        alert("Rejection Error: " + err.message);
+      } finally {
+        setIsProcessingReq(false);
+      }
+      return;
+    }
+
+    // APPROVAL VALIDATIONS
+    if (!finalCenterId) {
+      return alert("Mandatory: You must assign an Aadhaar Center before approving this operator.");
+    }
+    if (!finalOpId || finalStnId.length !== 5) {
+      return alert("Mandatory: Operator ID and 5-digit Station ID must be valid before approval.");
+    }
+    if (!confirmAdminApproveCheck) {
+      return alert(
+        "Mandatory: Please check the Admin verification box confirming that you have verified the compliance PDF and edited credentials."
+      );
+    }
+
+    setIsProcessingReq(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Authentication session expired.");
+
+      const res = await fetch("/api/approve-aadhaar-upgrade", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          requestId: req.id,
+          partnerId: req.partner_id,
+          centerId: Number(finalCenterId),
+          operatorId: finalOpId,
+          stationId: finalStnId,
+          nseitCertNo: finalNseit,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Approval failed.");
+      }
+
+      alert(`✅ ${data.message}`);
+      setInspectingReq(null);
+      setConfirmAdminApproveCheck(false);
+      onRefresh();
+    } catch (err: any) {
+      alert("Error approving upgrade: " + err.message);
     } finally {
       setIsProcessingReq(false);
     }
@@ -314,14 +359,14 @@ export default function AdminOperatorMappingModule({
         <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="border-b border-slate-100 pb-3">
             <span className="text-[10px] font-black uppercase tracking-widest text-amber-600">
-              Step-by-Step Role &amp; Center Binding
+              Direct Role &amp; Center Binding
             </span>
             <h3 className="font-black text-base text-slate-900 mt-0.5">
               Cascading Aadhaar Center &amp; Operator Bind
             </h3>
             <p className="text-xs font-bold text-slate-500 mt-1">
-              Filter by State &rarr; Master HQ &rarr; Center [Code], enable the Aadhaar Center, and bind the partner&apos;s
-              UIDAI Operator &amp; Station IDs.
+              Filter by State &rarr; Master HQ &rarr; Center [Code], verify credentials, and bind the operator. Sends an
+              automated confirmation email upon approval.
             </p>
           </div>
 
@@ -429,6 +474,7 @@ export default function AdminOperatorMappingModule({
                     partner_id: e.target.value,
                     operator_id: p?.aadhaar_operator_id || "",
                     station_id: p?.aadhaar_station_id || "",
+                    nseit_no: "",
                   });
                 }}
                 className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold bg-slate-50"
@@ -476,12 +522,26 @@ export default function AdminOperatorMappingModule({
               </div>
             </div>
 
+            {/* MANDATORY ADMIN ANTI-FALSE-APPROVAL CHECKBOX */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50 border border-blue-200 cursor-pointer">
+              <input
+                type="checkbox"
+                required
+                checked={confirmDirectBindCheck}
+                onChange={(e) => setConfirmDirectBindCheck(e.target.checked)}
+                className="w-4 h-4 accent-blue-600 mt-0.5 shrink-0"
+              />
+              <span className="text-[11px] font-bold text-blue-950 leading-tight">
+                I have verified the Aadhaar Center Code, UIDAI Operator ID, and 5-digit Station ID for this associate.
+              </span>
+            </label>
+
             <button
               type="submit"
-              disabled={isSavingMapping}
-              className="w-full py-3.5 bg-slate-900 hover:bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow transition"
+              disabled={isSavingMapping || !confirmDirectBindCheck}
+              className="w-full py-3.5 bg-slate-900 hover:bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow disabled:opacity-40 transition"
             >
-              {isSavingMapping ? "Mapping Center & Binding IDs..." : "✅ Map Aadhaar Center & Approve Operator"}
+              {isSavingMapping ? "Binding & Sending Email..." : "✅ Map Center, Approve & Send Email"}
             </button>
           </form>
         </div>
@@ -494,7 +554,7 @@ export default function AdminOperatorMappingModule({
                 Partner Aadhaar Upgrade Approval Queue ({visibleRequests.length})
               </h3>
               <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                Partners cannot access the Aadhaar Upload dashboard until approved here.
+                Inspect &amp; download the merged PDF, edit any typos if needed, tick verification, and approve.
               </p>
             </div>
             <div className="flex bg-slate-800 p-1 rounded-lg text-[10px] font-black uppercase">
@@ -519,143 +579,80 @@ export default function AdminOperatorMappingModule({
                   <th className="p-3.5">Date</th>
                   <th className="p-3.5">Partner &amp; Aadhaar Center</th>
                   <th className="p-3.5">Requested IDs</th>
-                  <th className="p-3.5 text-center">Compliance PDF</th>
-                  <th className="p-3.5 text-right">Approval Action</th>
+                  <th className="p-3.5 text-center">Merged Compliance PDF</th>
+                  <th className="p-3.5 text-right">Inspect / Edit &amp; Approve</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {visibleRequests.map((req) => {
-                  const isEditing = editingReqId === req.id;
                   const locObj = locations.find(
                     (l) => l.id === (req.center_id || req.active_partners?.center_id)
                   );
 
                   return (
-                    <tr key={req.id} className="hover:bg-slate-50 align-top">
+                    <tr key={req.id} className="hover:bg-slate-50 align-middle">
                       <td className="p-3.5 font-bold">{formatToDDMMYYYY(req.created_at)}</td>
                       <td className="p-3.5">
                         <p className="font-black text-slate-900">{req.active_partners?.partner_name}</p>
-                        {isEditing ? (
-                          <select
-                            value={reqEditForm.center_id}
-                            onChange={(e) => setReqEditForm({ ...reqEditForm, center_id: e.target.value })}
-                            className="mt-1 border border-blue-300 rounded p-1 text-[10px] font-bold bg-blue-50"
-                          >
-                            <option value="" disabled>
-                              -- Select Center --
-                            </option>
-                            {locations
-                              .filter((l) => !l.is_master_node)
-                              .map((l) => (
-                                <option key={l.id} value={l.id}>
-                                  [{l.center_code || "NO-CODE"}] {l.center_name}
-                                </option>
-                              ))}
-                          </select>
-                        ) : (
-                          <div className="mt-0.5">
-                            <span className="text-[10px] font-bold text-slate-600 block">
-                              [{locObj?.center_code || "NO-CODE"}] {locObj?.center_name || "Unassigned"}
-                            </span>
-                            <span
-                              className={`text-[9px] font-black uppercase ${
-                                locObj?.role_aadhaar ? "text-emerald-600" : "text-amber-600"
-                              }`}
-                            >
-                              {locObj?.role_aadhaar ? "🆔 Aadhaar Center ON" : "⚠️ Will Enable Center on Approval"}
-                            </span>
-                          </div>
-                        )}
+                        <span className="text-[10px] font-bold text-slate-600 block">
+                          [{locObj?.center_code || "NO-CODE"}] {locObj?.center_name || "Unassigned"}
+                        </span>
                       </td>
 
                       <td className="p-3.5">
-                        {isEditing ? (
-                          <div className="space-y-1">
-                            <input
-                              type="text"
-                              value={reqEditForm.operator_id}
-                              onChange={(e) =>
-                                setReqEditForm({ ...reqEditForm, operator_id: e.target.value.toUpperCase() })
-                              }
-                              className="border border-amber-300 rounded p-1 text-[10px] font-black uppercase w-32 block"
-                              placeholder="Operator ID"
-                            />
-                            <input
-                              type="text"
-                              maxLength={5}
-                              value={reqEditForm.station_id}
-                              onChange={(e) =>
-                                setReqEditForm({
-                                  ...reqEditForm,
-                                  station_id: e.target.value.replace(/\D/g, ""),
-                                })
-                              }
-                              className="border border-amber-300 rounded p-1 text-[10px] font-black w-24 block"
-                              placeholder="5-Digit Stn"
-                            />
-                          </div>
-                        ) : (
-                          <>
-                            <p className="font-black text-blue-700">Op: {req.requested_operator_id}</p>
-                            <p className="text-[10px] font-bold text-slate-600">
-                              Stn: {req.requested_station_id} | NSEIT: {req.nseit_cert_no}
-                            </p>
-                          </>
-                        )}
+                        <p className="font-black text-blue-700">Op: {req.requested_operator_id}</p>
+                        <p className="text-[10px] font-bold text-slate-600">
+                          Stn: {req.requested_station_id} | NSEIT: {req.nseit_cert_no}
+                        </p>
                       </td>
 
+                      {/* VIEW & DOWNLOAD MERGED PDF BUTTONS */}
                       <td className="p-3.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => onDownloadVaultFile(req.compliance_pdf_url, "application_documents")}
-                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1 rounded text-[10px] font-black uppercase"
-                        >
-                          📄 View PDF
-                        </button>
+                        <div className="flex justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => onDownloadVaultFile(req.compliance_pdf_url, "application_documents")}
+                            className="bg-slate-800 hover:bg-slate-700 text-white px-2.5 py-1 rounded text-[9px] font-black uppercase"
+                          >
+                            👁️ View
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isDownloadingPdf}
+                            onClick={() =>
+                              handleDirectDownloadPdf(
+                                req.compliance_pdf_url,
+                                `${req.active_partners?.partner_name || "Partner"}_${req.requested_station_id}`
+                              )
+                            }
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded text-[9px] font-black uppercase"
+                          >
+                            📥 Download
+                          </button>
+                        </div>
                       </td>
 
                       <td className="p-3.5 text-right">
-                        {req.status === "Pending" ? (
-                          <div className="flex flex-col items-end gap-1.5">
-                            <div className="flex gap-1.5">
-                              <button
-                                type="button"
-                                disabled={isProcessingReq}
-                                onClick={() => handleUpgradeDecision(req, "Approved")}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-black uppercase shadow-sm"
-                              >
-                                ✅ Approve &amp; Bind
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isProcessingReq}
-                                onClick={() => handleUpgradeDecision(req, "Rejected")}
-                                className="bg-red-600 hover:bg-red-500 text-white px-2.5 py-1 rounded text-[10px] font-black uppercase shadow-sm"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                isEditing ? setEditingReqId(null) : startInspectingRequest(req)
-                              }
-                              className="text-[9px] font-black uppercase text-blue-600 hover:underline"
-                            >
-                              {isEditing ? "Cancel Edit" : "✏️ Edit Center / IDs Before Approval"}
-                            </button>
-                          </div>
-                        ) : (
+                        <div className="flex justify-end items-center gap-2">
                           <span
                             className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
                               req.status === "Approved"
                                 ? "bg-emerald-100 text-emerald-800"
-                                : "bg-red-100 text-red-800"
+                                : req.status === "Rejected"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-amber-100 text-amber-800"
                             }`}
                           >
                             {req.status}
                           </span>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() => openInspectionModal(req)}
+                            className="bg-slate-900 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase shadow-sm transition"
+                          >
+                            {req.status === "Pending" ? "🔍 Edit & Approve" : "🔍 View / Re-Edit"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -721,6 +718,7 @@ export default function AdminOperatorMappingModule({
                           partner_id: op.id,
                           operator_id: op.aadhaar_operator_id || "",
                           station_id: op.aadhaar_station_id || "",
+                          nseit_no: "",
                         });
                         window.scrollTo({ top: 0, behavior: "smooth" });
                       }}
@@ -741,7 +739,7 @@ export default function AdminOperatorMappingModule({
               {activeAadhaarOperators.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
-                    No Aadhaar Operators have been mapped and approved yet. Use the form above to map your first Aadhaar Center and Operator.
+                    No Aadhaar Operators have been mapped and approved yet.
                   </td>
                 </tr>
               )}
@@ -749,6 +747,202 @@ export default function AdminOperatorMappingModule({
           </table>
         </div>
       </div>
+
+      {/* ===================================================================== */}
+      {/* ADMIN PRE-APPROVAL INSPECTION, EDIT, PDF VIEW/DOWNLOAD & VERIFY MODAL */}
+      {/* ===================================================================== */}
+      {inspectingReq && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 w-full max-w-5xl my-8 overflow-hidden animate-in zoom-in-95">
+            <div className="p-5 bg-slate-900 text-white flex justify-between items-center border-b-4 border-amber-500">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 block">
+                  Pre-Approval Verification &amp; Correction Console
+                </span>
+                <h3 className="font-black text-lg mt-0.5">
+                  {inspectingReq.active_partners?.partner_name} ({inspectingReq.active_partners?.email})
+                </h3>
+              </div>
+              <button
+                onClick={() => setInspectingReq(null)}
+                className="text-2xl font-black text-slate-400 hover:text-white"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* LEFT SIDE (5 COLS): EDITABLE CREDENTIALS & MANDATORY VERIFICATION */}
+              <div className="lg:col-span-5 space-y-4 text-xs">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700 border-b pb-2">
+                    1. Verify or Edit Credentials Before Approval
+                  </p>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      Target Aadhaar Center [Center Code] *
+                    </label>
+                    <select
+                      value={reqEditForm.center_id}
+                      onChange={(e) => setReqEditForm({ ...reqEditForm, center_id: e.target.value })}
+                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black bg-white"
+                    >
+                      <option value="" disabled>
+                        -- Select Aadhaar Center --
+                      </option>
+                      {locations
+                        .filter((l) => !l.is_master_node)
+                        .map((l) => (
+                          <option key={l.id} value={l.id}>
+                            [{l.center_code || "NO-CODE"}] {l.center_name} ({l.state})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      UIDAI Operator ID *
+                    </label>
+                    <input
+                      type="text"
+                      value={reqEditForm.operator_id}
+                      onChange={(e) =>
+                        setReqEditForm({ ...reqEditForm, operator_id: e.target.value.toUpperCase() })
+                      }
+                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black uppercase bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      UIDAI Station ID (5 Digits) *
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={5}
+                      value={reqEditForm.station_id}
+                      onChange={(e) =>
+                        setReqEditForm({
+                          ...reqEditForm,
+                          station_id: e.target.value.replace(/\D/g, ""),
+                        })
+                      }
+                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                      NSEIT Certificate No *
+                    </label>
+                    <input
+                      type="text"
+                      value={reqEditForm.nseit_no}
+                      onChange={(e) =>
+                        setReqEditForm({ ...reqEditForm, nseit_no: e.target.value.toUpperCase() })
+                      }
+                      className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black uppercase bg-white"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isProcessingReq}
+                    onClick={handleSavePreApprovalEditsOnly}
+                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-black uppercase tracking-widest text-[10px] rounded-lg shadow transition"
+                  >
+                    💾 Save Corrections Without Approving Yet
+                  </button>
+                </div>
+
+                {/* MANDATORY ADMIN ANTI-FALSE-APPROVAL CHECKBOX */}
+                <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmAdminApproveCheck}
+                    onChange={(e) => setConfirmAdminApproveCheck(e.target.checked)}
+                    className="w-5 h-5 accent-emerald-600 mt-0.5 shrink-0"
+                  />
+                  <span className="text-[11px] font-bold text-emerald-950 leading-relaxed">
+                    <strong className="uppercase block text-[9px] tracking-widest text-emerald-700">
+                      Mandatory Admin Verification *
+                    </strong>
+                    I have inspected the partner&apos;s merged compliance PDF and verified the Aadhaar Center Code,
+                    Operator ID (<strong>{reqEditForm.operator_id}</strong>), and 5-digit Station ID (
+                    <strong>{reqEditForm.station_id}</strong>).
+                  </span>
+                </label>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isProcessingReq || !confirmAdminApproveCheck}
+                    onClick={() => handleUpgradeDecision(inspectingReq, "Approved")}
+                    className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-lg disabled:opacity-40 transition"
+                  >
+                    {isProcessingReq ? "Processing..." : "✅ Approve, Bind & Send Email"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isProcessingReq}
+                    onClick={() => handleUpgradeDecision(inspectingReq, "Rejected")}
+                    className="px-4 py-3.5 bg-red-600 hover:bg-red-500 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-lg transition"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+
+              {/* RIGHT SIDE (7 COLS): EMBEDDED MERGED PDF VIEWER + VIEW & DOWNLOAD BUTTONS */}
+              <div className="lg:col-span-7 bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex flex-col h-[540px]">
+                <div className="p-3.5 bg-slate-950 border-b border-slate-800 flex justify-between items-center text-white shrink-0">
+                  <span className="text-xs font-black uppercase tracking-widest text-amber-400">
+                    📄 Merged Compliance PDF Dossier
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onDownloadVaultFile(inspectingReq.compliance_pdf_url, "application_documents")
+                      }
+                      className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-[10px] font-black uppercase border border-slate-700"
+                    >
+                      👁️ Open Full Tab ↗
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isDownloadingPdf}
+                      onClick={() =>
+                        handleDirectDownloadPdf(
+                          inspectingReq.compliance_pdf_url,
+                          `${inspectingReq.active_partners?.partner_name || "Partner"}_${reqEditForm.station_id}`
+                        )
+                      }
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-[10px] font-black uppercase shadow"
+                    >
+                      {isDownloadingPdf ? "Downloading..." : "📥 Download Merged PDF"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 bg-slate-800 flex items-center justify-center">
+                  {inspectSignedPdfUrl ? (
+                    <iframe
+                      src={`${inspectSignedPdfUrl}#toolbar=0`}
+                      className="w-full h-full bg-white"
+                      title="Partner Merged Compliance PDF"
+                    />
+                  ) : (
+                    <p className="text-slate-400 font-bold text-xs">Loading Merged Compliance PDF...</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
