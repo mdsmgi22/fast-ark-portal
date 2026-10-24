@@ -40,6 +40,34 @@ interface DocSlot {
   file: File | null;
 }
 
+// Helper to extract YYYY-MM-DD from OCR receipt text
+const parseExtractedReceiptDate = (text: string): string | null => {
+  const monthMap: Record<string, string> = {
+    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+  };
+
+  const dmyMatch = text.match(/\b([0-3]?\d)[\/\-\.]([0-1]?\d)[\/\-\.](202\d)\b/);
+  if (dmyMatch) return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, "0")}-${dmyMatch[1].padStart(2, "0")}`;
+
+  const ddMonYyyy = text.match(/\b([0-3]?\d)\s+([A-Za-z]{3,9})\s+(202\d)\b/);
+  if (ddMonYyyy) {
+    const month = monthMap[ddMonYyyy[2].toLowerCase().substring(0, 3)];
+    if (month) return `${ddMonYyyy[3]}-${month}-${ddMonYyyy[1].padStart(2, "0")}`;
+  }
+
+  const monDdYyyy = text.match(/\b([A-Za-z]{3,9})\s+([0-3]?\d),?\s+(202\d)\b/);
+  if (monDdYyyy) {
+    const month = monthMap[monDdYyyy[1].toLowerCase().substring(0, 3)];
+    if (month) return `${monDdYyyy[3]}-${month}-${monDdYyyy[2].padStart(2, "0")}`;
+  }
+  return null;
+};
+
+// Strict Numeric Input Class (Removes Browser Up/Down Spinners)
+const noScrollNumClass =
+  "w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-slate-900 bg-white outline-none focus:border-blue-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+
 export default function PartnerAadhaarPortal() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -82,7 +110,8 @@ export default function PartnerAadhaarPortal() {
     platform: string | null;
     amount: number | null;
     utr: string | null;
-  }>({ platform: null, amount: null, utr: null });
+    date: string | null;
+  }>({ platform: null, amount: null, utr: null, date: null });
   const [confirmDepositCheck, setConfirmDepositCheck] = useState<boolean>(false);
   const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
 
@@ -102,7 +131,7 @@ export default function PartnerAadhaarPortal() {
   const [filterToDate, setFilterToDate] = useState<string>(() => getDateRangeFromPreset("current_month").end);
   const [fileModeFilter, setFileModeFilter] = useState<"ALL" | "WITH_FILES" | "WITHOUT_FILES">("ALL");
 
-  // Menu 6: Credentials, Pre-Approval Edit, 10-Doc Merger & Mandatory Checkbox States
+  // Menu 6: Credentials, Pre-Approval Edit (Locked After Approval), 10-Doc Merger & Mandatory Checkbox
   const [upgradeForm, setUpgradeForm] = useState({ operator_id: "", station_id: "", nseit_no: "" });
   const [isEditingPendingReq, setIsEditingPendingReq] = useState<boolean>(false);
   const [confirmUpgradeCheck, setConfirmUpgradeCheck] = useState<boolean>(false);
@@ -116,6 +145,19 @@ export default function PartnerAadhaarPortal() {
   const [isMergingPdf, setIsMergingPdf] = useState<boolean>(false);
   const [isSubmittingUpgrade, setIsSubmittingUpgrade] = useState<boolean>(false);
   const [isDownloadingSubmittedPdf, setIsDownloadingSubmittedPdf] = useState<boolean>(false);
+
+  // =========================================================================
+  // STRICT SCROLL & KEYBOARD LOCKS FOR ALL NUMERIC INPUTS
+  // =========================================================================
+  const handleNumericWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+    (e.target as HTMLInputElement).blur();
+  };
+
+  const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["ArrowUp", "ArrowDown", "e", "E", "+", "-"].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
 
   const showBanner = (type: "success" | "error" | "info", text: string) => {
     setStatusBanner({ type, text });
@@ -273,10 +315,14 @@ export default function PartnerAadhaarPortal() {
       partner?.locations?.role_aadhaar
   );
 
+  // Once approved by Admin, credentials and compliance files are permanently locked from partner editing
+  const isCredentialsLocked = isAadhaarAuthorized || latestUpgradeReq?.status === "Approved";
+
   // =========================================================================
   // 10-DOCUMENT DYNAMIC BUILDER & SINGLE MERGED PDF ENGINE (MENU 6)
   // =========================================================================
   const handleAddDocSlot = () => {
+    if (isCredentialsLocked) return;
     if (docSlots.length >= 10) return showBanner("info", "Maximum limit of 10 compliance documents reached.");
     const usedPresets = new Set(docSlots.map((s) => s.presetName));
     const nextPreset = AADHAAR_DOC_PRESETS.find((p) => !usedPresets.has(p)) || "Other (Custom Document Name)";
@@ -290,7 +336,7 @@ export default function PartnerAadhaarPortal() {
   };
 
   const handleRemoveDocSlot = (id: string) => {
-    if (docSlots.length <= 1) return;
+    if (isCredentialsLocked || docSlots.length <= 1) return;
     setDocSlots((prev) => prev.filter((s) => s.id !== id));
     setMergedPdfBytesState(null);
     if (mergedPdfPreviewUrl) URL.revokeObjectURL(mergedPdfPreviewUrl);
@@ -298,6 +344,7 @@ export default function PartnerAadhaarPortal() {
   };
 
   const handleSlotChange = (id: string, field: "presetName" | "customName" | "file", value: any) => {
+    if (isCredentialsLocked) return;
     if (field === "file" && value && value.size > 5 * 1024 * 1024) {
       return showBanner("error", `File "${value.name}" exceeds the 5MB limit per document.`);
     }
@@ -480,7 +527,7 @@ export default function PartnerAadhaarPortal() {
   };
 
   const handleViewOrDownloadSubmittedPdf = async (path: string | null, action: "view" | "download") => {
-    if (!path) return showBanner("error", "No compliance PDF found for this request.");
+    if (!path) return showBanner("error", "No compliance PDF found for this record.");
     setIsDownloadingSubmittedPdf(true);
     try {
       const { data, error } = await supabase.storage.from("application_documents").createSignedUrl(path, 3600);
@@ -493,7 +540,7 @@ export default function PartnerAadhaarPortal() {
         const blob = await res.blob();
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `FastArk_Aadhaar_Compliance_${upgradeForm.operator_id || "Partner"}.pdf`;
+        link.download = `FastArk_Aadhaar_Compliance_${partner?.aadhaar_operator_id || upgradeForm.operator_id || "Partner"}.pdf`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -505,9 +552,15 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
-  // --- SUBMIT OR UPDATE EXISTING PARTNER AADHAAR UPGRADE REQUEST ---
+  // --- SUBMIT OR UPDATE EXISTING PARTNER AADHAAR UPGRADE REQUEST (BLOCKED IF ALREADY APPROVED) ---
   const handleUpgradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCredentialsLocked) {
+      return showBanner(
+        "error",
+        "Action Locked: Your Aadhaar credentials have already been approved by Corporate Admin and cannot be modified."
+      );
+    }
     if (!upgradeForm.operator_id.trim()) {
       return showBanner("error", "Please enter your UIDAI Operator ID.");
     }
@@ -535,7 +588,6 @@ export default function PartnerAadhaarPortal() {
     try {
       let finalPdfPath = isUpdatingExistingPending ? latestUpgradeReq.compliance_pdf_url : null;
 
-      // If partner uploaded new files, merge them into a single PDF and upload to Vault
       if (hasNewFiles) {
         const pdfBytes = mergedPdfBytesState || (await generateMergedCompliancePDF());
         if (!pdfBytes) {
@@ -756,6 +808,7 @@ export default function PartnerAadhaarPortal() {
     }
   };
 
+  // --- MULTI-TEMPLATE OCR SLIP UPLOAD & LIVE PREVIEW ENGINE ---
   const handleSlipUploadOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -766,7 +819,7 @@ export default function PartnerAadhaarPortal() {
     setConfirmDepositCheck(false);
 
     if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-      setOcrSummary({ platform: "PDF Receipt Attached", amount: null, utr: null });
+      setOcrSummary({ platform: "PDF Receipt Attached", amount: null, utr: null, date: null });
       return;
     }
 
@@ -807,15 +860,20 @@ export default function PartnerAadhaarPortal() {
         if (!isNaN(parsed) && parsed > 0 && parsed <= 1000000) extractedAmt = parsed;
       }
 
+      const extractedDate = parseExtractedReceiptDate(text);
+
       setOcrSummary({
         platform,
         amount: extractedAmt,
         utr: extractedUtr || null,
+        date: extractedDate || null,
       });
 
-      if (extractedUtr) {
-        setDepositForm((prev) => ({ ...prev, utr: extractedUtr }));
-      }
+      setDepositForm((prev) => ({
+        ...prev,
+        utr: extractedUtr ? extractedUtr : prev.utr,
+        date: extractedDate ? extractedDate : prev.date,
+      }));
     } catch (err) {
       console.error("OCR Error:", err);
     } finally {
@@ -826,6 +884,7 @@ export default function PartnerAadhaarPortal() {
   const handleInstantDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!slipFile) return showBanner("error", "Please upload the payment screenshot / bank slip.");
+    if (!depositForm.date) return showBanner("error", "Please select the Deposit Date.");
     if (depositForm.utr.trim().length < 6)
       return showBanner("error", "Please enter a valid 12-digit UTR / Reference number.");
     if (!confirmDepositCheck) return showBanner("error", "Please check the verification box.");
@@ -875,7 +934,7 @@ export default function PartnerAadhaarPortal() {
       setSlipFile(null);
       if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
       setSlipPreviewUrl(null);
-      setOcrSummary({ platform: null, amount: null, utr: null });
+      setOcrSummary({ platform: null, amount: null, utr: null, date: null });
       setConfirmDepositCheck(false);
       await initializeAadhaarPortal();
       setActiveMenu("overview");
@@ -1240,7 +1299,7 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 2: DAILY REPORT UPLOAD */}
+        {/* VIEW 2: DAILY REPORT UPLOAD (WITH SCROLL-LOCKED MANUAL INPUTS) */}
         {isAadhaarAuthorized && effectiveMenu === "daily" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 animate-in fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-4 gap-4">
@@ -1353,62 +1412,97 @@ export default function PartnerAadhaarPortal() {
                     </select>
                   </div>
 
+                  {/* SCROLL-FREE & SPINNER-FREE MANUAL PACKET COUNT INPUTS */}
                   {exemptionReason === "ECMP_CRASH_MANUAL" && (
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
                       <div>
-                        <label className="text-[10px] font-black uppercase text-slate-600">1. New (₹0)</label>
+                        <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
+                          1. New (₹0)
+                        </label>
                         <input
                           type="number"
+                          step="1"
                           min="0"
-                          value={manualCounts.cat1}
-                          onChange={(e) => setManualCounts({ ...manualCounts, cat1: parseInt(e.target.value) || 0 })}
-                          className="w-full border p-2 rounded font-bold bg-white mt-1"
+                          placeholder="0"
+                          value={manualCounts.cat1 || ""}
+                          onWheel={handleNumericWheel}
+                          onKeyDown={handleNumericKeyDown}
+                          onChange={(e) =>
+                            setManualCounts({ ...manualCounts, cat1: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                          }
+                          className={noScrollNumClass}
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black uppercase text-slate-600">2. MBU Free (₹0)</label>
+                        <label className="text-[10px] font-black uppercase text-slate-600 block mb-1">
+                          2. MBU Free (₹0)
+                        </label>
                         <input
                           type="number"
+                          step="1"
                           min="0"
-                          value={manualCounts.cat2}
-                          onChange={(e) => setManualCounts({ ...manualCounts, cat2: parseInt(e.target.value) || 0 })}
-                          className="w-full border p-2 rounded font-bold bg-white mt-1"
+                          placeholder="0"
+                          value={manualCounts.cat2 || ""}
+                          onWheel={handleNumericWheel}
+                          onKeyDown={handleNumericKeyDown}
+                          onChange={(e) =>
+                            setManualCounts({ ...manualCounts, cat2: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                          }
+                          className={noScrollNumClass}
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black uppercase text-amber-800">
+                        <label className="text-[10px] font-black uppercase text-amber-800 block mb-1">
                           3. MBU Paid (₹{activeTariff?.mbu_chargeable_fee || 125})
                         </label>
                         <input
                           type="number"
+                          step="1"
                           min="0"
-                          value={manualCounts.cat3}
-                          onChange={(e) => setManualCounts({ ...manualCounts, cat3: parseInt(e.target.value) || 0 })}
-                          className="w-full border p-2 rounded font-bold bg-white mt-1"
+                          placeholder="0"
+                          value={manualCounts.cat3 || ""}
+                          onWheel={handleNumericWheel}
+                          onKeyDown={handleNumericKeyDown}
+                          onChange={(e) =>
+                            setManualCounts({ ...manualCounts, cat3: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                          }
+                          className={noScrollNumClass}
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black uppercase text-blue-800">
+                        <label className="text-[10px] font-black uppercase text-blue-800 block mb-1">
                           4. Demo (₹{activeTariff?.demographic_fee || 75})
                         </label>
                         <input
                           type="number"
+                          step="1"
                           min="0"
-                          value={manualCounts.cat4}
-                          onChange={(e) => setManualCounts({ ...manualCounts, cat4: parseInt(e.target.value) || 0 })}
-                          className="w-full border p-2 rounded font-bold bg-white mt-1"
+                          placeholder="0"
+                          value={manualCounts.cat4 || ""}
+                          onWheel={handleNumericWheel}
+                          onKeyDown={handleNumericKeyDown}
+                          onChange={(e) =>
+                            setManualCounts({ ...manualCounts, cat4: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                          }
+                          className={noScrollNumClass}
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black uppercase text-purple-800">
+                        <label className="text-[10px] font-black uppercase text-purple-800 block mb-1">
                           5. Bio (₹{activeTariff?.biometric_fee || 125})
                         </label>
                         <input
                           type="number"
+                          step="1"
                           min="0"
-                          value={manualCounts.cat5}
-                          onChange={(e) => setManualCounts({ ...manualCounts, cat5: parseInt(e.target.value) || 0 })}
-                          className="w-full border p-2 rounded font-bold bg-white mt-1"
+                          placeholder="0"
+                          value={manualCounts.cat5 || ""}
+                          onWheel={handleNumericWheel}
+                          onKeyDown={handleNumericKeyDown}
+                          onChange={(e) =>
+                            setManualCounts({ ...manualCounts, cat5: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                          }
+                          className={noScrollNumClass}
                         />
                       </div>
                     </div>
@@ -1510,7 +1604,7 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 3: INSTANT DEPOSIT */}
+        {/* VIEW 3: INSTANT DEPOSIT (WITH SCROLL-FREE AMOUNT & DEDICATED DEPOSIT DATE PICKER) */}
         {isAadhaarAuthorized && effectiveMenu === "deposit" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in items-start">
             <div className="space-y-6">
@@ -1581,23 +1675,44 @@ export default function PartnerAadhaarPortal() {
                 Upload Payment Receipt / Slip
               </h3>
               <form onSubmit={handleInstantDepositSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    Amount Remitted (₹) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={depositForm.amount}
-                    onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
-                    className="w-full border-2 border-slate-200 p-3 rounded-lg font-black text-lg text-slate-900"
-                  />
+                {/* SCROLL-LOCKED AMOUNT & DEDICATED DEPOSIT DATE PICKER */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                      1. Amount Remitted (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      placeholder="0.00"
+                      value={depositForm.amount}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
+                      onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
+                      className="w-full border-2 border-slate-200 p-3 rounded-lg font-black text-lg text-slate-900 outline-none focus:border-blue-600 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-blue-700 mb-1">
+                      2. Deposit Date ({formatToDDMMYYYY(depositForm.date)}) *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      max={getISTDateString(0)}
+                      value={depositForm.date}
+                      onChange={(e) => setDepositForm({ ...depositForm, date: e.target.value })}
+                      className="w-full border-2 border-slate-200 p-3 rounded-lg font-bold text-sm text-slate-900 bg-white outline-none focus:border-blue-600 transition"
+                    />
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    Upload UPI Screenshot / Bank Slip (Auto-OCR) *
+                    3. Upload UPI Screenshot / Bank Slip (Auto-OCR) *
                   </label>
                   <input
                     type="file"
@@ -1625,16 +1740,22 @@ export default function PartnerAadhaarPortal() {
                         {ocrSummary.platform}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="grid grid-cols-3 gap-2 text-xs">
                       <div className="bg-slate-800 p-2 rounded">
-                        <p className="text-[9px] text-slate-400 uppercase">Scanned Amount</p>
+                        <p className="text-[9px] text-slate-400 uppercase">Scanned Amt</p>
                         <p className="font-bold text-emerald-400">
-                          {ocrSummary.amount ? `₹${ocrSummary.amount.toLocaleString("en-IN")}` : "Verify Manually"}
+                          {ocrSummary.amount ? `₹${ocrSummary.amount.toLocaleString("en-IN")}` : "Verify"}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800 p-2 rounded">
+                        <p className="text-[9px] text-slate-400 uppercase">Scanned Date</p>
+                        <p className="font-bold text-slate-200">
+                          {ocrSummary.date ? formatToDDMMYYYY(ocrSummary.date) : "Verify"}
                         </p>
                       </div>
                       <div className="bg-slate-800 p-2 rounded">
                         <p className="text-[9px] text-slate-400 uppercase">Scanned UTR</p>
-                        <p className="font-bold text-slate-200 truncate">{ocrSummary.utr || "Verify Manually"}</p>
+                        <p className="font-bold text-slate-200 truncate">{ocrSummary.utr || "Verify"}</p>
                       </div>
                     </div>
                   </div>
@@ -1643,12 +1764,12 @@ export default function PartnerAadhaarPortal() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      Payment Mode
+                      4. Payment Mode
                     </label>
                     <select
                       value={depositForm.method}
                       onChange={(e) => setDepositForm({ ...depositForm, method: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-xs"
+                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-xs bg-white outline-none focus:border-blue-600"
                     >
                       <option value="UPI">UPI QR / App</option>
                       <option value="Cash Deposit">Bank Cash Slip</option>
@@ -1657,7 +1778,7 @@ export default function PartnerAadhaarPortal() {
                   </div>
                   <div>
                     <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                      UTR / Reference No *
+                      5. UTR / Reference No *
                     </label>
                     <input
                       type="text"
@@ -1665,7 +1786,7 @@ export default function PartnerAadhaarPortal() {
                       placeholder="12-digit UTR"
                       value={depositForm.utr}
                       onChange={(e) => setDepositForm({ ...depositForm, utr: e.target.value })}
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs"
+                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black text-xs outline-none focus:border-blue-600"
                     />
                   </div>
                 </div>
@@ -1679,7 +1800,8 @@ export default function PartnerAadhaarPortal() {
                     className="w-4 h-4 accent-blue-600"
                   />
                   <span className="text-xs font-bold text-blue-900">
-                    I confirm the UTR and amount match the uploaded payment receipt preview.
+                    I confirm the UTR, deposit date ({formatToDDMMYYYY(depositForm.date)}), and amount match the
+                    uploaded payment receipt.
                   </span>
                 </label>
 
@@ -1926,7 +2048,7 @@ export default function PartnerAadhaarPortal() {
         )}
 
         {/* ===================================================================== */}
-        {/* VIEW 6: CREDENTIALS, 10-DOC MERGER, PRE-APPROVAL EDIT & APPROVAL WALL */}
+        {/* VIEW 6: CREDENTIALS & COMPLIANCE DOSSIER (LOCKED ONCE APPROVED)       */}
         {/* ===================================================================== */}
         {effectiveMenu === "upgrade" && (
           <div className="space-y-6 max-w-4xl animate-in fade-in">
@@ -1938,19 +2060,19 @@ export default function PartnerAadhaarPortal() {
                     Corporate Security Gate
                   </span>
                   <h2 className="text-xl font-black mt-0.5">
-                    {isAadhaarAuthorized
-                      ? "✅ Aadhaar Seva Kendra Access Active"
+                    {isCredentialsLocked
+                      ? "✅ Aadhaar Credentials Approved & Permanently Locked"
                       : "🔒 Aadhaar Portal Locked — Admin Approval Required"}
                   </h2>
                 </div>
                 <span
                   className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                    isAadhaarAuthorized
+                    isCredentialsLocked
                       ? "bg-emerald-500 text-slate-950"
                       : "bg-red-500/20 text-red-300 border border-red-500/40"
                   }`}
                 >
-                  {isAadhaarAuthorized ? "Authorized" : "Approval Pending"}
+                  {isCredentialsLocked ? "🔒 Locked & Verified" : "Approval Pending"}
                 </span>
               </div>
 
@@ -1998,15 +2120,90 @@ export default function PartnerAadhaarPortal() {
                     }`}
                   >
                     {partner?.aadhaar_operator_id && partner?.aadhaar_station_id
-                      ? "✅ Bound to Profile"
+                      ? "✅ Bound & Locked"
                       : "⏳ Submit Credentials Below"}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* IF UPGRADE REQUEST IS CURRENTLY PENDING & PARTNER HAS NOT CLICKED "EDIT" YET */}
-            {!isAadhaarAuthorized && latestUpgradeReq?.status === "Pending" && !isEditingPendingReq ? (
+            {/* CASE 1: CREDENTIALS ARE APPROVED -> PERMANENT READ-ONLY LOCK (NO EDIT OR UPLOAD ALLOWED) */}
+            {isCredentialsLocked ? (
+              <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-6 shadow-sm space-y-5">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-3xl">🔒</span>
+                    <div>
+                      <h3 className="font-black text-emerald-950 text-lg uppercase tracking-wide">
+                        Approved Aadhaar Credentials &amp; Compliance Dossier (Read-Only)
+                      </h3>
+                      <p className="text-xs font-bold text-emerald-800 mt-0.5">
+                        Your Aadhaar credentials and uploaded compliance documents have been verified and locked by
+                        Corporate Admin. Editing or re-uploading files is permanently disabled.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* VIEW & DOWNLOAD ONLY (NO EDIT BUTTON) */}
+                  {(latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url) && (
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isDownloadingSubmittedPdf}
+                        onClick={() =>
+                          handleViewOrDownloadSubmittedPdf(
+                            latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url,
+                            "view"
+                          )
+                        }
+                        className="bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
+                      >
+                        👁️ View Approved PDF
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isDownloadingSubmittedPdf}
+                        onClick={() =>
+                          handleViewOrDownloadSubmittedPdf(
+                            latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url,
+                            "download"
+                          )
+                        }
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
+                      >
+                        📥 Download Approved PDF
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-4 rounded-xl border border-emerald-200 text-xs">
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">
+                      Approved UIDAI Operator ID
+                    </span>
+                    <span className="font-black text-slate-900 text-sm">
+                      {partner?.aadhaar_operator_id || latestUpgradeReq?.requested_operator_id || "VERIFIED"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">
+                      Approved UIDAI Station ID
+                    </span>
+                    <span className="font-black text-emerald-700 text-sm">
+                      {partner?.aadhaar_station_id || latestUpgradeReq?.requested_station_id || "VERIFIED"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">NSEIT Certificate No</span>
+                    <span className="font-black text-slate-900 text-sm">
+                      {latestUpgradeReq?.nseit_cert_no || "VERIFIED ON FILE"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : latestUpgradeReq?.status === "Pending" && !isEditingPendingReq ? (
+              /* CASE 2: UPGRADE REQUEST IS PENDING ADMIN APPROVAL (CAN EDIT BEFORE ADMIN APPROVES) */
               <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 shadow-sm space-y-5">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex items-start gap-3">
@@ -2016,13 +2213,12 @@ export default function PartnerAadhaarPortal() {
                         Upgrade Request Under Corporate Review
                       </h3>
                       <p className="text-xs font-bold text-amber-800 mt-0.5">
-                        Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. Need to fix a typo or re-upload
-                        documents before Admin approval? Use the Edit button on the right.
+                        Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. You may edit or update your
+                        request only while it is pending approval. Once approved, editing will be permanently locked.
                       </p>
                     </div>
                   </div>
 
-                  {/* PRE-APPROVAL EDIT & VIEW/DOWNLOAD BUTTONS FOR PARTNER */}
                   <div className="flex flex-wrap gap-2 shrink-0">
                     {latestUpgradeReq.compliance_pdf_url && (
                       <>
@@ -2054,7 +2250,7 @@ export default function PartnerAadhaarPortal() {
                       }}
                       className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest shadow transition"
                     >
-                      ✏️ Edit Submitted Request
+                      ✏️ Edit Before Approval
                     </button>
                   </div>
                 </div>
@@ -2079,7 +2275,7 @@ export default function PartnerAadhaarPortal() {
                 </div>
               </div>
             ) : (
-              /* UPGRADE REQUEST & 10-DOCUMENT MERGER FORM */
+              /* CASE 3: INITIAL SUBMISSION OR PRE-APPROVAL EDIT FORM */
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
                 {latestUpgradeReq?.status === "Rejected" && (
                   <div className="p-4 bg-red-50 border-2 border-red-200 rounded-xl">
@@ -2096,14 +2292,12 @@ export default function PartnerAadhaarPortal() {
                   <div>
                     <h2 className="text-xl font-black text-slate-900">
                       {isEditingPendingReq
-                        ? "✏️ Edit Pending Aadhaar Upgrade Request"
-                        : isAadhaarAuthorized
-                        ? "Request Station ID / Operator ID Update"
+                        ? "✏️ Edit Pending Aadhaar Upgrade Request (Pre-Approval Only)"
                         : "Submit Aadhaar Operator Credentials & Documents (Up to 10)"}
                     </h2>
                     <p className="text-xs font-bold text-slate-500 mt-0.5">
                       Add up to 10 named compliance documents below. All uploaded files are automatically merged into a
-                      single watermarked PDF for viewing and downloading.
+                      single watermarked PDF. Once Admin approves your request, editing will be permanently locked.
                     </p>
                   </div>
 
@@ -2118,12 +2312,12 @@ export default function PartnerAadhaarPortal() {
                   )}
                 </div>
 
-                {/* IF PARTNER ALREADY HAS A SUBMITTED MERGED PDF ON FILE */}
                 {latestUpgradeReq?.compliance_pdf_url && (
                   <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <span className="text-xs font-bold text-blue-900">
                       📎 Previously Merged Compliance PDF is on file.{" "}
-                      {isEditingPendingReq && "(Leave file slots empty below to keep existing PDF, or add new files to replace it.)"}
+                      {isEditingPendingReq &&
+                        "(Leave file slots empty below to keep existing PDF, or add new files to replace it.)"}
                     </span>
                     <div className="flex gap-2 shrink-0">
                       <button
@@ -2348,7 +2542,8 @@ export default function PartnerAadhaarPortal() {
                       I confirm that I have verified my UIDAI Operator ID (
                       <strong>{upgradeForm.operator_id || "N/A"}</strong>), 5-digit Station ID (
                       <strong>{upgradeForm.station_id || "N/A"}</strong>), NSEIT Certificate Number (
-                      <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all attached compliance documents.
+                      <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all attached compliance documents. I
+                      understand that once approved by Admin, these credentials and files cannot be edited.
                     </span>
                   </label>
 
@@ -2360,7 +2555,7 @@ export default function PartnerAadhaarPortal() {
                     {isSubmittingUpgrade
                       ? "Merging Documents & Submitting..."
                       : isEditingPendingReq
-                      ? "💾 Save Corrections to Pending Request"
+                      ? "💾 Save Pre-Approval Corrections"
                       : "Submit Aadhaar Credentials & Merged PDF for Approval"}
                   </button>
                 </form>
