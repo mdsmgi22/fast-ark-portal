@@ -1,2713 +1,2875 @@
-// FILE PATH: ./app/dashboard/partners/page.tsx
+// FILE PATH: ./app/dashboard/page.tsx
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
+import React, { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
-import { formatToDDMMYYYY } from "../lib/aadhaarEngine";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  CartesianGrid,
+} from "recharts";
 
-const sanitizeCSV = (val: unknown): string => {
-  let str = String(val ?? "").replace(/"/g, '""');
-  if (/^[=+\-@]/.test(str)) {
-    str = "'" + str;
-  }
-  return `"${str}"`;
-};
+import StaffManagementEngine from "../components/StaffManagementEngine";
+import SupportDeskModule from "../components/mis/SupportDeskModule";
+import {
+  DatePresetMode,
+  getDateRangeFromPreset,
+  formatToDDMMYYYY,
+  getISTDateString,
+} from "../lib/aadhaarEngine";
 
-type DossierTab = "kyc" | "mappings" | "vault" | "ledger" | "alert";
+type AdminDeptGroup =
+  | "pulse"
+  | "treasury"
+  | "operations"
+  | "network"
+  | "governance";
 
-const ALERT_SUBJECT_PRESETS = [
-  "Deposit pending notice",
-  "Sales target not achieved",
-  "SIM sales not happening",
-  "Deposit slips missing",
-  "Regular cash hold",
-  "Aadhaar daily report missing",
-  "Compliance documents pending",
-  "Other (Custom Subject)",
-];
+type RevenueStreamFilter = "ALL" | "TELECOM" | "AADHAAR";
 
-export default function PartnersDirectory() {
+export default function AdminCommandCenter() {
   const router = useRouter();
+  const [adminUser, setAdminUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [staffUser, setStaffUser] = useState<any>(null);
+  const [isRouting, setIsRouting] = useState(false);
 
-  // Master Relational Streams
-  const [partners, setPartners] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [applications, setApplications] = useState<any[]>([]);
-  const [ctopMappings, setCtopMappings] = useState<any[]>([]);
-  const [virtualAccounts, setVirtualAccounts] = useState<any[]>([]);
-  const [upiIds, setUpiIds] = useState<any[]>([]);
-  const [upgradeRequests, setUpgradeRequests] = useState<any[]>([]);
-  const [salesReports, setSalesReports] = useState<any[]>([]);
-  const [aadhaarReports, setAadhaarReports] = useState<any[]>([]);
-  const [deposits, setDeposits] = useState<any[]>([]);
-  const [penalties, setPenalties] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [sessions, setSessions] = useState<any[]>([]);
+  // LEFT SIDEBAR DEPARTMENT GROUP & SPA SUPPORT VIEW
+  const [activeGroup, setActiveGroup] = useState<AdminDeptGroup>("pulse");
+  const [activeView, setActiveView] = useState<"dashboard" | "support">(
+    "dashboard"
+  );
+  const [streamFilter, setStreamFilter] =
+    useState<RevenueStreamFilter>("ALL");
+  const [showGeoFilters, setShowGeoFilters] = useState<boolean>(true);
 
-  // 4-Tier Cascading Filters + Status + Search
+  // LIVE IST CLOCK & DD/MM/YYYY DATE
+  const [liveDateDDMMYYYY, setLiveDateDDMMYYYY] = useState<string>("");
+  const [liveTimeIST, setLiveTimeIST] = useState<string>("");
+
+  const [stats, setStats] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    locations: 0,
+  });
+  const [recentApps, setRecentApps] = useState<any[]>([]);
+  const [enquiries, setEnquiries] = useState<any[]>([]);
+
+  // MASTER DIRECTORY STATES
+  const [allPartners, setAllPartners] = useState<any[]>([]);
+  const [allLocations, setAllLocations] = useState<any[]>([]);
+
+  // LIVE REVENUE RAW DATA (TELECOM + PAYBULL + AADHAAR + DEPOSITS)
+  const [rawSales, setRawSales] = useState<any[]>([]);
+  const [rawAadhaar, setRawAadhaar] = useState<any[]>([]);
+  const [rawDeposits, setRawDeposits] = useState<any[]>([]);
+
+  // 7-OPTION DATE PRESET + 4-TIER CASCADE FILTER ENGINE STATES
+  const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
+  const [fromDate, setFromDate] = useState(
+    () => getDateRangeFromPreset("current_month").start
+  );
+  const [toDate, setToDate] = useState(
+    () => getDateRangeFromPreset("current_month").end
+  );
+
   const [fState, setFState] = useState("ALL");
   const [fHq, setFHq] = useState("ALL");
   const [fCenter, setFCenter] = useState("ALL");
-  const [fRole, setFRole] = useState("ALL");
-  const [fStatus, setFStatus] = useState("ALL");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [fPartner, setFPartner] = useState("ALL");
 
-  // Compliance Vault Quick-Loader State
-  const [loadingDocId, setLoadingDocId] = useState<string | null>(null);
-
-  // Inline Aadhaar & Center Mapping Modal State (Preserved)
-  const [mappingPartner, setMappingPartner] = useState<any | null>(null);
-  const [mapForm, setMapForm] = useState({
-    center_id: "",
-    role_aadhaar: false,
-    aadhaar_operator_id: "",
-    aadhaar_station_id: "",
+  const [financials, setFinancials] = useState({
+    // Consolidated & Telecom Granular Revenue
+    cbpLandline: 0,
+    cbpGsm: 0,
+    cbp: 0,
+    ctop: 0,
+    frcCash: 0,
+    mnpCash: 0,
+    frcMnpCash: 0,
+    simOnlyCash: 0,
+    otherCash: 0,
+    sim: 0,
+    pbCtop: 0,
+    pbCbp: 0,
+    pbFrc: 0,
+    pbMnp: 0,
+    pbOther: 0,
+    paybull: 0,
+    aadhaar: 0,
+    cheque: 0,
+    chequeQty: 0,
+    totalSalesCash: 0,
+    totalDeposits: 0,
+    // Stream 1: BSNL + Paybull Isolated Totals
+    telecomSalesCash: 0,
+    telecomDeposits: 0,
+    telecomPending: 0,
+    // Stream 2: Aadhaar Kendra Isolated Totals & 5-Category Breakdown
+    aadhaarSalesCash: 0,
+    aadhaarDeposits: 0,
+    aadhaarPending: 0,
+    adhCat1: 0,
+    adhCat2: 0,
+    adhCat3: 0,
+    adhCat4: 0,
+    adhCat5: 0,
+    aadhaarPackets: 0,
+    adhCompleted: 0,
+    adhInProcess: 0,
+    adhRejected: 0,
+    adhBase: 0,
+    adhGst: 0,
+    // SIM Sales Quantities
+    qNew: 0,
+    qUpgrade: 0,
+    qReplace: 0,
+    qFancy: 0,
+    qMnp: 0,
+    qFrc: 0,
+    qPostpaid: 0,
+    totalPrepaidSims: 0,
+    totalSims: 0,
   });
-  const [isSavingMap, setIsSavingMap] = useState(false);
+  const [chartData, setChartData] = useState<any[]>([]);
 
-  // 360° Partner Profile Inspector Modal State
-  const [selectedProfile, setSelectedProfile] = useState<any | null>(null);
-  const [dossierTab, setDossierTab] = useState<DossierTab>("kyc");
-  const [photoSignedUrl, setPhotoSignedUrl] = useState<string | null>(null);
-  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
-  const [previewPdfTitle, setPreviewPdfTitle] = useState<string>("");
-  const [isLoadingVaultPreview, setIsLoadingVaultPreview] = useState(false);
-
-  // Login-Safe Inline Profile Edit State (Inside Tab 1)
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [profileEditForm, setProfileEditForm] = useState({
-    partner_name: "",
-    mobile: "",
-    alt_mobile: "",
-    pan_number: "",
-    father_name: "",
-    qualification: "",
-    gender: "",
-    dob: "",
-    address_1: "",
-    address_2: "",
-    pin_code: "",
-    taluk: "",
-    dist: "",
-    state: "",
-    role: "",
-  });
-
-  // Direct "Send Alert to Partner" Quick-Action State (Inside Tab 5)
-  const [alertSubjectCategory, setAlertSubjectCategory] = useState("");
-  const [alertCustomSubject, setAlertCustomSubject] = useState("");
-  const [alertBody, setAlertBody] = useState("");
-  const [isSendingAlert, setIsSendingAlert] = useState(false);
+  const [missingSales, setMissingSales] = useState<any[]>([]);
+  const [missingDeposits, setMissingDeposits] = useState<any[]>([]);
+  const [isRefreshingFinance, setIsRefreshingFinance] = useState(false);
 
   useEffect(() => {
-    fetchPartnersDatabase();
+    const updateClock = () => {
+      const now = new Date();
+      setLiveDateDDMMYYYY(formatToDDMMYYYY(getISTDateString(0)));
+      setLiveTimeIST(
+        now
+          .toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+          })
+          .toUpperCase()
+      );
+    };
+    updateClock();
+    const timer = setInterval(updateClock, 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  const fetchPartnersDatabase = async () => {
-    setLoading(true);
+  useEffect(() => {
+    initializeDashboard();
+  }, [router]);
+
+  const initializeDashboard = async () => {
     try {
       const {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const { data: staff } = await supabase
+      const { data: staffData } = await supabase
         .from("back_office_staff")
-        .select("id, name, email, role, status")
+        .select("*")
         .ilike("email", (session.user.email || "").trim())
         .maybeSingle();
 
-      if (staff) setStaffUser(staff);
+      if (!staffData || staffData.status !== "Active") {
+        return router.push("/login");
+      }
 
-      const [
-        partRes,
-        locRes,
-        appRes,
-        ctopRes,
-        vaRes,
-        upiRes,
-        upgRes,
-        salesRes,
-        adhRes,
-        depRes,
-        penRes,
-        msgRes,
-        sessRes,
-      ] = await Promise.all([
+      const safeRole = (staffData?.role || "").trim().toLowerCase();
+      if (safeRole === "supervisor") {
+        return router.push("/dashboard/supervisor-hub");
+      }
+
+      // Role-Based Default Landing Tab: Admin, Manager & Accountant -> Group 1 (pulse), Staff -> Group 3 (operations)
+      if (safeRole === "staff") {
+        setActiveGroup("operations");
+      } else {
+        setActiveGroup("pulse");
+      }
+
+      setAdminUser(staffData);
+
+      const [locRes, partRes] = await Promise.all([
+        supabase.from("locations").select("*").order("center_name"),
         supabase
           .from("active_partners")
           .select(
-            `*, locations ( id, center_name, center_code, ba, oa, pin_code, taluk, dist, state, parent_master_id, role_aadhaar, role_ocsc, role_cm, role_partner )`
+            "id, partner_name, role, role_aadhaar, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id)"
           )
-          .order("joined_at", { ascending: false }),
-        supabase
-          .from("locations")
-          .select("*")
-          .order("center_name", { ascending: true }),
-        supabase
-          .from("pending_applications")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("agent_ctop_mappings")
-          .select("*, master_ctop_accounts(master_ctop_no)"),
-        supabase
-          .from("virtual_accounts")
-          .select("*, master_banks(bank_name, actual_account_no)"),
-        supabase
-          .from("upi_ids")
-          .select("*, master_banks(bank_name, actual_account_no)"),
-        supabase
-          .from("partner_upgrade_requests")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("daily_sales_reports")
-          .select(
-            "partner_id, cbp_landline_amt, cbp_gsm_amt, ctop_recharge_amt, sim_replacement_amt, sim_fancy_amt, sim_postpaid_amt, other_amt, frc_amt, mnp_amt, pb_cbp_amt, pb_ctop_amt, pb_frc_amt, pb_mnp_amt, pb_other_amt"
-          ),
-        supabase
-          .from("aadhaar_daily_reports")
-          .select("partner_id, total_packets_qty, total_cash_collected"),
-        supabase
-          .from("partner_deposits")
-          .select(
-            "partner_id, deposit_amount, status, deposit_stream, reference_no"
-          )
-          .neq("status", "Discrepancy"),
-        supabase
-          .from("aadhaar_penalty_logs")
-          .select("partner_id, penalty_amount, is_settled, is_waived")
-          .eq("is_settled", false),
-        supabase
-          .from("partner_messages")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        supabase.from("active_sessions").select("*"),
+          .eq("status", "Active")
+          .order("partner_name"),
       ]);
 
-      if (partRes.error) throw partRes.error;
+      const locData = locRes.data || [];
+      setAllLocations(locData);
+      setAllPartners(partRes.data || []);
 
-      setPartners(partRes.data || []);
-      setLocations(locRes.data || []);
-      setApplications(appRes.data || []);
-      setCtopMappings(ctopRes.data || []);
-      setVirtualAccounts(vaRes.data || []);
-      setUpiIds(upiRes.data || []);
-      setUpgradeRequests(upgRes.data || []);
-      setSalesReports(salesRes.data || []);
-      setAadhaarReports(adhRes.data || []);
-      setDeposits(depRes.data || []);
-      setPenalties((penRes.data || []).filter((p: any) => !p.is_waived));
-      setMessages(msgRes.data || []);
-      setSessions(sessRes.data || []);
-    } catch (error: any) {
-      console.error("Error fetching partner database:", error.message);
-    } finally {
+      if (["admin", "manager", "staff"].includes(safeRole)) {
+        await fetchOperationalData(locData);
+      }
+
+      if (!["admin", "accountant", "manager"].includes(safeRole)) {
+        setLoading(false);
+      }
+    } catch (err: any) {
+      console.error("Dashboard init error:", err.message);
       setLoading(false);
     }
   };
 
-  // =========================================================================
-  // 360° RELATIONAL PROFILE ENRICHMENT ENGINE
-  // =========================================================================
-  const enrichedPartners = useMemo(() => {
-    const isAadhaarDep = (d: any) =>
+  const fetchOperationalData = async (locationsArray: any[]) => {
+    try {
+      const [appsRes, enqRes] = await Promise.all([
+        supabase
+          .from("pending_applications")
+          .select("id, name, requested_role, status, created_at")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("enquiries")
+          .select("*")
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (enqRes.data) setEnquiries(enqRes.data);
+
+      const apps = appsRes.data || [];
+      setStats({
+        pending: apps.filter((app) => app.status === "Pending" || !app.status)
+          .length,
+        approved: apps.filter((app) => app.status === "Approved").length,
+        rejected: apps.filter((app) => app.status === "Rejected").length,
+        locations:
+          locationsArray.filter((l) => l.is_active !== false).length || 0,
+      });
+      setRecentApps(apps.slice(0, 6));
+    } catch (error: any) {
+      console.error("Operational data error:", error.message);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      adminUser &&
+      ["admin", "accountant", "manager"].includes(
+        adminUser.role.trim().toLowerCase()
+      )
+    ) {
+      fetchFinancialData();
+    }
+  }, [fromDate, toDate, adminUser]);
+
+  const fetchFinancialData = async () => {
+    setIsRefreshingFinance(true);
+    try {
+      const [salesRes, aadhaarRes, depositsRes] = await Promise.all([
+        supabase
+          .from("daily_sales_reports")
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
+          .gte("report_date", fromDate)
+          .lte("report_date", toDate),
+        supabase
+          .from("aadhaar_daily_reports")
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
+          .gte("report_date", fromDate)
+          .lte("report_date", toDate),
+        supabase
+          .from("partner_deposits")
+          .select(
+            `*, active_partners (id, partner_name, locations (id, state, dist, center_name, center_code, parent_master_id))`
+          )
+          .neq("status", "Discrepancy")
+          .gte("deposit_date", fromDate)
+          .lte("deposit_date", toDate),
+      ]);
+
+      setRawSales(salesRes.data || []);
+      setRawAadhaar(aadhaarRes.data || []);
+      setRawDeposits(depositsRes.data || []);
+    } catch (error: any) {
+      console.error("Finance fetch error:", error.message);
+    } finally {
+      setIsRefreshingFinance(false);
+      setLoading(false);
+    }
+  };
+
+  const handlePresetChange = (mode: DatePresetMode) => {
+    setDatePreset(mode);
+    if (mode !== "custom") {
+      const range = getDateRangeFromPreset(mode);
+      setFromDate(range.start);
+      setToDate(range.end);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      allPartners.length > 0 ||
+      rawSales.length > 0 ||
+      rawAadhaar.length > 0
+    ) {
+      calculateEngine(rawSales, rawAadhaar, rawDeposits, allPartners);
+    }
+  }, [
+    fState,
+    fHq,
+    fCenter,
+    fPartner,
+    streamFilter,
+    rawSales,
+    rawAadhaar,
+    rawDeposits,
+    allPartners,
+  ]);
+
+  const calculateEngine = (
+    sales: any[],
+    aadhaar: any[],
+    deposits: any[],
+    directory: any[]
+  ) => {
+    const applyGeoFilter = (item: any) => {
+      const p = item.active_partners || item;
+      const locData = p?.locations;
+      const l: any = Array.isArray(locData) ? locData[0] : locData;
+      if (!l) return false;
+
+      if (fState !== "ALL" && l.state !== fState) return false;
+      if (
+        fHq !== "ALL" &&
+        l.parent_master_id?.toString() !== fHq &&
+        l.id?.toString() !== fHq
+      )
+        return false;
+      if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
+      if (fPartner !== "ALL" && p.id?.toString() !== fPartner) return false;
+
+      return true;
+    };
+
+    const isAadhaarDeposit = (d: any) =>
       d.deposit_stream === "AADHAAR" ||
       String(d.reference_no || "")
         .toUpperCase()
         .startsWith("AADHAAR_");
 
-    return partners.map((p) => {
-      const cleanEmail = String(p.email || "")
-        .trim()
-        .toLowerCase();
+    const filteredSales = sales.filter(applyGeoFilter);
+    const filteredAadhaar = aadhaar.filter(applyGeoFilter);
+    const filteredDeposits = deposits.filter(applyGeoFilter);
+    const filteredDirectory = directory.filter(applyGeoFilter);
 
-      // 1. Linked Onboarding Application (by application_id or case-insensitive email)
-      const linkedApp =
-        applications.find((a) => p.application_id && a.id === p.application_id) ||
-        applications.find(
-          (a) =>
-            String(a.email || "")
-              .trim()
-              .toLowerCase() === cleanEmail
-        ) ||
-        null;
+    let cbpLL = 0,
+      cbpGsm = 0,
+      tCbp = 0,
+      tCtop = 0,
+      frcCash = 0,
+      mnpCash = 0,
+      simOnlyCash = 0,
+      otherCash = 0,
+      tSim = 0,
+      pbCtop = 0,
+      pbCbp = 0,
+      pbFrc = 0,
+      pbMnp = 0,
+      pbOther = 0,
+      tPaybull = 0,
+      tAadhaar = 0,
+      tCheque = 0,
+      chequeQty = 0,
+      tTelecomSalesCash = 0,
+      tTelecomDeposits = 0,
+      tAadhaarDeposits = 0;
 
-      // 2. Parent Master HQ Name
-      const parentHq = locations.find(
-        (l) => l.id === p.locations?.parent_master_id
-      );
+    let qNew = 0,
+      qUpgrade = 0,
+      qReplace = 0,
+      qFancy = 0,
+      qMnp = 0,
+      qFrc = 0,
+      qPostpaid = 0;
 
-      // 3. Mapped Agent CTOPs, Virtual Accounts & UPI IDs
-      const pCtops = ctopMappings.filter((c) => c.partner_id === p.id);
-      const pVirtuals = virtualAccounts.filter(
-        (v) => v.assigned_location_id === p.center_id
-      );
-      const pUpis = upiIds.filter(
-        (u) => u.assigned_location_id === p.center_id
-      );
+    let adhCat1 = 0,
+      adhCat2 = 0,
+      adhCat3 = 0,
+      adhCat4 = 0,
+      adhCat5 = 0,
+      aadhaarPackets = 0,
+      adhCompleted = 0,
+      adhInProcess = 0,
+      adhRejected = 0,
+      adhBase = 0,
+      adhGst = 0;
 
-      // 4. Latest Aadhaar Upgrade Dossier
-      const latestUpgrade =
-        upgradeRequests.find((u) => u.partner_id === p.id) || null;
+    const chartMap: Record<
+      string,
+      { date: string; Sales: number; Deposits: number }
+    > = {};
 
-      // 5. Financial Ledger Aggregation (BSNL+Paybull vs. Aadhaar)
-      const pSales = salesReports.filter((s) => s.partner_id === p.id);
-      const pAadhaar = aadhaarReports.filter((a) => a.partner_id === p.id);
-      const pDeps = deposits.filter((d) => d.partner_id === p.id);
-      const pPens = penalties.filter((pen) => pen.partner_id === p.id);
+    filteredSales.forEach((s) => {
+      const sLL = Number(s.cbp_landline_amt || 0);
+      const sGsm = Number(s.cbp_gsm_amt || 0);
+      const sCbp = sLL + sGsm;
+      const sCtop = Number(s.ctop_recharge_amt || 0);
+      const sFrc = Number(s.frc_amt || 0);
+      const sMnp = Number(s.mnp_amt || 0);
+      const sSimCards =
+        Number(s.sim_replacement_amt || 0) +
+        Number(s.sim_fancy_amt || 0) +
+        Number(s.sim_postpaid_amt || 0);
+      const sOther = Number(s.other_amt || 0);
 
-      let telecomGenerated = 0;
-      pSales.forEach((s) => {
-        telecomGenerated +=
-          Number(s.cbp_landline_amt || 0) +
-          Number(s.cbp_gsm_amt || 0) +
-          Number(s.ctop_recharge_amt || 0) +
-          Number(s.sim_replacement_amt || 0) +
-          Number(s.sim_fancy_amt || 0) +
-          Number(s.sim_postpaid_amt || 0) +
-          Number(s.other_amt || 0) +
-          Number(s.frc_amt || 0) +
-          Number(s.mnp_amt || 0) +
-          Number(s.pb_cbp_amt || 0) +
-          Number(s.pb_ctop_amt || 0) +
-          Number(s.pb_frc_amt || 0) +
-          Number(s.pb_mnp_amt || 0) +
-          Number(s.pb_other_amt || 0);
-      });
+      const sPbCtop = Number(s.pb_ctop_amt || 0);
+      const sPbCbp = Number(s.pb_cbp_amt || 0);
+      const sPbFrc = Number(s.pb_frc_amt || 0);
+      const sPbMnp = Number(s.pb_mnp_amt || 0);
+      const sPbOther = Number(s.pb_other_amt || 0);
+      const sPb = sPbCtop + sPbCbp + sPbFrc + sPbMnp + sPbOther;
 
-      const telecomDeposited = pDeps
-        .filter((d) => !isAadhaarDep(d))
-        .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
-      const telecomDue = Math.max(0, telecomGenerated - telecomDeposited);
+      const totalCashRow =
+        sCbp + sCtop + sFrc + sMnp + sSimCards + sOther + sPb;
 
-      const aadhaarGenerated = pAadhaar.reduce(
-        (sum, a) => sum + Number(a.total_cash_collected || 0),
-        0
-      );
-      const aadhaarPackets = pAadhaar.reduce(
-        (sum, a) => sum + Number(a.total_packets_qty || 0),
-        0
-      );
-      const aadhaarDeposited = pDeps
-        .filter((d) => isAadhaarDep(d))
-        .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
-      const aadhaarPenaltyDue = pPens.reduce(
-        (sum, pen) => sum + Number(pen.penalty_amount || 0),
-        0
-      );
-      const aadhaarDue =
-        Math.max(0, aadhaarGenerated - aadhaarDeposited) + aadhaarPenaltyDue;
+      cbpLL += sLL;
+      cbpGsm += sGsm;
+      tCbp += sCbp;
+      tCtop += sCtop;
+      frcCash += sFrc;
+      mnpCash += sMnp;
+      simOnlyCash += sSimCards;
+      otherCash += sOther;
+      tSim += sSimCards + sFrc + sMnp + sOther;
 
-      const totalNetPayable = telecomDue + aadhaarDue;
+      pbCtop += sPbCtop;
+      pbCbp += sPbCbp;
+      pbFrc += sPbFrc;
+      pbMnp += sPbMnp;
+      pbOther += sPbOther;
+      tPaybull += sPb;
 
-      // 6. Session Telemetry & Inbox Alerts
-      const activeSession =
-        sessions.find((s) => s.user_id === p.auth_id) || null;
-      const pMessages = messages.filter((m) => m.partner_id === p.id);
-      const unreadAlertsCount = pMessages.filter((m) => !m.is_read).length;
+      tCheque += Number(s.cheque_amt || 0);
+      chequeQty += Number(s.cheque_qty || 0);
+      tTelecomSalesCash += totalCashRow;
 
-      return {
-        ...p,
-        linkedApp,
-        parentHqName: parentHq?.center_name || "Unassigned HQ",
-        pCtops,
-        pVirtuals,
-        pUpis,
-        latestUpgrade,
-        telecomGenerated,
-        telecomDeposited,
-        telecomDue,
-        aadhaarGenerated,
-        aadhaarDeposited,
-        aadhaarPenaltyDue,
-        aadhaarDue,
-        aadhaarPackets,
-        totalNetPayable,
-        activeSession,
-        pMessages,
-        unreadAlertsCount,
-      };
+      qNew += Number(s.sim_new_qty || 0);
+      qUpgrade += Number(s.sim_upgrade_qty || 0);
+      qReplace += Number(s.sim_replacement_qty || 0);
+      qFancy += Number(s.sim_fancy_qty || 0);
+      qMnp += Number(s.mnp_qty || 0);
+      qFrc += Number(s.frc_qty || 0);
+      qPostpaid += Number(s.sim_postpaid_qty || 0);
+
+      if (streamFilter !== "AADHAAR") {
+        const dateKey = s.report_date;
+        if (!chartMap[dateKey])
+          chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+        chartMap[dateKey].Sales += totalCashRow;
+      }
     });
-  }, [
-    partners,
-    applications,
-    locations,
-    ctopMappings,
-    virtualAccounts,
-    upiIds,
-    upgradeRequests,
-    salesReports,
-    aadhaarReports,
-    deposits,
-    penalties,
-    messages,
-    sessions,
-  ]);
 
-  // Keep open modal in sync when database refreshes
-  useEffect(() => {
-    if (selectedProfile) {
-      const updated = enrichedPartners.find(
-        (p) => p.id === selectedProfile.id
-      );
-      if (updated) setSelectedProfile(updated);
-    }
-  }, [enrichedPartners]);
+    filteredAadhaar.forEach((a) => {
+      const aCash = Number(a.total_cash_collected || 0);
+      tAadhaar += aCash;
+      adhCat1 += Number(a.cat1_new_qty || 0);
+      adhCat2 += Number(a.cat2_mbu_free_qty || 0);
+      adhCat3 += Number(a.cat3_mbu_chargeable_qty || 0);
+      adhCat4 += Number(a.cat4_demographic_qty || 0);
+      adhCat5 += Number(a.cat5_biometric_qty || 0);
+      aadhaarPackets += Number(a.total_packets_qty || 0);
+      adhCompleted += Number(a.completed_qty || 0);
+      adhInProcess += Number(a.inprocess_qty || 0);
+      adhRejected += Number(a.rejected_qty || 0);
+      adhBase += Number(a.base_amount || 0);
+      adhGst += Number(a.gst_amount || 0);
 
-  // 4-Tier Cascading Options
-  const uniqueStates = useMemo(
-    () =>
-      Array.from(
-        new Set(locations.map((l) => l.state).filter(Boolean))
-      ).sort(),
-    [locations]
-  );
-
-  const hqOptions = useMemo(
-    () =>
-      locations.filter(
-        (l) => l.is_master_node && (fState === "ALL" || l.state === fState)
-      ),
-    [locations, fState]
-  );
-
-  const centerOptions = useMemo(
-    () =>
-      locations.filter(
-        (l) =>
-          !l.is_master_node &&
-          (fState === "ALL" || l.state === fState) &&
-          (fHq === "ALL" || l.parent_master_id?.toString() === fHq)
-      ),
-    [locations, fState, fHq]
-  );
-
-  const filteredPartners = useMemo(() => {
-    return enrichedPartners.filter((p) => {
-      const loc = p.locations;
-      if (fState !== "ALL" && loc?.state !== fState) return false;
-      if (fHq !== "ALL" && loc?.parent_master_id?.toString() !== fHq)
-        return false;
-      if (
-        fCenter !== "ALL" &&
-        loc?.id?.toString() !== fCenter &&
-        p.center_id?.toString() !== fCenter
-      )
-        return false;
-
-      if (fStatus !== "ALL" && p.status !== fStatus) return false;
-
-      if (fRole !== "ALL") {
-        const r = String(p.role || "").toUpperCase();
-        if (fRole === "AADHAAR" && !p.role_aadhaar && !r.includes("AADHAAR"))
-          return false;
-        if (fRole === "OCSC" && !r.includes("OCSC")) return false;
-        if (fRole === "CM" && !r.includes("CM")) return false;
-        if (fRole === "PARTNER" && r !== "PARTNER" && !r.includes("IRCTC"))
-          return false;
+      if (streamFilter !== "TELECOM") {
+        const dateKey = a.report_date;
+        if (!chartMap[dateKey])
+          chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+        chartMap[dateKey].Sales += aCash;
       }
-
-      const q = searchTerm.toLowerCase().trim();
-      if (!q) return true;
-      return (
-        p.partner_name?.toLowerCase().includes(q) ||
-        p.mobile?.includes(q) ||
-        p.email?.toLowerCase().includes(q) ||
-        p.linkedApp?.pan_number?.toLowerCase().includes(q) ||
-        p.aadhaar_operator_id?.toLowerCase().includes(q) ||
-        p.aadhaar_station_id?.includes(q) ||
-        loc?.center_name?.toLowerCase().includes(q) ||
-        loc?.center_code?.toLowerCase().includes(q)
-      );
     });
-  }, [enrichedPartners, fState, fHq, fCenter, fRole, fStatus, searchTerm]);
 
-  // =========================================================================
-  // ACTIONS: STATUS TOGGLE, CENTER/ID MAPPING, 360° DOSSIER, EDIT & ALERTS
-  // =========================================================================
-  const togglePartnerStatus = async (id: string, currentStatus: string) => {
-    const newStatus = currentStatus === "Active" ? "Suspended" : "Active";
-    if (
-      newStatus === "Suspended" &&
-      !confirm("Are you sure you want to suspend this partner's access?")
-    ) {
-      return;
-    }
+    filteredDeposits.forEach((d) => {
+      const amt = Number(d.deposit_amount || 0);
+      const isAdh = isAadhaarDeposit(d);
 
-    try {
-      const { error } = await supabase
-        .from("active_partners")
-        .update({ status: newStatus })
-        .eq("id", id);
-
-      if (error) throw error;
-
-      if (staffUser) {
-        await supabase.from("staff_activity_logs").insert([
-          {
-            staff_id: staffUser.id,
-            staff_email: staffUser.email,
-            action_type:
-              newStatus === "Active" ? "PARTNER_RESTORED" : "PARTNER_SUSPENDED",
-            module: "ONBOARDING",
-            target_id: id,
-            details: `Changed partner status to ${newStatus}.`,
-          },
-        ]);
+      if (isAdh) {
+        tAadhaarDeposits += amt;
+      } else {
+        tTelecomDeposits += amt;
       }
 
-      fetchPartnersDatabase();
-    } catch (error: any) {
-      alert("Error updating status: " + error.message);
-    }
-  };
+      const includeInChart =
+        streamFilter === "ALL" ||
+        (streamFilter === "AADHAAR" && isAdh) ||
+        (streamFilter === "TELECOM" && !isAdh);
 
-  const handleViewCompliance = async (
-    partnerId: string,
-    path: string | null
-  ) => {
-    if (!path) {
-      return alert(
-        "No compliance documents have been submitted by this partner yet."
-      );
-    }
-
-    setLoadingDocId(partnerId);
-    try {
-      if (path.startsWith("http")) {
-        window.open(path, "_blank");
-        return;
+      if (includeInChart) {
+        const dateKey = (d.deposit_date || d.created_at).split("T")[0];
+        if (!chartMap[dateKey])
+          chartMap[dateKey] = { date: dateKey, Sales: 0, Deposits: 0 };
+        chartMap[dateKey].Deposits += amt;
       }
+    });
 
-      const { data, error } = await supabase.storage
-        .from("application_documents")
-        .createSignedUrl(path, 3600);
+    const totalPrepaidSims =
+      qNew + qUpgrade + qReplace + qFancy + qMnp + qFrc;
+    const totalSims = totalPrepaidSims + qPostpaid;
 
-      if (error || !data?.signedUrl) {
-        throw (
-          error || new Error("Failed to generate cryptographic signed URL.")
+    const totalSalesCash = tTelecomSalesCash + tAadhaar;
+    const totalDeposits = tTelecomDeposits + tAadhaarDeposits;
+
+    setFinancials({
+      cbpLandline: cbpLL,
+      cbpGsm,
+      cbp: tCbp,
+      ctop: tCtop,
+      frcCash,
+      mnpCash,
+      frcMnpCash: frcCash + mnpCash,
+      simOnlyCash,
+      otherCash,
+      sim: tSim,
+      pbCtop,
+      pbCbp,
+      pbFrc,
+      pbMnp,
+      pbOther,
+      paybull: tPaybull,
+      aadhaar: tAadhaar,
+      cheque: tCheque,
+      chequeQty,
+      totalSalesCash,
+      totalDeposits,
+      telecomSalesCash: tTelecomSalesCash,
+      telecomDeposits: tTelecomDeposits,
+      telecomPending: Math.max(0, tTelecomSalesCash - tTelecomDeposits),
+      aadhaarSalesCash: tAadhaar,
+      aadhaarDeposits: tAadhaarDeposits,
+      aadhaarPending: Math.max(0, tAadhaar - tAadhaarDeposits),
+      adhCat1,
+      adhCat2,
+      adhCat3,
+      adhCat4,
+      adhCat5,
+      aadhaarPackets,
+      adhCompleted,
+      adhInProcess,
+      adhRejected,
+      adhBase,
+      adhGst,
+      qNew,
+      qUpgrade,
+      qReplace,
+      qFancy,
+      qMnp,
+      qFrc,
+      qPostpaid,
+      totalPrepaidSims,
+      totalSims,
+    });
+
+    setChartData(
+      Object.values(chartMap).sort((a, b) => a.date.localeCompare(b.date))
+    );
+
+    // Defaulter Watchlists morph according to active Vertical Filter
+    const relevantDirectory = filteredDirectory.filter((p) => {
+      if (streamFilter === "AADHAAR") {
+        return Boolean(
+          p.role_aadhaar ||
+            p.aadhaar_station_id ||
+            String(p.role || "")
+              .toUpperCase()
+              .includes("AADHAAR")
         );
       }
-
-      window.open(data.signedUrl, "_blank");
-    } catch (err: any) {
-      alert("Error loading compliance document: " + err.message);
-    } finally {
-      setLoadingDocId(null);
-    }
-  };
-
-  const openMappingModal = (p: any) => {
-    setMappingPartner(p);
-    setMapForm({
-      center_id: p.center_id?.toString() || "",
-      role_aadhaar: Boolean(
-        p.role_aadhaar ||
-          String(p.role || "")
-            .toUpperCase()
-            .includes("AADHAAR")
-      ),
-      aadhaar_operator_id: p.aadhaar_operator_id || "",
-      aadhaar_station_id: p.aadhaar_station_id || "",
-    });
-  };
-
-  const handleSaveMapping = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mappingPartner) return;
-    if (
-      mapForm.role_aadhaar &&
-      (!mapForm.aadhaar_operator_id.trim() ||
-        mapForm.aadhaar_station_id.trim().length !== 5)
-    ) {
-      return alert(
-        "Please enter a valid UIDAI Operator ID and 5-digit Station ID when Aadhaar Role is enabled."
-      );
-    }
-
-    setIsSavingMap(true);
-    try {
-      const { error } = await supabase
-        .from("active_partners")
-        .update({
-          center_id: mapForm.center_id
-            ? parseInt(mapForm.center_id, 10)
-            : mappingPartner.center_id,
-          role_aadhaar: mapForm.role_aadhaar,
-          aadhaar_operator_id:
-            mapForm.aadhaar_operator_id.trim().toUpperCase() || null,
-          aadhaar_station_id: mapForm.aadhaar_station_id.trim() || null,
-        })
-        .eq("id", mappingPartner.id);
-
-      if (error) throw error;
-
-      if (mapForm.role_aadhaar && mapForm.center_id) {
-        await supabase
-          .from("locations")
-          .update({ role_aadhaar: true })
-          .eq("id", parseInt(mapForm.center_id, 10));
-      }
-
-      alert("✅ Partner Center & Aadhaar Station credentials updated!");
-      setMappingPartner(null);
-      fetchPartnersDatabase();
-    } catch (err: any) {
-      alert("Error saving mapping: " + err.message);
-    } finally {
-      setIsSavingMap(false);
-    }
-  };
-
-  // --- OPEN 360° PARTNER PROFILE MODAL ---
-  const open360ProfileModal = async (p: any, initialTab: DossierTab = "kyc") => {
-    setSelectedProfile(p);
-    setDossierTab(initialTab);
-    setIsEditingProfile(false);
-    setPhotoSignedUrl(null);
-    setPreviewPdfUrl(null);
-    setPreviewPdfTitle("");
-    setAlertSubjectCategory("");
-    setAlertCustomSubject("");
-    setAlertBody("");
-
-    const app = p.linkedApp;
-    setProfileEditForm({
-      partner_name: p.partner_name || app?.name || "",
-      mobile: p.mobile || app?.mobile || "",
-      alt_mobile: app?.alt_mobile || "",
-      pan_number: app?.pan_number || "",
-      father_name: app?.father_name || "",
-      qualification: app?.qualification || "",
-      gender: app?.gender || "",
-      dob: app?.dob || "",
-      address_1: app?.address_1 || "",
-      address_2: app?.address_2 || "",
-      pin_code: app?.pin_code || "",
-      taluk: app?.taluk || "",
-      dist: app?.dist || "",
-      state: app?.state || "",
-      role: p.role || app?.requested_role || "OCSC",
+      return true;
     });
 
-    // Load Passport Photo Signed URL if available
-    if (app?.photo_path) {
-      const { data } = await supabase.storage
-        .from("application_documents")
-        .createSignedUrl(app.photo_path, 3600);
-      if (data?.signedUrl) setPhotoSignedUrl(data.signedUrl);
-    }
-  };
+    const partnersWithActivity = new Set<string>([
+      ...(streamFilter !== "AADHAAR"
+        ? filteredSales.map((s) => s.partner_id)
+        : []),
+      ...(streamFilter !== "TELECOM"
+        ? filteredAadhaar.map((a) => a.partner_id)
+        : []),
+    ]);
 
-  // --- LOGIN-SAFE INLINE PROFILE SAVE (DOES NOT TOUCH AUTH EMAIL/PASSWORD) ---
-  const handleSaveInlineProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedProfile) return;
-
-    const cleanName = profileEditForm.partner_name.trim().toUpperCase();
-    const cleanMobile = profileEditForm.mobile.trim().replace(/\D/g, "");
-    const cleanAltMobile = profileEditForm.alt_mobile
-      .trim()
-      .replace(/\D/g, "");
-    const cleanPan = profileEditForm.pan_number.trim().toUpperCase();
-
-    if (!cleanName) return alert("Partner Full Name cannot be empty.");
-    if (cleanMobile.length !== 10)
-      return alert("Primary Mobile Number must be 10 digits.");
-    if (cleanAltMobile && cleanAltMobile.length !== 10)
-      return alert("Alternative Mobile Number must be 10 digits.");
-    if (cleanPan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) {
-      return alert("Invalid PAN Card format (e.g., ABCDE1234F).");
-    }
-
-    setIsSavingProfile(true);
-    try {
-      // 1. Update active_partners (Email & auth_id are untouched so login is 100% unaffected)
-      const { error: partErr } = await supabase
-        .from("active_partners")
-        .update({
-          partner_name: cleanName,
-          mobile: cleanMobile,
-          role: profileEditForm.role,
+    const partnersWithDeposits = new Set<string>(
+      filteredDeposits
+        .filter((d) => {
+          const isAdh = isAadhaarDeposit(d);
+          if (streamFilter === "AADHAAR") return isAdh;
+          if (streamFilter === "TELECOM") return !isAdh;
+          return true;
         })
-        .eq("id", selectedProfile.id);
+        .map((d) => d.partner_id)
+    );
 
-      if (partErr) throw partErr;
-
-      // 2. Synchronize demographic fields in pending_applications if linked record exists
-      if (selectedProfile.linkedApp?.id) {
-        const { error: appErr } = await supabase
-          .from("pending_applications")
-          .update({
-            name: cleanName,
-            mobile: cleanMobile,
-            alt_mobile: cleanAltMobile || null,
-            pan_number: cleanPan || null,
-            father_name: profileEditForm.father_name.trim().toUpperCase(),
-            qualification: profileEditForm.qualification,
-            gender: profileEditForm.gender,
-            dob: profileEditForm.dob || null,
-            address_1: profileEditForm.address_1.trim().toUpperCase(),
-            address_2: profileEditForm.address_2.trim().toUpperCase(),
-            pin_code: profileEditForm.pin_code.trim(),
-            taluk: profileEditForm.taluk.trim(),
-            dist: profileEditForm.dist.trim(),
-            state: profileEditForm.state.trim(),
-            requested_role: profileEditForm.role,
-          })
-          .eq("id", selectedProfile.linkedApp.id);
-
-        if (appErr) throw appErr;
-      }
-
-      if (staffUser) {
-        await supabase.from("staff_activity_logs").insert([
-          {
-            staff_id: staffUser.id,
-            staff_email: staffUser.email,
-            action_type: "PROFILE_UPDATE",
-            module: "ONBOARDING",
-            target_id: selectedProfile.id,
-            details: `Updated 360° profile details for ${cleanName} (Mobile: ${cleanMobile}, Role: ${profileEditForm.role}). Login credentials preserved.`,
-          },
-        ]);
-      }
-
-      alert(
-        "✅ Partner profile updated across directory & KYC records! Their login credentials and active session remain untouched."
-      );
-      setIsEditingProfile(false);
-      await fetchPartnersDatabase();
-    } catch (err: any) {
-      alert("Error updating partner profile: " + err.message);
-    } finally {
-      setIsSavingProfile(false);
-    }
+    setMissingSales(
+      relevantDirectory.filter((p) => !partnersWithActivity.has(p.id))
+    );
+    setMissingDeposits(
+      relevantDirectory.filter((p) => !partnersWithDeposits.has(p.id))
+    );
   };
 
-  // --- UNIFIED DOCUMENT VAULT RESOLVER (PREVIEW OR NEW TAB) ---
-  const resolveApplicationKycPath = async (p: any): Promise<string | null> => {
-    const explicitPath = p.linkedApp?.role_metadata?.kyc_pdf_path;
-    if (explicitPath) return explicitPath;
+  const uniqueStates = Array.from(
+    new Set(allLocations.map((l) => l.state).filter(Boolean))
+  ).sort();
 
-    const candidateName = p.linkedApp?.name || p.partner_name || "";
-    const safeName = String(candidateName).replace(/[^a-zA-Z0-9]/g, "_");
-    if (!safeName) return null;
+  const hqLocations = allLocations
+    .filter(
+      (l) => l.is_master_node && (fState === "ALL" || l.state === fState)
+    )
+    .sort((a, b) => a.center_name.localeCompare(b.center_name));
 
-    const expectedPrefix = `${safeName}_`;
-    const { data: files } = await supabase.storage
-      .from("application_documents")
-      .list("", { search: safeName });
+  const centerLocations = allLocations
+    .filter(
+      (l) =>
+        !l.is_master_node &&
+        (fState === "ALL" || l.state === fState) &&
+        (fHq === "ALL" || l.parent_master_id?.toString() === fHq)
+    )
+    .sort((a, b) => a.center_name.localeCompare(b.center_name));
 
-    const matchingPdfs = (files || [])
-      .filter(
-        (f) =>
-          f.name.startsWith(expectedPrefix) &&
-          f.name.toLowerCase().endsWith(".pdf")
+  const filteredPartners = allPartners
+    .filter((p) => {
+      const locData = p.locations;
+      const l: any = Array.isArray(locData) ? locData[0] : locData;
+      if (!l) return false;
+      if (fState !== "ALL" && l.state !== fState) return false;
+      if (
+        fHq !== "ALL" &&
+        l.parent_master_id?.toString() !== fHq &&
+        l.id?.toString() !== fHq
       )
-      .sort((a, b) => b.name.localeCompare(a.name));
+        return false;
+      if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
+      return true;
+    })
+    .sort((a, b) => a.partner_name.localeCompare(b.partner_name));
 
-    return matchingPdfs.length > 0 ? matchingPdfs[0].name : null;
+  const handleSignOut = async () => {
+    setLoading(true);
+    localStorage.removeItem("fapl_session_token");
+    localStorage.removeItem("fapl_last_active_ts");
+    await supabase.auth.signOut();
+    router.push("/login");
   };
 
-  const handleLoadVaultDocument = async (
-    docType: "ONBOARDING_KYC" | "COMPLIANCE_DOSSIER" | "AADHAAR_UPGRADE",
-    mode: "preview" | "open"
-  ) => {
-    if (!selectedProfile) return;
-    setIsLoadingVaultPreview(true);
-    try {
-      let path: string | null = null;
-      let label = "";
-
-      if (docType === "ONBOARDING_KYC") {
-        path = await resolveApplicationKycPath(selectedProfile);
-        label = "1. Onboarding Application & KYC PDF";
-      } else if (docType === "COMPLIANCE_DOSSIER") {
-        path = selectedProfile.compliance_docs_url || null;
-        label = "2. Operational Compliance Dossier PDF";
-      } else if (docType === "AADHAAR_UPGRADE") {
-        path = selectedProfile.latestUpgrade?.compliance_pdf_url || null;
-        label = "3. Aadhaar Operator Upgrade Dossier PDF";
-      }
-
-      if (!path) {
-        alert(`No document found on file for: ${label}`);
-        return;
-      }
-
-      if (path.startsWith("http")) {
-        if (mode === "open") window.open(path, "_blank");
-        else {
-          setPreviewPdfUrl(path);
-          setPreviewPdfTitle(label);
-        }
-        return;
-      }
-
-      const { data, error } = await supabase.storage
-        .from("application_documents")
-        .createSignedUrl(path, 3600);
-
-      if (error || !data?.signedUrl) {
-        throw error || new Error("Could not generate signed URL.");
-      }
-
-      if (mode === "open") {
-        window.open(data.signedUrl, "_blank");
-      } else {
-        setPreviewPdfUrl(data.signedUrl);
-        setPreviewPdfTitle(label);
-      }
-    } catch (err: any) {
-      alert("Vault Error: " + err.message);
-    } finally {
-      setIsLoadingVaultPreview(false);
-    }
+  const routeTo = (path: string) => {
+    setIsRouting(true);
+    router.push(path);
+    setTimeout(() => setIsRouting(false), 8000);
   };
 
-  // --- DIRECT "SEND ALERT TO PARTNER" QUICK-ACTION (TAB 5) ---
-  const handleSendDirectAlert = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedProfile) return;
-    if (!alertSubjectCategory)
-      return alert("Please select a Notice Subject Heading.");
-    if (
-      alertSubjectCategory === "Other (Custom Subject)" &&
-      alertCustomSubject.trim().length < 4
-    ) {
-      return alert("Please enter a valid custom subject line.");
-    }
-    if (alertBody.trim().length < 5) {
-      return alert("Please enter a clear message body (min 5 characters).");
-    }
+  const rawRole = adminUser?.role || "";
+  const safeRole = rawRole.trim().toLowerCase();
 
-    const finalSubject =
-      alertSubjectCategory === "Other (Custom Subject)"
-        ? alertCustomSubject.trim().toUpperCase()
-        : alertSubjectCategory;
+  const isGodMode = safeRole === "admin";
+  const isAccountant = safeRole === "accountant";
+  const isStaff = safeRole === "staff";
+  const isFinanceTeam = ["admin", "accountant"].includes(safeRole);
+  const isOpsTeam = ["admin", "manager", "staff"].includes(safeRole);
+  const isManagerOrAdmin = ["admin", "manager"].includes(safeRole);
 
-    setIsSendingAlert(true);
-    try {
-      const { error: msgErr } = await supabase.from("partner_messages").insert([
-        {
-          partner_id: selectedProfile.id,
-          subject: `🚨 ALERT: ${finalSubject}`,
-          body: alertBody.trim(),
-        },
-      ]);
+  if (loading)
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-4">
+        <div className="w-12 h-12 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin"></div>
+        <p className="text-xs font-black uppercase tracking-widest text-slate-400 animate-pulse">
+          Initializing Corporate Command Center...
+        </p>
+      </div>
+    );
 
-      if (msgErr) throw msgErr;
+  if (activeView === "support") {
+    return (
+      <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
+        <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
+          <button
+            onClick={() => setActiveView("dashboard")}
+            className="text-blue-600 font-black text-xs uppercase tracking-widest hover:underline flex items-center gap-2 mb-4 bg-white px-4 py-2.5 rounded-xl shadow-sm border border-slate-200 w-fit transition"
+          >
+            <span>&larr;</span> Back to Corporate Command Center
+          </button>
+          <SupportDeskModule
+            allLocations={allLocations}
+            currentUserRole={safeRole}
+          />
+        </div>
+      </div>
+    );
+  }
 
-      if (staffUser) {
-        await supabase.from("staff_activity_logs").insert([
-          {
-            staff_id: staffUser.id,
-            staff_email: staffUser.email,
-            action_type: "DISPATCH_ALERT",
-            module: "MESSAGES",
-            target_id: selectedProfile.id,
-            details: `Dispatched direct profile alert [${finalSubject}] to ${selectedProfile.partner_name}.`,
-          },
-        ]);
-      }
+  // Settlement Progress Math (Dynamic by Active Vertical)
+  const activeDisplayedGenerated =
+    streamFilter === "TELECOM"
+      ? financials.telecomSalesCash
+      : streamFilter === "AADHAAR"
+      ? financials.aadhaarSalesCash
+      : financials.totalSalesCash;
 
-      alert(
-        `✅ Priority alert dispatched directly to ${selectedProfile.partner_name}'s inbox!`
-      );
-      setAlertSubjectCategory("");
-      setAlertCustomSubject("");
-      setAlertBody("");
-      await fetchPartnersDatabase();
-    } catch (err: any) {
-      alert("Error sending alert: " + err.message);
-    } finally {
-      setIsSendingAlert(false);
-    }
+  const activeDisplayedDeposited =
+    streamFilter === "TELECOM"
+      ? financials.telecomDeposits
+      : streamFilter === "AADHAAR"
+      ? financials.aadhaarDeposits
+      : financials.totalDeposits;
+
+  const activeDisplayedShortfall = Math.max(
+    0,
+    activeDisplayedGenerated - activeDisplayedDeposited
+  );
+
+  const overallSettlementPct =
+    activeDisplayedGenerated > 0
+      ? Math.min(
+          100,
+          (activeDisplayedDeposited / activeDisplayedGenerated) * 100
+        )
+      : activeDisplayedDeposited > 0
+      ? 100
+      : 0;
+
+  const telecomSettlementPct =
+    financials.telecomSalesCash > 0
+      ? Math.min(
+          100,
+          (financials.telecomDeposits / financials.telecomSalesCash) * 100
+        )
+      : financials.telecomDeposits > 0
+      ? 100
+      : 0;
+
+  const aadhaarSettlementPct =
+    financials.aadhaarSalesCash > 0
+      ? Math.min(
+          100,
+          (financials.aadhaarDeposits / financials.aadhaarSalesCash) * 100
+        )
+      : financials.aadhaarDeposits > 0
+      ? 100
+      : 0;
+
+  const getProgressColor = (pct: number) => {
+    if (pct >= 90) return "bg-emerald-500";
+    if (pct >= 70) return "bg-amber-500";
+    return "bg-red-500";
   };
 
-  // --- 1-CLICK MASTER DATABASE CSV EXPORT ---
-  const handleExportMasterDatabaseCSV = () => {
-    if (filteredPartners.length === 0)
-      return alert("No partners match the current filter to export.");
+  // Department Navigation Groups (Option 1A Naming Applied)
+  const departmentGroups: {
+    id: AdminDeptGroup;
+    icon: string;
+    shortLabel: string;
+    label: string;
+    sub: string;
+    visible: boolean;
+    badge?: string;
+    badgeColor?: string;
+  }[] = [
+    {
+      id: "pulse",
+      icon: "📊",
+      shortLabel: "Overview",
+      label: "1. Corporate Overview",
+      sub: "Revenue, SIM Qty & Vertical Split",
+      visible: isFinanceTeam || isManagerOrAdmin,
+      badge: `${overallSettlementPct.toFixed(0)}%`,
+      badgeColor:
+        overallSettlementPct >= 90
+          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+          : "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+    },
+    {
+      id: "treasury",
+      icon: "🏦",
+      shortLabel: "Treasury",
+      label: "2. Treasury & Audit",
+      sub: "Deposits, Corrections & Banking",
+      visible: isFinanceTeam || isManagerOrAdmin,
+      badge: "4 Hubs",
+      badgeColor: "bg-slate-800 text-amber-400",
+    },
+    {
+      id: "operations",
+      icon: "📡",
+      shortLabel: "Verticals",
+      label: "3. Vertical Operations",
+      sub: "Aadhaar, MIS, OCSC & Logistics",
+      visible: true,
+      badge: `${financials.totalSims} SIMs`,
+      badgeColor:
+        "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40",
+    },
+    {
+      id: "network",
+      icon: "🌐",
+      shortLabel: "Network",
+      label: "4. Network & Onboarding",
+      sub: "Franchise Queue, Partners & Infra",
+      visible: isOpsTeam,
+      badge:
+        stats.pending > 0
+          ? `${stats.pending} Pending`
+          : `${stats.locations} Locs`,
+      badgeColor:
+        stats.pending > 0
+          ? "bg-amber-500 text-slate-950 animate-pulse"
+          : "bg-slate-800 text-slate-300",
+    },
+    {
+      id: "governance",
+      icon: "🛡️",
+      shortLabel: "SLA & HR",
+      label: "5. Governance, SLA & HR",
+      sub: "Helpdesk, Defaulters & Team",
+      visible: !isAccountant,
+      badge:
+        missingSales.length > 0 ? `${missingSales.length} Flags` : "Active",
+      badgeColor:
+        missingSales.length > 0
+          ? "bg-red-500/20 text-red-300 border border-red-500/40"
+          : "bg-slate-800 text-emerald-400",
+    },
+  ];
 
-    const headers = [
-      "Joined Date (DD/MM/YYYY)",
-      "Account Status",
-      "Partner Name",
-      "Login Email",
-      "Primary Mobile",
-      "Alt Mobile",
-      "PAN Number",
-      "DOB",
-      "Gender",
-      "Qualification",
-      "Guardian",
-      "Operational Role",
-      "Aadhaar Role Enabled",
-      "UIDAI Operator ID",
-      "UIDAI Station ID",
-      "Center Code",
-      "Center Name",
-      "Master HQ",
-      "Taluk",
-      "District",
-      "State",
-      "PIN Code",
-      "Mapped Agent CTOPs",
-      "Terms Accepted",
-      "Compliance PDF Uploaded",
-      "BSNL+Paybull Due (INR)",
-      "Aadhaar Due + Fines (INR)",
-      "Total Net Payable (INR)",
-    ];
-
-    const rows = filteredPartners.map((p) => {
-      const app = p.linkedApp;
-      const loc = p.locations;
-      const ctopList = (p.pCtops || [])
-        .map((c: any) => c.agent_ctop_no)
-        .join(" | ");
-
-      return [
-        sanitizeCSV(
-          formatToDDMMYYYY(String(p.joined_at || "").split("T")[0])
-        ),
-        sanitizeCSV(p.status),
-        sanitizeCSV(p.partner_name),
-        sanitizeCSV(p.email),
-        sanitizeCSV(p.mobile),
-        sanitizeCSV(app?.alt_mobile || "N/A"),
-        sanitizeCSV(app?.pan_number || "N/A"),
-        sanitizeCSV(app?.dob ? formatToDDMMYYYY(app.dob) : "N/A"),
-        sanitizeCSV(app?.gender || "N/A"),
-        sanitizeCSV(app?.qualification || "N/A"),
-        sanitizeCSV(app?.father_name || "N/A"),
-        sanitizeCSV(p.role),
-        sanitizeCSV(p.role_aadhaar ? "YES" : "NO"),
-        sanitizeCSV(p.aadhaar_operator_id || "N/A"),
-        sanitizeCSV(p.aadhaar_station_id || "N/A"),
-        sanitizeCSV(loc?.center_code || "NO-CODE"),
-        sanitizeCSV(loc?.center_name || "Unassigned"),
-        sanitizeCSV(p.parentHqName),
-        sanitizeCSV(loc?.taluk || app?.taluk || "N/A"),
-        sanitizeCSV(loc?.dist || app?.dist || "N/A"),
-        sanitizeCSV(loc?.state || app?.state || "N/A"),
-        sanitizeCSV(loc?.pin_code || app?.pin_code || "N/A"),
-        sanitizeCSV(ctopList || "None"),
-        sanitizeCSV(p.tc_accepted ? "YES" : "NO"),
-        sanitizeCSV(p.compliance_docs_url ? "YES" : "PENDING"),
-        p.telecomDue.toFixed(2),
-        p.aadhaarDue.toFixed(2),
-        p.totalNetPayable.toFixed(2),
-      ].join(",");
-    });
-
-    const csvContent = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `FastArk_Master_Partner_Database_${
-      new Date().toISOString().split("T")[0]
-    }.csv`;
-    link.click();
-  };
-
-  // Summary KPIs
-  const totalActiveCount = enrichedPartners.filter(
-    (p) => p.status === "Active"
-  ).length;
-  const totalSuspendedCount = enrichedPartners.filter(
-    (p) => p.status === "Suspended"
-  ).length;
-  const totalAadhaarOpsCount = enrichedPartners.filter(
-    (p) => p.role_aadhaar || p.aadhaar_station_id
-  ).length;
-  const totalComplianceSecuredCount = enrichedPartners.filter(
-    (p) => p.compliance_docs_url
-  ).length;
+  const visibleDeptGroups = departmentGroups.filter((g) => g.visible);
 
   return (
-    <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
-      <div className="max-w-[1500px] mx-auto space-y-6">
-        {/* HEADER & MASTER CSV EXPORT */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <Link
-              href="/dashboard"
-              className="text-blue-600 font-black text-xs uppercase tracking-widest mb-1.5 hover:underline inline-flex items-center gap-1"
-            >
-              &larr; Back to Command Center
-            </Link>
-            <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-              <span>🤝</span> Master Partner Database &amp; 360° Profile Hub
-            </h1>
-            <p className="text-slate-500 mt-1 text-sm font-medium">
-              Inspect complete KYC dossiers, passport photos, CTOP &amp; bank
-              mappings, live pending balances, and dispatch direct partner
-              alerts.
-            </p>
+    <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row font-sans relative">
+      {isRouting && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
+          <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">
+            Establishing secure connection to module...
+          </p>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* LEFT DEPARTMENT SIDEBAR                                               */}
+      {/* ===================================================================== */}
+      <aside className="w-full lg:w-80 bg-slate-950 text-white flex flex-col justify-between border-r border-slate-800 shrink-0 lg:min-h-screen select-none">
+        <div>
+          <div className="p-5 bg-slate-900 border-b border-slate-800">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="bg-white px-2.5 py-1.5 rounded-lg flex items-center justify-center shadow shrink-0">
+                  <Image
+                    src="/logo.png"
+                    alt="Fast Ark Logo"
+                    width={105}
+                    height={32}
+                    priority
+                    className="object-contain h-7 w-auto"
+                  />
+                </div>
+                <div>
+                  <h1 className="font-black text-sm tracking-wide text-white leading-none">
+                    COMMAND HUB
+                  </h1>
+                  <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mt-1">
+                    {isAccountant
+                      ? "Corporate Treasury"
+                      : isStaff
+                      ? "Operations Desk"
+                      : "Enterprise Back-Office"}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-1 rounded">
+                {rawRole || "Staff"}
+              </span>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5">
+                <span>📅</span>
+                <span className="font-black text-emerald-400 tracking-wider">
+                  {liveDateDDMMYYYY}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2.5">
+                <span>🕒</span>
+                <span className="font-mono font-bold text-slate-200 text-[11px]">
+                  {liveTimeIST}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2.5 w-full md:w-auto">
+          {/* DEPARTMENTAL GROUP NAVIGATION */}
+          <div className="px-4 pt-3 pb-1">
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+              Departmental Workspaces
+            </p>
+          </div>
+          <nav className="p-3 space-y-1.5">
+            {visibleDeptGroups.map((group) => {
+              const isActive = activeGroup === group.id;
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => setActiveGroup(group.id)}
+                  className={`w-full text-left p-3 rounded-xl transition-all flex items-center justify-between border ${
+                    isActive
+                      ? "bg-blue-600 text-white border-blue-500 shadow-lg"
+                      : "bg-slate-900/60 text-slate-300 border-slate-800/80 hover:bg-slate-900 hover:text-white"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xl shrink-0">{group.icon}</span>
+                    <div className="truncate">
+                      <p className="font-black text-xs uppercase tracking-wider truncate">
+                        {group.label}
+                      </p>
+                      <p
+                        className={`text-[10px] font-bold truncate mt-0.5 ${
+                          isActive ? "text-blue-200" : "text-slate-500"
+                        }`}
+                      >
+                        {group.sub}
+                      </p>
+                    </div>
+                  </div>
+                  {group.badge && (
+                    <span
+                      className={`text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0 ml-2 ${
+                        isActive
+                          ? "bg-slate-950/40 text-white"
+                          : group.badgeColor
+                      }`}
+                    >
+                      {group.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* PINNED BOTTOM EXECUTIVE SNAPSHOT & SESSION CONTROLS */}
+        <div className="p-4 border-t border-slate-800 bg-slate-900/60 space-y-3">
+          <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5 text-[11px]">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 font-bold">Logged Officer:</span>
+              <span className="text-white font-black truncate max-w-[130px]">
+                {adminUser?.name || "Officer"}
+              </span>
+            </div>
+            {(isFinanceTeam || isManagerOrAdmin) && (
+              <>
+                <div className="flex justify-between items-center">
+                  <span className="text-blue-400 font-bold">
+                    BSNL + PB Due:
+                  </span>
+                  <span className="text-white font-black">
+                    ₹{financials.telecomPending.toLocaleString("en-IN")}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-amber-400 font-bold">
+                    Aadhaar Due:
+                  </span>
+                  <span className="text-amber-400 font-black">
+                    ₹{financials.aadhaarPending.toLocaleString("en-IN")}
+                  </span>
+                </div>
+              </>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 font-bold">Active Centers:</span>
+              <span className="text-emerald-400 font-black">
+                {stats.locations}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={fetchPartnersDatabase}
-              className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition"
+              type="button"
+              onClick={() => {
+                if (isOpsTeam) fetchOperationalData(allLocations);
+                if (isFinanceTeam || isManagerOrAdmin) fetchFinancialData();
+              }}
+              className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-black text-[10px] uppercase tracking-widest rounded-lg border border-slate-700 transition"
             >
               ↻ Refresh
             </button>
             <button
-              onClick={handleExportMasterDatabaseCSV}
-              className="bg-slate-900 hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-md transition flex items-center gap-2"
+              type="button"
+              onClick={handleSignOut}
+              className="py-2.5 bg-red-600/90 hover:bg-red-600 text-white font-black text-[10px] uppercase tracking-widest rounded-lg transition"
             >
-              📥 Export Master Database CSV ({filteredPartners.length})
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ===================================================================== */}
+      {/* RIGHT MAIN WORKSPACE (RENDERS ONLY THE SELECTED DEPARTMENT GROUP)     */}
+      {/* ===================================================================== */}
+      <main className="flex-1 p-4 md:p-8 pb-24 lg:pb-8 overflow-y-auto space-y-6 max-w-[1500px]">
+        {/* TOP CONTEXT HEADER BAR (OPTION 1A NAMING) */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                {visibleDeptGroups.find((g) => g.id === activeGroup)?.label}
+              </span>
+              <span className="text-xs font-bold text-slate-400">
+                • {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}
+              </span>
+            </div>
+            <h2 className="text-2xl font-black text-slate-900 mt-1">
+              {activeGroup === "pulse"
+                ? "Corporate Revenue & Settlement Overview"
+                : activeGroup === "treasury"
+                ? "Treasury, Financial Verification & Corporate Banking"
+                : activeGroup === "operations"
+                ? "Vertical Operations — Aadhaar Kendra, Manager MIS, OCSC & Supply"
+                : activeGroup === "network"
+                ? "Network Lifecycle — Franchise Onboarding, Partners & Infrastructure"
+                : "Governance, SLA Support Desk, Defaulter Engine & HR"}
+            </h2>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {!isAccountant && (
+              <button
+                type="button"
+                onClick={() => setActiveView("support")}
+                className="bg-slate-900 hover:bg-red-600 text-white font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-widest shadow-sm transition flex items-center gap-2"
+              >
+                <span>🎧</span> Open SLA Helpdesk
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => routeTo("/dashboard/aadhaar")}
+              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-widest shadow-sm transition flex items-center gap-2"
+            >
+              <span>🆔</span> Aadhaar Command
             </button>
           </div>
         </div>
 
-        {/* TOP KPI SUMMARY STRIP */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-slate-900">
-            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              Total Network
-            </p>
-            <p className="text-2xl font-black text-slate-900 mt-1">
-              {enrichedPartners.length}
-            </p>
-            <p className="text-[10px] font-bold text-slate-500 mt-0.5">
-              Filtered: {filteredPartners.length}
-            </p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-emerald-500">
-            <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest">
-              Active Partners
-            </p>
-            <p className="text-2xl font-black text-emerald-700 mt-1">
-              {totalActiveCount}
-            </p>
-            <p className="text-[10px] font-bold text-red-500 mt-0.5">
-              Suspended: {totalSuspendedCount}
-            </p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-amber-500">
-            <p className="text-[10px] font-black uppercase text-amber-700 tracking-widest">
-              Aadhaar Operators
-            </p>
-            <p className="text-2xl font-black text-slate-900 mt-1">
-              {totalAadhaarOpsCount}
-            </p>
-            <p className="text-[10px] font-bold text-slate-500 mt-0.5">
-              Bound with Station IDs
-            </p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-blue-600">
-            <p className="text-[10px] font-black uppercase text-blue-700 tracking-widest">
-              Compliance Secured
-            </p>
-            <p className="text-2xl font-black text-slate-900 mt-1">
-              {totalComplianceSecuredCount}
-            </p>
-            <p className="text-[10px] font-bold text-slate-500 mt-0.5">
-              Pending Upload:{" "}
-              {Math.max(0, enrichedPartners.length - totalComplianceSecuredCount)}
-            </p>
-          </div>
-
-          <div className="bg-slate-900 text-white p-4 rounded-xl shadow-md border-l-4 border-l-red-500 col-span-2 md:col-span-1">
-            <p className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
-              Filtered Pending Due
-            </p>
-            <p className="text-2xl font-black text-white mt-1">
-              ₹
-              {filteredPartners
-                .reduce((sum, p) => sum + p.totalNetPayable, 0)
-                .toLocaleString("en-IN")}
-            </p>
-            <p className="text-[10px] font-bold text-slate-400 mt-0.5">
-              Telecom + Aadhaar Dues
-            </p>
-          </div>
-        </div>
-
-        {/* 4-TIER CASCADING FILTER + STATUS + SEARCH CONSOLE */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">
-                1. State
-              </label>
-              <select
-                value={fState}
-                onChange={(e) => {
-                  setFState(e.target.value);
-                  setFHq("ALL");
-                  setFCenter("ALL");
-                }}
-                className="w-full border-2 border-slate-200 bg-slate-50 p-2.5 rounded-lg text-xs font-bold outline-none focus:border-blue-600"
-              >
-                <option value="ALL">All States</option>
-                {uniqueStates.map((st) => (
-                  <option key={st} value={st}>
-                    {st}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">
-                2. Master HQ
-              </label>
-              <select
-                value={fHq}
-                onChange={(e) => {
-                  setFHq(e.target.value);
-                  setFCenter("ALL");
-                }}
-                className="w-full border-2 border-slate-200 bg-slate-50 p-2.5 rounded-lg text-xs font-bold outline-none focus:border-blue-600"
-              >
-                <option value="ALL">All Master HQs</option>
-                {hqOptions.map((hq) => (
-                  <option key={hq.id} value={hq.id}>
-                    {hq.center_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">
-                3. Location (Center)
-              </label>
-              <select
-                value={fCenter}
-                onChange={(e) => setFCenter(e.target.value)}
-                className="w-full border-2 border-slate-200 bg-slate-50 p-2.5 rounded-lg text-xs font-bold outline-none focus:border-blue-600"
-              >
-                <option value="ALL">All Centers</option>
-                {centerOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    [{c.center_code || "NO-CODE"}] {c.center_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">
-                4. Operational Role
-              </label>
-              <select
-                value={fRole}
-                onChange={(e) => setFRole(e.target.value)}
-                className="w-full border-2 border-slate-200 bg-slate-50 p-2.5 rounded-lg text-xs font-bold outline-none focus:border-blue-600"
-              >
-                <option value="ALL">All Roles</option>
-                <option value="AADHAAR">🆔 Aadhaar Kendra Operators</option>
-                <option value="OCSC">📡 OCSC Associates</option>
-                <option value="CM">📱 Consumer Mobility (CM)</option>
-                <option value="PARTNER">🏢 Franchise Partners</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">
-                5. Account Status
-              </label>
-              <select
-                value={fStatus}
-                onChange={(e) => setFStatus(e.target.value)}
-                className="w-full border-2 border-slate-200 bg-slate-50 p-2.5 rounded-lg text-xs font-bold outline-none focus:border-blue-600"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="Active">🟢 Active Only</option>
-                <option value="Suspended">🔴 Suspended Only</option>
-                <option value="Pending">⏳ Pending Review</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <input
-              type="text"
-              placeholder="Search by Partner Name, Mobile, Email, PAN Number, Center Code, UIDAI Operator ID, or Station ID..."
-              className="w-full border-2 border-slate-200 p-2.5 rounded-lg outline-none focus:border-blue-500 text-sm font-bold bg-slate-50 focus:bg-white"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* MASTER DIRECTORY TABLE */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse whitespace-nowrap">
-              <thead>
-                <tr className="bg-slate-900 text-white text-[10px] uppercase tracking-wider">
-                  <th className="p-4 font-black">Partner Identity</th>
-                  <th className="p-4 font-black">Contact &amp; PAN</th>
-                  <th className="p-4 font-black">Role &amp; Aadhaar / CTOP</th>
-                  <th className="p-4 font-black">Mapped Center &amp; HQ</th>
-                  <th className="p-4 font-black text-right">Net Pending Due</th>
-                  <th className="p-4 font-black text-center">
-                    Compliance Vault
-                  </th>
-                  <th className="p-4 font-black text-right">
-                    360° Profile &amp; Controls
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="p-16">
-                      <div className="flex justify-center items-center">
-                        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                      </div>
-                    </td>
-                  </tr>
-                ) : filteredPartners.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="p-12 text-center text-slate-400 font-bold text-base bg-slate-50"
-                    >
-                      No partner records match the current filters.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredPartners.map((partner) => (
-                    <tr
-                      key={partner.id}
-                      className={`hover:bg-slate-50 transition-colors ${
-                        partner.status === "Suspended" ? "bg-red-50/40" : ""
-                      }`}
-                    >
-                      <td className="p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0">
-                            {String(partner.partner_name || "P")
-                              .slice(0, 2)
-                              .toUpperCase()}
-                          </div>
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => open360ProfileModal(partner, "kyc")}
-                              className="font-black text-sm text-slate-900 hover:text-blue-600 hover:underline text-left block"
-                            >
-                              {partner.partner_name}
-                            </button>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] text-slate-400 font-bold">
-                                Joined:{" "}
-                                {formatToDDMMYYYY(
-                                  String(partner.joined_at || "").split("T")[0]
-                                )}
-                              </span>
-                              {partner.tc_accepted ? (
-                                <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                  T&amp;C ✓
-                                </span>
-                              ) : (
-                                <span className="text-[9px] font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                                  T&amp;C Pending
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="p-4">
-                        <div className="font-black text-slate-800">
-                          📞 {partner.mobile}
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-medium">
-                          {partner.email}
-                        </div>
-                        {partner.linkedApp?.pan_number && (
-                          <span className="inline-block mt-0.5 text-[9px] font-mono font-black bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
-                            PAN: {partner.linkedApp.pan_number}
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="p-4">
-                        <span className="text-blue-700 font-black uppercase block">
-                          {partner.role}
-                        </span>
-                        {(partner.role_aadhaar ||
-                          partner.aadhaar_operator_id ||
-                          partner.aadhaar_station_id) && (
-                          <div className="mt-1 inline-flex items-center gap-1 bg-amber-100 text-amber-950 border border-amber-300 px-2 py-0.5 rounded text-[10px] font-black">
-                            <span>
-                              🆔 {partner.aadhaar_operator_id || "NO-OP"}
-                            </span>
-                            <span>|</span>
-                            <span>
-                              Stn: {partner.aadhaar_station_id || "N/A"}
-                            </span>
-                          </div>
-                        )}
-                        {partner.pCtops?.length > 0 && (
-                          <div className="text-[10px] font-bold text-indigo-700 mt-1">
-                            📡 {partner.pCtops.length} CTOP(s) Mapped
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="p-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-black bg-slate-200 text-slate-800 px-2 py-0.5 rounded uppercase">
-                            {partner.locations?.center_code || "NO-CODE"}
-                          </span>
-                          <span className="font-bold text-slate-800">
-                            {partner.locations?.center_name || "Unassigned"}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                          HQ: {partner.parentHqName} •{" "}
-                          {partner.locations?.dist} ({partner.locations?.state})
-                        </div>
-                      </td>
-
-                      <td className="p-4 text-right">
-                        <p
-                          className={`font-black text-sm ${
-                            partner.totalNetPayable > 1000
-                              ? "text-red-600"
-                              : partner.totalNetPayable > 0
-                              ? "text-amber-600"
-                              : "text-emerald-600"
-                          }`}
-                        >
-                          ₹{partner.totalNetPayable.toLocaleString("en-IN")}
-                        </p>
-                        <p className="text-[9px] font-bold text-slate-400">
-                          Tel: ₹{partner.telecomDue.toLocaleString("en-IN")} |
-                          Adh: ₹{partner.aadhaarDue.toLocaleString("en-IN")}
-                        </p>
-                      </td>
-
-                      <td className="p-4 text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          {partner.compliance_docs_url ? (
-                            <button
-                              onClick={() =>
-                                handleViewCompliance(
-                                  partner.id,
-                                  partner.compliance_docs_url
-                                )
-                              }
-                              disabled={loadingDocId === partner.id}
-                              className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-black text-[10px] px-2.5 py-1 rounded-lg shadow-sm transition inline-flex items-center gap-1 disabled:opacity-50"
-                            >
-                              <span>📑</span>
-                              {loadingDocId === partner.id
-                                ? "Opening..."
-                                : "Compliance PDF"}
-                            </button>
-                          ) : (
-                            <span className="text-[9px] uppercase tracking-widest font-black text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-                              Compliance Pending
-                            </span>
-                          )}
-                          {partner.linkedApp && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                open360ProfileModal(partner, "vault")
-                              }
-                              className="text-[9px] font-black text-slate-500 hover:text-slate-900 underline"
-                            >
-                              + Application KYC
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="p-4 text-right">
-                        <div className="flex justify-end items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => open360ProfileModal(partner, "kyc")}
-                            className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-slate-900 hover:bg-blue-600 text-white shadow-sm transition"
-                          >
-                            👤 360° Profile
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              open360ProfileModal(partner, "alert")
-                            }
-                            title="Send Direct Alert to Partner"
-                            className="px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 transition"
-                          >
-                            💬 Alert
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => openMappingModal(partner)}
-                            className="px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 shadow-sm transition"
-                          >
-                            🆔 Map ID
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              togglePartnerStatus(partner.id, partner.status)
-                            }
-                            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors border shadow-sm ${
-                              partner.status === "Active"
-                                ? "bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200"
-                                : "bg-red-100 text-red-800 border-red-200 hover:bg-red-200"
-                            }`}
-                          >
-                            {partner.status === "Active"
-                              ? "🟢 Active"
-                              : "🔴 Suspended"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ===================================================================== */}
-      {/* MODAL 1: 360° PARTNER PROFILE INSPECTOR, INLINE EDITOR & ALERT HUB    */}
-      {/* ===================================================================== */}
-      {selectedProfile && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 w-full max-w-5xl my-6 overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[92vh]">
-            {/* MODAL HEADER */}
-            <div className="p-5 bg-slate-950 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-4 border-blue-600 shrink-0">
-              <div className="flex items-center gap-3.5">
-                {photoSignedUrl ? (
-                  <img
-                    src={photoSignedUrl}
-                    alt={selectedProfile.partner_name}
-                    className="w-14 h-16 object-cover rounded-xl border-2 border-white shadow-md shrink-0 bg-white"
-                  />
-                ) : (
-                  <div className="w-14 h-16 rounded-xl bg-blue-600 text-white font-black text-xl flex items-center justify-center border-2 border-blue-400 shrink-0">
-                    {String(selectedProfile.partner_name || "P")
-                      .slice(0, 2)
-                      .toUpperCase()}
-                  </div>
-                )}
+        {/* =================================================================== */}
+        {/* GROUP 1: CORPORATE OVERVIEW (OPTION X: 3-IN-1 VERTICAL MORPHING)    */}
+        {/* =================================================================== */}
+        {activeGroup === "pulse" && (isFinanceTeam || isManagerOrAdmin) && (
+          <div className="space-y-6 animate-in fade-in">
+            {/* OPTION 2A: REVENUE & REMITTANCE RECONCILIATION CONTROL PANEL */}
+            <div className="bg-slate-900 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
+              <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-black text-white">
-                      {selectedProfile.partner_name}
-                    </h2>
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                        selectedProfile.status === "Active"
-                          ? "bg-emerald-500 text-slate-950"
-                          : "bg-red-500 text-white"
-                      }`}
-                    >
-                      {selectedProfile.status}
+                  <h3 className="text-white font-black text-base uppercase tracking-wider flex items-center gap-2">
+                    <span>📈</span> Revenue &amp; Remittance Reconciliation
+                    Control Panel
+                  </h3>
+                  <p className="text-xs font-bold text-slate-400 mt-1">
+                    Filter by Territory, Center Code, Date Window &amp; Business
+                    Vertical • Window:{" "}
+                    <span className="text-blue-400">
+                      {formatToDDMMYYYY(fromDate)}
+                    </span>{" "}
+                    to{" "}
+                    <span className="text-blue-400">
+                      {formatToDDMMYYYY(toDate)}
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-500/20 text-blue-300 border border-blue-500/40">
-                      {selectedProfile.role}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300 font-bold mt-1">
-                    📍 [{selectedProfile.locations?.center_code || "NO-CODE"}]{" "}
-                    {selectedProfile.locations?.center_name || "Unassigned"} •
-                    HQ: {selectedProfile.parentHqName}
-                  </p>
-                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                    ✉️ {selectedProfile.email} (🔒 Login ID) • 📞{" "}
-                    {selectedProfile.mobile}
                   </p>
                 </div>
-              </div>
 
-              <button
-                onClick={() => setSelectedProfile(null)}
-                className="text-3xl font-black text-slate-400 hover:text-white self-end sm:self-center"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* 5-TAB NAVIGATION BAR */}
-            <div className="bg-slate-900 px-4 py-2 flex flex-wrap gap-1.5 border-b border-slate-800 shrink-0 text-[11px] font-black uppercase tracking-wider">
-              {[
-                { id: "kyc", icon: "🪪", label: "1. Personal & KYC" },
-                {
-                  id: "mappings",
-                  icon: "📡",
-                  label: `2. Center, CTOP (${selectedProfile.pCtops.length}) & Bank`,
-                },
-                { id: "vault", icon: "📂", label: "3. Document Vault" },
-                {
-                  id: "ledger",
-                  icon: "💰",
-                  label: `4. Live Ledger (₹${selectedProfile.totalNetPayable.toLocaleString(
-                    "en-IN"
-                  )})`,
-                },
-                {
-                  id: "alert",
-                  icon: "💬",
-                  label: `5. Send Alert (${selectedProfile.pMessages.length})`,
-                },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setDossierTab(t.id as DossierTab)}
-                  className={`px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 ${
-                    dossierTab === t.id
-                      ? "bg-blue-600 text-white shadow"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  <span>{t.icon}</span>
-                  <span>{t.label}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* MODAL BODY */}
-            <div className="p-6 overflow-y-auto flex-1 bg-slate-50 space-y-6 text-xs">
-              {/* ============================================================= */}
-              {/* TAB 1: PERSONAL & KYC IDENTITY + LOGIN-SAFE INLINE EDITOR     */}
-              {/* ============================================================= */}
-              {dossierTab === "kyc" && (
-                <div className="space-y-5">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-4 rounded-xl border border-slate-200">
-                    <div>
-                      <h3 className="font-black text-sm text-slate-900 uppercase tracking-wider">
-                        Applicant KYC &amp; Demographic Record
-                      </h3>
-                      <p className="text-[11px] font-bold text-slate-500 mt-0.5">
-                        Editing profile details below updates the directory and
-                        application record while keeping their login email &amp;
-                        session 100% intact.
-                      </p>
-                    </div>
+                {/* 3-VERTICAL MORPHING SELECTOR */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-[10px] font-black uppercase">
                     <button
                       type="button"
-                      onClick={() => setIsEditingProfile(!isEditingProfile)}
-                      className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-sm transition shrink-0 ${
-                        isEditingProfile
-                          ? "bg-slate-200 text-slate-800"
-                          : "bg-slate-900 hover:bg-blue-600 text-white"
+                      onClick={() => setStreamFilter("ALL")}
+                      className={`px-3.5 py-2 rounded-lg transition ${
+                        streamFilter === "ALL"
+                          ? "bg-blue-600 text-white shadow"
+                          : "text-slate-400 hover:text-white"
                       }`}
                     >
-                      {isEditingProfile
-                        ? "✕ Cancel Editing"
-                        : "✏️ Edit Profile Details"}
+                      🌐 All Verticals
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStreamFilter("TELECOM")}
+                      className={`px-3.5 py-2 rounded-lg transition ${
+                        streamFilter === "TELECOM"
+                          ? "bg-indigo-600 text-white shadow"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      📡 1. BSNL + Paybull
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStreamFilter("AADHAAR")}
+                      className={`px-3.5 py-2 rounded-lg transition ${
+                        streamFilter === "AADHAAR"
+                          ? "bg-amber-500 text-slate-950 shadow"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      🆔 2. Aadhaar Kendra
                     </button>
                   </div>
 
-                  {isEditingProfile ? (
-                    <form
-                      onSubmit={handleSaveInlineProfile}
-                      className="bg-white p-5 rounded-xl border-2 border-blue-300 shadow-sm space-y-4"
-                    >
-                      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
-                        <span className="font-bold text-blue-950">
-                          🔒 Login Email ID:{" "}
-                          <strong>{selectedProfile.email}</strong> (Locked so
-                          partner login is never disrupted)
-                        </span>
-                        <span className="text-[10px] font-black uppercase bg-blue-600 text-white px-2 py-0.5 rounded">
-                          Login Protected
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Full Name *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={45}
-                            value={profileEditForm.partner_name}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                partner_name: e.target.value.toUpperCase(),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black uppercase"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Primary Mobile (10 Digits) *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={10}
-                            value={profileEditForm.mobile}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                mobile: e.target.value.replace(/\D/g, ""),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Alt Mobile (Optional)
-                          </label>
-                          <input
-                            type="text"
-                            maxLength={10}
-                            value={profileEditForm.alt_mobile}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                alt_mobile: e.target.value.replace(/\D/g, ""),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            PAN Card Number
-                          </label>
-                          <input
-                            type="text"
-                            maxLength={10}
-                            value={profileEditForm.pan_number}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                pan_number: e.target.value
-                                  .replace(/[^A-Za-z0-9]/g, "")
-                                  .toUpperCase(),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-mono font-black uppercase"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Guardian / Father Name
-                          </label>
-                          <input
-                            type="text"
-                            value={profileEditForm.father_name}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                father_name: e.target.value.toUpperCase(),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold uppercase"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Operational Role
-                          </label>
-                          <select
-                            value={profileEditForm.role}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                role: e.target.value,
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black bg-white"
-                          >
-                            <option value="OCSC">OCSC</option>
-                            <option value="AADHAAR CENTER">
-                              AADHAAR CENTER
-                            </option>
-                            <option value="CM (CONSUMER MOBILITY)">
-                              CM (CONSUMER MOBILITY)
-                            </option>
-                            <option value="PARTNER">PARTNER</option>
-                            <option value="IRCTC AGENT">IRCTC AGENT</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Date of Birth
-                          </label>
-                          <input
-                            type="date"
-                            value={profileEditForm.dob}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                dob: e.target.value,
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Gender
-                          </label>
-                          <select
-                            value={profileEditForm.gender}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                gender: e.target.value,
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold bg-white"
-                          >
-                            <option value="">Select</option>
-                            <option value="Male">Male</option>
-                            <option value="Female">Female</option>
-                            <option value="Transgender">Transgender</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Qualification
-                          </label>
-                          <select
-                            value={profileEditForm.qualification}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                qualification: e.target.value,
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold bg-white"
-                          >
-                            <option value="">Select</option>
-                            <option value="10th">10th</option>
-                            <option value="12th">12th</option>
-                            <option value="Graduate">Graduate</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </div>
-
-                        <div className="sm:col-span-2">
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            Address Line 1
-                          </label>
-                          <input
-                            type="text"
-                            value={profileEditForm.address_1}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                address_1: e.target.value.toUpperCase(),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold uppercase"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                            PIN Code
-                          </label>
-                          <input
-                            type="text"
-                            maxLength={6}
-                            value={profileEditForm.pin_code}
-                            onChange={(e) =>
-                              setProfileEditForm({
-                                ...profileEditForm,
-                                pin_code: e.target.value.replace(/\D/g, ""),
-                              })
-                            }
-                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingProfile(false)}
-                          className="px-4 py-2.5 bg-slate-100 text-slate-700 font-black uppercase rounded-lg"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={isSavingProfile}
-                          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-black uppercase rounded-lg shadow"
-                        >
-                          {isSavingProfile
-                            ? "Saving Profile..."
-                            : "💾 Save Profile Changes (Login Safe)"}
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                      {/* PASSPORT PHOTO & SESSION SECURITY CARD */}
-                      <div className="lg:col-span-4 bg-white p-5 rounded-xl border border-slate-200 flex flex-col items-center text-center justify-between space-y-4">
-                        <div className="w-full flex flex-col items-center">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">
-                            Applicant Passport Photo
-                          </span>
-                          {photoSignedUrl ? (
-                            <a
-                              href={photoSignedUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <img
-                                src={photoSignedUrl}
-                                alt="Passport Photo"
-                                className="w-32 h-40 object-cover rounded-xl border-4 border-slate-100 shadow-md"
-                              />
-                            </a>
-                          ) : (
-                            <div className="w-32 h-40 rounded-xl bg-slate-100 border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 font-bold text-xs">
-                              No Photo on File
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="w-full bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-left space-y-1.5">
-                          <p className="text-[9px] font-black uppercase text-slate-400">
-                            Security &amp; Terms Telemetry
-                          </p>
-                          <p className="font-bold text-slate-800">
-                            Terms Wall:{" "}
-                            <strong
-                              className={
-                                selectedProfile.tc_accepted
-                                  ? "text-emerald-600"
-                                  : "text-amber-600"
-                              }
-                            >
-                              {selectedProfile.tc_accepted
-                                ? "✅ Accepted"
-                                : "⏳ Pending"}
-                            </strong>
-                          </p>
-                          <p className="font-bold text-slate-700">
-                            Application IP:{" "}
-                            <strong>
-                              {selectedProfile.linkedApp?.ip_address || "N/A"}
-                            </strong>
-                          </p>
-                          <p className="font-bold text-slate-700">
-                            Last Active IP:{" "}
-                            <strong>
-                              {selectedProfile.activeSession?.ip_address ||
-                                "Offline"}
-                            </strong>
-                          </p>
-                          {selectedProfile.activeSession?.last_active && (
-                            <p className="text-[10px] text-slate-500 font-bold">
-                              Seen:{" "}
-                              {new Date(
-                                selectedProfile.activeSession.last_active
-                              ).toLocaleString("en-IN")}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* DEMOGRAPHIC & ADDRESS GRID */}
-                      <div className="lg:col-span-8 bg-white p-5 rounded-xl border border-slate-200 space-y-5">
-                        <div>
-                          <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-600 border-b pb-1.5 mb-3">
-                            1. Personal &amp; KYC Credentials
-                          </h4>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Full Name
-                              </span>
-                              <span className="font-black text-slate-900">
-                                {selectedProfile.partner_name}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Guardian / Father
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.father_name ||
-                                  "N/A"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                DOB &amp; Gender
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.dob
-                                  ? formatToDDMMYYYY(
-                                      selectedProfile.linkedApp.dob
-                                    )
-                                  : "N/A"}{" "}
-                                ({selectedProfile.linkedApp?.gender || "N/A"})
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                PAN Number
-                              </span>
-                              <span className="font-mono font-black text-slate-900">
-                                {selectedProfile.linkedApp?.pan_number ||
-                                  "Not Provided"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Gov ID Status
-                              </span>
-                              <span className="font-bold text-slate-700">
-                                {selectedProfile.linkedApp?.gov_id_number
-                                  ? "[Redacted - Verified on File]"
-                                  : "N/A"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Qualification
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.qualification ||
-                                  "N/A"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Primary Mobile
-                              </span>
-                              <span className="font-black text-slate-900">
-                                {selectedProfile.mobile}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Alt Mobile
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.alt_mobile || "N/A"}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Registered Email
-                              </span>
-                              <span className="font-bold text-blue-700 break-all">
-                                {selectedProfile.email}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <h4 className="text-[10px] font-black uppercase tracking-widest text-emerald-600 border-b pb-1.5 mb-3">
-                            2. Residential Address (From Application)
-                          </h4>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Street Address
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.address_1 || "N/A"}
-                                {selectedProfile.linkedApp?.address_2
-                                  ? `, ${selectedProfile.linkedApp.address_2}`
-                                  : ""}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                                Taluk, District &amp; State
-                              </span>
-                              <span className="font-bold text-slate-800">
-                                {selectedProfile.linkedApp?.taluk ||
-                                  selectedProfile.locations?.taluk ||
-                                  "N/A"}
-                                ,{" "}
-                                {selectedProfile.linkedApp?.dist ||
-                                  selectedProfile.locations?.dist ||
-                                  "N/A"}
-                                ,{" "}
-                                {selectedProfile.linkedApp?.state ||
-                                  selectedProfile.locations?.state ||
-                                  "N/A"}{" "}
-                                -{" "}
-                                {selectedProfile.linkedApp?.pin_code ||
-                                  selectedProfile.locations?.pin_code ||
-                                  "N/A"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowGeoFilters(!showGeoFilters)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-black px-3 py-2 rounded-xl text-[10px] uppercase tracking-widest border border-slate-700"
+                  >
+                    {showGeoFilters ? "▲ Hide Filters" : "▼ Geo & Date Filters"}
+                  </button>
                 </div>
-              )}
+              </div>
 
-              {/* ============================================================= */}
-              {/* TAB 2: CENTER, CTOP & BANK TREASURY MAPPINGS                  */}
-              {/* ============================================================= */}
-              {dossierTab === "mappings" && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-amber-700 border-b pb-2">
-                      1. Assigned Center &amp; Aadhaar Station IDs
-                    </h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Center [Code]:
-                        </span>
-                        <span className="font-black text-slate-900">
-                          [{selectedProfile.locations?.center_code || "NO-CODE"}
-                          ] {selectedProfile.locations?.center_name}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Parent Master HQ:
-                        </span>
-                        <span className="font-black text-indigo-700">
-                          {selectedProfile.parentHqName}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          BA / OA Zone:
-                        </span>
-                        <span className="font-bold text-slate-800">
-                          BA: {selectedProfile.locations?.ba || "N/A"} | OA:{" "}
-                          {selectedProfile.locations?.oa || "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          UIDAI Operator ID:
-                        </span>
-                        <span className="font-black text-blue-700">
-                          {selectedProfile.aadhaar_operator_id || "UNMAPPED"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          UIDAI Station ID:
-                        </span>
-                        <span className="font-black text-amber-700">
-                          {selectedProfile.aadhaar_station_id || "UNMAPPED"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-blue-700 border-b pb-2">
-                      2. Mapped Agent CTOP Credentials (
-                      {selectedProfile.pCtops.length})
-                    </h4>
-                    {selectedProfile.pCtops.length === 0 ? (
-                      <p className="text-slate-400 font-bold py-4 text-center">
-                        No Agent CTOP numbers mapped to this partner.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {selectedProfile.pCtops.map((c: any) => (
-                          <div
-                            key={c.id}
-                            className="p-3 bg-blue-50/50 border border-blue-200 rounded-lg flex justify-between items-center"
-                          >
-                            <div>
-                              <p className="font-black text-slate-900">
-                                Agent CTOP: {c.agent_ctop_no}
-                              </p>
-                              <p className="text-[10px] font-bold text-slate-500">
-                                Login ID: {c.agent_ocsc_login_id} • Master:{" "}
-                                {c.master_ctop_accounts?.master_ctop_no ||
-                                  "N/A"}
-                              </p>
-                            </div>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                                c.is_active
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
-                              {c.is_active ? "Active" : "Off"}
-                            </span>
-                          </div>
+              {showGeoFilters && (
+                <div className="p-4 bg-slate-900 border-b border-slate-800 space-y-4">
+                  {/* ROW 1: 4-TIER GEOGRAPHIC & OPERATOR CASCADE */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        1. State
+                      </label>
+                      <select
+                        value={fState}
+                        onChange={(e) => {
+                          setFState(e.target.value);
+                          setFHq("ALL");
+                          setFCenter("ALL");
+                          setFPartner("ALL");
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2.5 outline-none focus:border-blue-500 transition"
+                      >
+                        <option value="ALL">All States</option>
+                        {uniqueStates.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
                         ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="md:col-span-2 bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-emerald-700 border-b pb-2">
-                      3. Center Treasury Channels (CMS Virtual Accounts &amp;
-                      UPI IDs)
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-[10px] font-black uppercase text-slate-400 mb-2">
-                          CMS Virtual Accounts (
-                          {selectedProfile.pVirtuals.length})
-                        </p>
-                        {selectedProfile.pVirtuals.length === 0 ? (
-                          <p className="text-slate-400 font-bold">
-                            No Virtual Accounts mapped to this center.
-                          </p>
-                        ) : (
-                          selectedProfile.pVirtuals.map((v: any) => (
-                            <div
-                              key={v.id}
-                              className="p-3 bg-amber-50/60 border border-amber-200 rounded-lg mb-2"
-                            >
-                              <p className="font-black text-slate-900">
-                                {v.virtual_account_no}
-                              </p>
-                              <p className="text-[10px] font-bold text-slate-600">
-                                IFSC: {v.virtual_ifsc} ({v.master_banks?.bank_name})
-                              </p>
-                            </div>
-                          ))
-                        )}
-                      </div>
-
-                      <div>
-                        <p className="text-[10px] font-black uppercase text-slate-400 mb-2">
-                          Official UPI IDs ({selectedProfile.pUpis.length})
-                        </p>
-                        {selectedProfile.pUpis.length === 0 ? (
-                          <p className="text-slate-400 font-bold">
-                            No UPI IDs mapped to this center.
-                          </p>
-                        ) : (
-                          selectedProfile.pUpis.map((u: any) => (
-                            <div
-                              key={u.id}
-                              className="p-3 bg-purple-50/60 border border-purple-200 rounded-lg mb-2"
-                            >
-                              <p className="font-black text-purple-900">
-                                {u.upi_id}
-                              </p>
-                              <p className="text-[10px] font-bold text-slate-600">
-                                Bank: {u.master_banks?.bank_name}
-                              </p>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ============================================================= */}
-              {/* TAB 3: UNIFIED DOCUMENT VAULT (EMBEDDED PDF PREVIEWER)        */}
-              {/* ============================================================= */}
-              {dossierTab === "vault" && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
-                      <div>
-                        <span className="text-[9px] font-black uppercase text-blue-600">
-                          Dossier 1
-                        </span>
-                        <h4 className="font-black text-slate-900 text-sm mt-0.5">
-                          Onboarding Application &amp; KYC PDF
-                        </h4>
-                        <p className="text-[11px] text-slate-500 font-medium mt-1">
-                          A4 application form merged with POI, POA &amp; PAN
-                          from /apply.
-                        </p>
-                      </div>
-                      <div className="flex gap-2 mt-4">
-                        <button
-                          type="button"
-                          disabled={isLoadingVaultPreview}
-                          onClick={() =>
-                            handleLoadVaultDocument("ONBOARDING_KYC", "preview")
-                          }
-                          className="flex-1 bg-slate-900 hover:bg-blue-600 text-white font-black py-2 rounded-lg text-[10px] uppercase"
-                        >
-                          👁️ Preview Below
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isLoadingVaultPreview}
-                          onClick={() =>
-                            handleLoadVaultDocument("ONBOARDING_KYC", "open")
-                          }
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-black px-3 py-2 rounded-lg text-[10px] uppercase border border-slate-300"
-                        >
-                          ↗ Tab
-                        </button>
-                      </div>
+                      </select>
                     </div>
 
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
-                      <div>
-                        <span className="text-[9px] font-black uppercase text-emerald-600">
-                          Dossier 2
-                        </span>
-                        <h4 className="font-black text-slate-900 text-sm mt-0.5">
-                          Operational Compliance PDF
-                        </h4>
-                        <p className="text-[11px] text-slate-500 font-medium mt-1">
-                          {selectedProfile.compliance_docs_url
-                            ? "✅ Uploaded & Locked in Vault"
-                            : "⏳ Pending Partner Upload"}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 mt-4">
-                        <button
-                          type="button"
-                          disabled={
-                            !selectedProfile.compliance_docs_url ||
-                            isLoadingVaultPreview
-                          }
-                          onClick={() =>
-                            handleLoadVaultDocument(
-                              "COMPLIANCE_DOSSIER",
-                              "preview"
-                            )
-                          }
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black py-2 rounded-lg text-[10px] uppercase"
-                        >
-                          👁️ Preview Below
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            !selectedProfile.compliance_docs_url ||
-                            isLoadingVaultPreview
-                          }
-                          onClick={() =>
-                            handleLoadVaultDocument(
-                              "COMPLIANCE_DOSSIER",
-                              "open"
-                            )
-                          }
-                          className="bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-800 font-black px-3 py-2 rounded-lg text-[10px] uppercase border border-slate-300"
-                        >
-                          ↗ Tab
-                        </button>
-                      </div>
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        2. Master HQ
+                      </label>
+                      <select
+                        value={fHq}
+                        onChange={(e) => {
+                          setFHq(e.target.value);
+                          setFCenter("ALL");
+                          setFPartner("ALL");
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2.5 outline-none focus:border-blue-500 transition"
+                      >
+                        <option value="ALL">All Master HQs</option>
+                        {hqLocations.map((h) => (
+                          <option key={h.id} value={h.id}>
+                            {h.center_name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
-                      <div>
-                        <span className="text-[9px] font-black uppercase text-amber-600">
-                          Dossier 3
-                        </span>
-                        <h4 className="font-black text-slate-900 text-sm mt-0.5">
-                          Aadhaar Upgrade Compliance PDF
-                        </h4>
-                        <p className="text-[11px] text-slate-500 font-medium mt-1">
-                          {selectedProfile.latestUpgrade?.compliance_pdf_url
-                            ? `✅ Submitted (${selectedProfile.latestUpgrade.status})`
-                            : "No Aadhaar Upgrade Dossier"}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 mt-4">
-                        <button
-                          type="button"
-                          disabled={
-                            !selectedProfile.latestUpgrade
-                              ?.compliance_pdf_url || isLoadingVaultPreview
-                          }
-                          onClick={() =>
-                            handleLoadVaultDocument(
-                              "AADHAAR_UPGRADE",
-                              "preview"
-                            )
-                          }
-                          className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-black py-2 rounded-lg text-[10px] uppercase"
-                        >
-                          👁️ Preview Below
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            !selectedProfile.latestUpgrade
-                              ?.compliance_pdf_url || isLoadingVaultPreview
-                          }
-                          onClick={() =>
-                            handleLoadVaultDocument("AADHAAR_UPGRADE", "open")
-                          }
-                          className="bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-800 font-black px-3 py-2 rounded-lg text-[10px] uppercase border border-slate-300"
-                        >
-                          ↗ Tab
-                        </button>
-                      </div>
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        3. Location / Center [Code]
+                      </label>
+                      <select
+                        value={fCenter}
+                        onChange={(e) => {
+                          setFCenter(e.target.value);
+                          setFPartner("ALL");
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2.5 outline-none focus:border-blue-500 transition"
+                      >
+                        <option value="ALL">All Locations</option>
+                        {centerLocations.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            [{c.center_code || "NO-CODE"}] {c.center_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        4. Operator / Partner
+                      </label>
+                      <select
+                        value={fPartner}
+                        onChange={(e) => setFPartner(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2.5 outline-none focus:border-blue-500 transition"
+                      >
+                        <option value="ALL">
+                          All Operators ({filteredPartners.length})
+                        </option>
+                        {filteredPartners.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.partner_name}{" "}
+                            {p.aadhaar_station_id
+                              ? `(Stn: ${p.aadhaar_station_id})`
+                              : ""}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
-                  {previewPdfUrl ? (
-                    <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-                      <div className="p-3 bg-slate-950 text-white flex justify-between items-center">
-                        <span className="font-black text-xs text-amber-400 uppercase">
-                          📄 {previewPdfTitle}
-                        </span>
-                        <a
-                          href={previewPdfUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="bg-blue-600 text-white px-3 py-1 rounded text-[10px] font-black uppercase"
-                        >
-                          Open Full Screen ↗
-                        </a>
-                      </div>
-                      <iframe
-                        src={`${previewPdfUrl}#toolbar=0`}
-                        className="w-full h-[440px] bg-white"
-                        title="Partner Vault Document Preview"
+                  {/* ROW 2: 7-OPTION DATE PRESET + CUSTOM DATES */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-800">
+                    <div>
+                      <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1">
+                        5. Date Filter Preset
+                      </label>
+                      <select
+                        value={datePreset}
+                        disabled={isRefreshingFinance}
+                        onChange={(e) =>
+                          handlePresetChange(e.target.value as DatePresetMode)
+                        }
+                        className="w-full bg-slate-800 border-2 border-indigo-500/70 text-white font-black text-xs rounded-lg p-2.5 outline-none focus:border-indigo-400"
+                      >
+                        <option value="today">
+                          1. Today (
+                          {formatToDDMMYYYY(
+                            getDateRangeFromPreset("today").start
+                          )}
+                          )
+                        </option>
+                        <option value="yesterday">
+                          2. Yesterday (
+                          {formatToDDMMYYYY(
+                            getDateRangeFromPreset("yesterday").start
+                          )}
+                          )
+                        </option>
+                        <option value="current_week">3. Current Week</option>
+                        <option value="current_month">4. Current Month</option>
+                        <option value="previous_month">
+                          5. Previous Month
+                        </option>
+                        <option value="all">6. All Time</option>
+                        <option value="custom">7. Custom Filter</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        From ({formatToDDMMYYYY(fromDate)})
+                      </label>
+                      <input
+                        type="date"
+                        value={fromDate}
+                        onChange={(e) => {
+                          setFromDate(e.target.value);
+                          setDatePreset("custom");
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2 outline-none focus:border-blue-500"
                       />
                     </div>
-                  ) : (
-                    <div className="bg-white p-10 rounded-xl border border-slate-200 text-center text-slate-400 font-bold">
-                      Click &quot;👁️ Preview Below&quot; on any dossier above to
-                      inspect the watermarked PDF right here.
-                    </div>
-                  )}
-                </div>
-              )}
 
-              {/* ============================================================= */}
-              {/* TAB 4: LIVE FINANCIAL & ACTIVITY SNAPSHOT                     */}
-              {/* ============================================================= */}
-              {dossierTab === "ledger" && (
-                <div className="space-y-5">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 border-t-4 border-t-indigo-600 space-y-2">
-                      <p className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">
-                        1. BSNL + Paybull Stream
-                      </p>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Cash Generated:
-                        </span>
-                        <span className="font-black text-slate-900">
-                          ₹
-                          {selectedProfile.telecomGenerated.toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Less Deposited:
-                        </span>
-                        <span className="font-black text-emerald-600">
-                          - ₹
-                          {selectedProfile.telecomDeposited.toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
-                      <div className="pt-2 border-t flex justify-between text-sm">
-                        <span className="font-black text-slate-800">
-                          Telecom Due:
-                        </span>
-                        <span className="font-black text-red-600">
-                          ₹{selectedProfile.telecomDue.toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 border-t-4 border-t-amber-500 space-y-2">
-                      <p className="text-[10px] font-black uppercase text-amber-700 tracking-widest">
-                        2. Aadhaar Kendra Stream (
-                        {selectedProfile.aadhaarPackets} Pkts)
-                      </p>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Cash Collected:
-                        </span>
-                        <span className="font-black text-slate-900">
-                          ₹
-                          {selectedProfile.aadhaarGenerated.toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Less Deposited:
-                        </span>
-                        <span className="font-black text-emerald-600">
-                          - ₹
-                          {selectedProfile.aadhaarDeposited.toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500 font-bold">
-                          Unpaid Late Fines:
-                        </span>
-                        <span className="font-black text-red-600">
-                          + ₹
-                          {selectedProfile.aadhaarPenaltyDue.toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
-                      <div className="pt-2 border-t flex justify-between text-sm">
-                        <span className="font-black text-slate-800">
-                          Aadhaar Due:
-                        </span>
-                        <span className="font-black text-red-600">
-                          ₹{selectedProfile.aadhaarDue.toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 text-white p-5 rounded-xl flex flex-col justify-between">
-                      <div>
-                        <p className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
-                          3. Combined Net Balance Payable
-                        </p>
-                        <p className="text-3xl font-black text-white mt-2">
-                          ₹
-                          {selectedProfile.totalNetPayable.toLocaleString(
-                            "en-IN",
-                            { minimumFractionDigits: 2 }
-                          )}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-bold mt-1">
-                          Total Unsettled Cash Across All Streams
-                        </p>
-                      </div>
-                      {selectedProfile.totalNetPayable > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAlertSubjectCategory("Deposit pending notice");
-                            setAlertBody(
-                              `Dear ${selectedProfile.partner_name}, your net pending cash balance across Telecom/Aadhaar is ₹${selectedProfile.totalNetPayable.toLocaleString("en-IN")}. Please remit your pending dues immediately and upload the receipt.`
-                            );
-                            setDossierTab("alert");
-                          }}
-                          className="mt-4 w-full py-2.5 bg-red-600 hover:bg-red-500 text-white font-black text-[10px] uppercase tracking-widest rounded-lg shadow transition"
-                        >
-                          🚨 Send Deposit Reminder Alert &rarr;
-                        </button>
-                      )}
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                        To ({formatToDDMMYYYY(toDate)})
+                      </label>
+                      <input
+                        type="date"
+                        value={toDate}
+                        max={getISTDateString(0)}
+                        onChange={(e) => {
+                          setToDate(e.target.value);
+                          setDatePreset("custom");
+                        }}
+                        className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2 outline-none focus:border-blue-500"
+                      />
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* ============================================================= */}
-              {/* TAB 5: DIRECT "SEND ALERT TO PARTNER" QUICK-ACTION            */}
-              {/* ============================================================= */}
-              {dossierTab === "alert" && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 space-y-4 h-fit">
-                    <h4 className="font-black text-sm text-slate-900 uppercase tracking-wider border-b pb-2">
-                      💬 Dispatch Priority Alert to{" "}
-                      {selectedProfile.partner_name}
-                    </h4>
-
-                    <form
-                      onSubmit={handleSendDirectAlert}
-                      className="space-y-3.5"
+              {/* VISUAL SETTLEMENT PROGRESS BAR (ADAPTS TO ACTIVE VERTICAL) */}
+              <div className="p-5 bg-slate-950/90 border-b border-slate-800 space-y-2.5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">🎯</span>
+                    <span className="text-xs font-black uppercase tracking-widest text-white">
+                      {streamFilter === "TELECOM"
+                        ? "BSNL + Paybull Vertical Settlement Progress (Deposited ÷ Generated)"
+                        : streamFilter === "AADHAAR"
+                        ? "Aadhaar Seva Kendra Vertical Settlement Progress (Deposited ÷ Generated)"
+                        : "Consolidated Network Settlement Progress (Total Deposited ÷ Total Generated)"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-black">
+                    <span className="text-emerald-400">
+                      Deposited: ₹
+                      {activeDisplayedDeposited.toLocaleString("en-IN")}
+                    </span>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-blue-400">
+                      Generated: ₹
+                      {activeDisplayedGenerated.toLocaleString("en-IN")}
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] ${
+                        overallSettlementPct >= 90
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                          : overallSettlementPct >= 70
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          : "bg-red-500/20 text-red-300 border border-red-500/40"
+                      }`}
                     >
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                          Notice Subject Heading *
-                        </label>
-                        <select
-                          required
-                          value={alertSubjectCategory}
-                          onChange={(e) => {
-                            setAlertSubjectCategory(e.target.value);
-                            setAlertCustomSubject("");
-                          }}
-                          className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold bg-slate-50"
-                        >
-                          <option value="" disabled>
-                            -- Select Notice Type --
-                          </option>
-                          {ALERT_SUBJECT_PRESETS.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
+                      {overallSettlementPct.toFixed(1)}% Settled
+                    </span>
+                  </div>
+                </div>
+
+                <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                  <div
+                    className={`h-full transition-all duration-500 ${getProgressColor(
+                      overallSettlementPct
+                    )}`}
+                    style={{ width: `${overallSettlementPct}%` }}
+                  />
+                </div>
+
+                <div className="flex justify-between items-center text-[10px] font-bold">
+                  <span className="text-slate-400 uppercase tracking-wider">
+                    Target: 100% Remittance Clearance
+                  </span>
+                  <span
+                    className={
+                      activeDisplayedShortfall > 0
+                        ? "text-red-400 font-black uppercase tracking-wider"
+                        : "text-emerald-400 font-black uppercase tracking-wider"
+                    }
+                  >
+                    {activeDisplayedShortfall > 0
+                      ? `⚠️ Unsettled Shortfall: ₹${activeDisplayedShortfall.toLocaleString(
+                          "en-IN"
+                        )}`
+                      : "✅ Zero Shortfall — Fully Settled"}
+                  </span>
+                </div>
+              </div>
+
+              {/* ============================================================= */}
+              {/* OPTION X MORPHING DECK: MODE 1 (ALL VERTICALS CONSOLIDATED)    */}
+              {/* ============================================================= */}
+              {streamFilter === "ALL" && (
+                <>
+                  {/* SIDE-BY-SIDE STREAM COMPARISON CARDS */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-px bg-slate-800 border-b border-slate-800">
+                    {/* STREAM 1: BSNL + PAYBULL */}
+                    <div className="p-5 bg-slate-900 hover:bg-slate-900/90 transition">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400 block">
+                            Business Vertical 1
+                          </span>
+                          <h4 className="text-white font-black text-sm flex items-center gap-2 mt-0.5">
+                            <span>📡</span> BSNL Telecom &amp; Paybull
+                            Collection
+                          </h4>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStreamFilter("TELECOM")}
+                            className="px-2.5 py-1 rounded text-[9px] font-black uppercase bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition"
+                          >
+                            🔍 Focus BSNL + PB View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => routeTo("/dashboard/accounts")}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-3 py-1 rounded text-[9px] uppercase tracking-wider shadow transition"
+                          >
+                            Verify in Accountant Portal &rarr;
+                          </button>
+                        </div>
                       </div>
 
-                      {alertSubjectCategory === "Other (Custom Subject)" && (
+                      <div className="grid grid-cols-3 gap-2 bg-slate-950/70 p-3 rounded-xl border border-slate-800 text-xs mb-2.5">
                         <div>
-                          <label className="block text-[10px] font-black uppercase text-purple-700 mb-1">
-                            Custom Subject *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="ENTER CUSTOM SUBJECT..."
-                            value={alertCustomSubject}
-                            onChange={(e) =>
-                              setAlertCustomSubject(
-                                e.target.value.toUpperCase()
-                              )
-                            }
-                            className="w-full border-2 border-purple-300 p-2.5 rounded-lg font-black uppercase"
+                          <p className="text-[9px] font-bold uppercase text-slate-400">
+                            Generated
+                          </p>
+                          <p className="font-black text-white text-sm mt-0.5">
+                            ₹
+                            {financials.telecomSalesCash.toLocaleString(
+                              "en-IN"
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-emerald-400">
+                            Deposited
+                          </p>
+                          <p className="font-black text-emerald-400 text-sm mt-0.5">
+                            ₹
+                            {financials.telecomDeposits.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-red-400">
+                            Pending Due
+                          </p>
+                          <p className="font-black text-red-400 text-sm mt-0.5">
+                            ₹{financials.telecomPending.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${getProgressColor(
+                              telecomSettlementPct
+                            )}`}
+                            style={{ width: `${telecomSettlementPct}%` }}
                           />
                         </div>
-                      )}
+                        <span className="text-[10px] font-black text-slate-300 w-12 text-right">
+                          {telecomSettlementPct.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
 
-                      <div>
-                        <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                          Alert Message Body *
-                        </label>
-                        <textarea
-                          rows={4}
-                          required
-                          placeholder="Type compliance instructions for this partner..."
-                          value={alertBody}
-                          onChange={(e) => setAlertBody(e.target.value)}
-                          className="w-full border-2 border-slate-200 p-3 rounded-lg font-medium"
-                        />
+                    {/* STREAM 2: AADHAAR SEVA KENDRA */}
+                    <div className="p-5 bg-slate-900 hover:bg-slate-900/90 transition">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 block">
+                            Business Vertical 2
+                          </span>
+                          <h4 className="text-white font-black text-sm flex items-center gap-2 mt-0.5">
+                            <span>🆔</span> Aadhaar Seva Kendra Collection
+                          </h4>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStreamFilter("AADHAAR")}
+                            className="px-2.5 py-1 rounded text-[9px] font-black uppercase bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 transition"
+                          >
+                            🔍 Focus Aadhaar View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => routeTo("/dashboard/aadhaar")}
+                            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3 py-1 rounded text-[9px] uppercase tracking-wider shadow transition"
+                          >
+                            Open Aadhaar Collections &rarr;
+                          </button>
+                        </div>
                       </div>
 
-                      <button
-                        type="submit"
-                        disabled={isSendingAlert}
-                        className="w-full py-3 bg-slate-900 hover:bg-purple-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow transition"
-                      >
-                        {isSendingAlert
-                          ? "Dispatching Alert..."
-                          : "🚀 Send Alert to Partner Inbox"}
-                      </button>
-                    </form>
+                      <div className="grid grid-cols-3 gap-2 bg-slate-950/70 p-3 rounded-xl border border-slate-800 text-xs mb-2.5">
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-slate-400">
+                            Generated
+                          </p>
+                          <p className="font-black text-white text-sm mt-0.5">
+                            ₹
+                            {financials.aadhaarSalesCash.toLocaleString(
+                              "en-IN"
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-emerald-400">
+                            Deposited
+                          </p>
+                          <p className="font-black text-emerald-400 text-sm mt-0.5">
+                            ₹
+                            {financials.aadhaarDeposits.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-red-400">
+                            Pending Due
+                          </p>
+                          <p className="font-black text-red-400 text-sm mt-0.5">
+                            ₹{financials.aadhaarPending.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${getProgressColor(
+                              aadhaarSettlementPct
+                            )}`}
+                            style={{ width: `${aadhaarSettlementPct}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-black text-slate-300 w-12 text-right">
+                          {aadhaarSettlementPct.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col max-h-96">
-                    <div className="p-3.5 bg-slate-900 text-white flex justify-between items-center">
-                      <span className="font-black text-xs uppercase tracking-widest">
-                        Alert History for {selectedProfile.partner_name}
+                  {/* 8 CONSOLIDATED REVENUE CARDS */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-slate-800">
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                        1. Total CBP
+                      </p>
+                      <p className="text-lg font-black text-white">
+                        ₹{financials.cbp.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                        2. Total CTOP
+                      </p>
+                      <p className="text-lg font-black text-white">
+                        ₹{financials.ctop.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                        3. SIM / FRC / MNP
+                      </p>
+                      <p className="text-lg font-black text-white">
+                        ₹{financials.sim.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest mb-1">
+                        4. Paybull Cash
+                      </p>
+                      <p className="text-lg font-black text-indigo-400">
+                        ₹{financials.paybull.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-amber-400 font-bold uppercase tracking-widest mb-1">
+                        5. Aadhaar Cash
+                      </p>
+                      <p className="text-lg font-black text-amber-400">
+                        ₹{financials.aadhaar.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-amber-500/70 font-bold uppercase tracking-widest mb-1">
+                        6. Cheque Amt
+                      </p>
+                      <p className="text-lg font-black text-amber-500">
+                        ₹{financials.cheque.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-blue-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mb-1">
+                        7. Total Generated
+                      </p>
+                      <p className="text-xl font-black text-white">
+                        ₹{financials.totalSalesCash.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-emerald-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest mb-1">
+                        8. Total Deposited
+                      </p>
+                      <p className="text-xl font-black text-white">
+                        ₹{financials.totalDeposits.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* COMBINED SIM SALES COUNT & AADHAAR PACKET VOLUME STRIP */}
+                  <div className="bg-slate-950 border-t border-slate-800 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-200 flex items-center gap-2">
+                        <span>📱</span> SIM Sales Count &amp; Enrolment Packet
+                        Volume
+                      </h4>
+                      <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
+                        <span className="bg-blue-900/50 text-blue-300 border border-blue-700/60 px-3 py-1 rounded-lg">
+                          Total SIMs Sold: {financials.totalSims} Qty
+                        </span>
+                        <span className="bg-slate-800 text-slate-300 border border-slate-700 px-3 py-1 rounded-lg">
+                          Prepaid: {financials.totalPrepaidSims} | Postpaid:{" "}
+                          {financials.qPostpaid}
+                        </span>
+                        <span className="bg-amber-900/40 text-amber-300 border border-amber-700/60 px-3 py-1 rounded-lg">
+                          Aadhaar Packets: {financials.aadhaarPackets} Pkts
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-center">
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          New SIMs
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qNew}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          Upgrades
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qUpgrade}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          Replacements
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qReplace}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          Fancy SIMs
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qFancy}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-purple-400">
+                          MNP Port-In
+                        </p>
+                        <p className="text-lg font-black text-purple-300 mt-0.5">
+                          {financials.qMnp}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-emerald-400">
+                          FRC Count
+                        </p>
+                        <p className="text-lg font-black text-emerald-300 mt-0.5">
+                          {financials.qFrc}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-blue-400">
+                          Postpaid Qty
+                        </p>
+                        <p className="text-lg font-black text-blue-300 mt-0.5">
+                          {financials.qPostpaid}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-amber-500/30">
+                        <p className="text-[9px] font-bold uppercase text-amber-400">
+                          Aadhaar Pkts
+                        </p>
+                        <p className="text-lg font-black text-amber-400 mt-0.5">
+                          {financials.aadhaarPackets}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ============================================================= */}
+              {/* OPTION X MORPHING DECK: MODE 2 (BSNL + PAYBULL ISOLATED)       */}
+              {/* ============================================================= */}
+              {streamFilter === "TELECOM" && (
+                <div className="animate-in fade-in">
+                  {/* ACTIVE VERTICAL BANNER */}
+                  <div className="p-4 bg-indigo-950/80 border-b border-indigo-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl">📡</span>
+                      <div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-indigo-300 block">
+                          Isolated Vertical View Active
+                        </span>
+                        <h4 className="text-white font-black text-sm">
+                          BSNL Telecom, SIM Inventory &amp; Paybull Fintech
+                          Operations
+                        </h4>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => routeTo("/dashboard/accounts")}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider shadow transition"
+                      >
+                        Verify in Accountant Portal &rarr;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStreamFilter("ALL")}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider border border-slate-700 transition"
+                      >
+                        &larr; Back to All Verticals
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 8 GRANULAR TELECOM & PAYBULL REVENUE CARDS */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-slate-800">
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                        1. CBP Landline
+                      </p>
+                      <p className="text-lg font-black text-white">
+                        ₹{financials.cbpLandline.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                        2. CBP GSM
+                      </p>
+                      <p className="text-lg font-black text-white">
+                        ₹{financials.cbpGsm.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-blue-400 font-bold uppercase tracking-widest mb-1">
+                        3. CTOP Recharge
+                      </p>
+                      <p className="text-lg font-black text-blue-300">
+                        ₹{financials.ctop.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-emerald-400 font-bold uppercase tracking-widest mb-1">
+                        4. FRC + MNP Cash
+                      </p>
+                      <p className="text-lg font-black text-emerald-300">
+                        ₹{financials.frcMnpCash.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-purple-400 font-bold uppercase tracking-widest mb-1">
+                        5. SIM &amp; Other Cash
+                      </p>
+                      <p className="text-lg font-black text-purple-300">
+                        ₹
+                        {(
+                          financials.simOnlyCash + financials.otherCash
+                        ).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest mb-1">
+                        6. Paybull Total
+                      </p>
+                      <p className="text-lg font-black text-indigo-400">
+                        ₹{financials.paybull.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-blue-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mb-1">
+                        7. Telecom Generated
+                      </p>
+                      <p className="text-xl font-black text-white">
+                        ₹{financials.telecomSalesCash.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-4 lg:border-t-0 lg:border-l-4 border-emerald-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest mb-1">
+                        8. Telecom Deposited
+                      </p>
+                      <p className="text-xl font-black text-emerald-400">
+                        ₹{financials.telecomDeposits.toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-[9px] font-black text-red-400 mt-0.5">
+                        Due: ₹
+                        {financials.telecomPending.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* PAYBULL 5-HEAD SUB-STRIP + CHEQUES */}
+                  <div className="bg-slate-900/90 border-t border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">
+                      💳 Paybull 5-Head Breakdown:
+                    </span>
+                    <div className="flex flex-wrap gap-3 text-[11px] font-bold text-slate-300">
+                      <span>
+                        PB CTOP:{" "}
+                        <strong className="text-white">
+                          ₹{financials.pbCtop.toLocaleString("en-IN")}
+                        </strong>
                       </span>
-                      <span className="text-[10px] font-black bg-slate-800 text-amber-400 px-2.5 py-0.5 rounded">
-                        {selectedProfile.unreadAlertsCount} Unread
+                      <span>•</span>
+                      <span>
+                        PB CBP:{" "}
+                        <strong className="text-white">
+                          ₹{financials.pbCbp.toLocaleString("en-IN")}
+                        </strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        PB FRC:{" "}
+                        <strong className="text-white">
+                          ₹{financials.pbFrc.toLocaleString("en-IN")}
+                        </strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        PB MNP:{" "}
+                        <strong className="text-white">
+                          ₹{financials.pbMnp.toLocaleString("en-IN")}
+                        </strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        PB Other:{" "}
+                        <strong className="text-white">
+                          ₹{financials.pbOther.toLocaleString("en-IN")}
+                        </strong>
+                      </span>
+                      <span>|</span>
+                      <span className="text-amber-400">
+                        Cheques ({financials.chequeQty}):{" "}
+                        <strong>
+                          ₹{financials.cheque.toLocaleString("en-IN")}
+                        </strong>
                       </span>
                     </div>
-                    <div className="p-4 overflow-y-auto space-y-2.5 flex-1">
-                      {selectedProfile.pMessages.length === 0 ? (
-                        <p className="text-center text-slate-400 font-bold py-8">
-                          No alerts have been sent to this partner yet.
+                  </div>
+
+                  {/* 7-CATEGORY SIM SALES COUNT STRIP */}
+                  <div className="bg-slate-950 border-t border-slate-800 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-200 flex items-center gap-2">
+                        <span>📱</span> BSNL SIM Sales Count Breakdown (7
+                        Categories)
+                      </h4>
+                      <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase">
+                        <span className="bg-blue-900/50 text-blue-300 border border-blue-700/60 px-3 py-1 rounded-lg">
+                          Total SIMs Sold: {financials.totalSims} Qty
+                        </span>
+                        <span className="bg-slate-800 text-slate-300 border border-slate-700 px-3 py-1 rounded-lg">
+                          Prepaid: {financials.totalPrepaidSims} | Postpaid:{" "}
+                          {financials.qPostpaid}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-center">
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          1. New SIMs
                         </p>
-                      ) : (
-                        selectedProfile.pMessages.map((m: any) => (
-                          <div
-                            key={m.id}
-                            className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-1"
-                          >
-                            <div className="flex justify-between items-center">
-                              <span className="font-black text-slate-900">
-                                {m.subject}
-                              </span>
-                              <span
-                                className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
-                                  m.is_read
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-amber-100 text-amber-800"
-                                }`}
-                              >
-                                {m.is_read ? "✅ Read" : "⏳ Unread"}
-                              </span>
-                            </div>
-                            <p className="text-slate-600 font-medium">
-                              {m.body}
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qNew}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          2. Upgrades
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qUpgrade}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          3. Replacements
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qReplace}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-slate-400">
+                          4. Fancy SIMs
+                        </p>
+                        <p className="text-lg font-black text-white mt-0.5">
+                          {financials.qFancy}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-purple-400">
+                          5. MNP Port-In
+                        </p>
+                        <p className="text-lg font-black text-purple-300 mt-0.5">
+                          {financials.qMnp}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <p className="text-[9px] font-bold uppercase text-emerald-400">
+                          6. FRC Count
+                        </p>
+                        <p className="text-lg font-black text-emerald-300 mt-0.5">
+                          {financials.qFrc}
+                        </p>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 col-span-2 sm:col-span-1">
+                        <p className="text-[9px] font-bold uppercase text-blue-400">
+                          7. Postpaid SIMs
+                        </p>
+                        <p className="text-lg font-black text-blue-300 mt-0.5">
+                          {financials.qPostpaid}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================= */}
+              {/* OPTION X MORPHING DECK: MODE 3 (AADHAAR KENDRA ISOLATED)       */}
+              {/* ============================================================= */}
+              {streamFilter === "AADHAAR" && (
+                <div className="animate-in fade-in">
+                  {/* ACTIVE VERTICAL BANNER */}
+                  <div className="p-4 bg-amber-950/70 border-b border-amber-800/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl">🆔</span>
+                      <div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-300 block">
+                          Isolated Vertical View Active
+                        </span>
+                        <h4 className="text-white font-black text-sm">
+                          Aadhaar Seva Kendra — 5-Category UIDAI Enrolments
+                          &amp; Collections
+                        </h4>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => routeTo("/dashboard/aadhaar")}
+                        className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider shadow transition"
+                      >
+                        Open Aadhaar Collections &rarr;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStreamFilter("ALL")}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider border border-slate-700 transition"
+                      >
+                        &larr; Back to All Verticals
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ROW 1: 5 UIDAI ENROLMENT CATEGORY CARDS */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-slate-800 border-b border-slate-800">
+                    <div className="bg-slate-900 p-4 border-t-2 border-t-emerald-500">
+                      <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest">
+                        1. New Enrolment (Free)
+                      </p>
+                      <p className="text-2xl font-black text-white mt-1">
+                        {financials.adhCat1}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                        UIDAI Citizen Fee: ₹0
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-2 border-t-teal-500">
+                      <p className="text-[9px] text-teal-400 font-black uppercase tracking-widest">
+                        2. MBU Free (5 &amp; 15 Yrs)
+                      </p>
+                      <p className="text-2xl font-black text-white mt-1">
+                        {financials.adhCat2}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                        Mandatory Bio: ₹0
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-2 border-t-amber-500">
+                      <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest">
+                        3. MBU Chargeable
+                      </p>
+                      <p className="text-2xl font-black text-amber-400 mt-1">
+                        {financials.adhCat3}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                        Paid Mandatory Bio
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-2 border-t-blue-500">
+                      <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest">
+                        4. Demographic Update
+                      </p>
+                      <p className="text-2xl font-black text-blue-300 mt-1">
+                        {financials.adhCat4}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                        Name / Address / Mobile
+                      </p>
+                    </div>
+                    <div className="bg-slate-900 p-4 border-t-2 border-t-purple-500 col-span-2 md:col-span-1">
+                      <p className="text-[9px] text-purple-400 font-black uppercase tracking-widest">
+                        5. Biometric Update
+                      </p>
+                      <p className="text-2xl font-black text-purple-300 mt-1">
+                        {financials.adhCat5}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                        Iris / Fingerprint / Photo
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* ROW 2: 6 AADHAAR PACKET STATUS & FINANCIAL BREAKDOWN CARDS */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-slate-800">
+                    <div className="bg-slate-950 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-1">
+                        Total Packets Logged
+                      </p>
+                      <p className="text-xl font-black text-white">
+                        {financials.aadhaarPackets} Pkts
+                      </p>
+                    </div>
+                    <div className="bg-slate-950 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-1">
+                        Packet Status Split
+                      </p>
+                      <p className="text-xs font-black text-emerald-400">
+                        ✅ {financials.adhCompleted} Comp | ⏳{" "}
+                        {financials.adhInProcess} Proc
+                      </p>
+                      <p className="text-[10px] font-black text-red-400 mt-0.5">
+                        ❌ {financials.adhRejected} Rejected
+                      </p>
+                    </div>
+                    <div className="bg-slate-950 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-1">
+                        Net Base Fee (Excl. GST)
+                      </p>
+                      <p className="text-lg font-black text-slate-200">
+                        ₹
+                        {financials.adhBase.toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </p>
+                    </div>
+                    <div className="bg-slate-950 p-4 flex flex-col justify-center">
+                      <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest mb-1">
+                        18% GST Component
+                      </p>
+                      <p className="text-lg font-black text-amber-400">
+                        ₹
+                        {financials.adhGst.toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </p>
+                    </div>
+                    <div className="bg-slate-950 p-4 border-l-4 border-amber-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-amber-400 font-black uppercase tracking-widest mb-1">
+                        Aadhaar Cash Generated
+                      </p>
+                      <p className="text-xl font-black text-white">
+                        ₹{financials.aadhaarSalesCash.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <div className="bg-slate-950 p-4 border-l-4 border-emerald-500 flex flex-col justify-center">
+                      <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest mb-1">
+                        Aadhaar Cash Deposited
+                      </p>
+                      <p className="text-xl font-black text-emerald-400">
+                        ₹{financials.aadhaarDeposits.toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-[9px] font-black text-red-400 mt-0.5">
+                        Due: ₹
+                        {financials.aadhaarPending.toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* RECHARTS BAR CHART (RESPECTS ACTIVE VERTICAL) */}
+              {chartData.length > 0 && (
+                <div className="p-6 bg-slate-900 w-full h-80 border-t border-slate-800">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={chartData}
+                      margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#334155"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="date"
+                        stroke="#94a3b8"
+                        fontSize={12}
+                        tickLine={false}
+                        tickFormatter={(val) => formatToDDMMYYYY(val)}
+                      />
+                      <YAxis
+                        stroke="#94a3b8"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(val) => `₹${val / 1000}k`}
+                      />
+                      <Tooltip
+                        labelFormatter={(label) =>
+                          `Date: ${formatToDDMMYYYY(String(label))}`
+                        }
+                        contentStyle={{
+                          backgroundColor: "#0f172a",
+                          border: "none",
+                          borderRadius: "8px",
+                          color: "#fff",
+                        }}
+                        cursor={{ fill: "#1e293b" }}
+                      />
+                      <Legend
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }}
+                      />
+                      <Bar
+                        dataKey="Sales"
+                        fill={
+                          streamFilter === "AADHAAR"
+                            ? "#f59e0b"
+                            : streamFilter === "TELECOM"
+                            ? "#6366f1"
+                            : "#3b82f6"
+                        }
+                        radius={[4, 4, 0, 0]}
+                        name={
+                          streamFilter === "TELECOM"
+                            ? "BSNL + Paybull Cash Generated"
+                            : streamFilter === "AADHAAR"
+                            ? "Aadhaar Cash Generated"
+                            : "Cash Generated (All Verticals)"
+                        }
+                      />
+                      <Bar
+                        dataKey="Deposits"
+                        fill="#22c55e"
+                        radius={[4, 4, 0, 0]}
+                        name={
+                          streamFilter === "TELECOM"
+                            ? "BSNL + Paybull Cash Remitted"
+                            : streamFilter === "AADHAAR"
+                            ? "Aadhaar Cash Remitted"
+                            : "Cash Remitted (All Verticals)"
+                        }
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* DEFAULTER WATCHLISTS (MISSING REPORTS & MISSING DEPOSITS) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-red-200 overflow-hidden">
+                <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">
+                  <h3 className="font-black text-red-800 text-xs uppercase tracking-widest">
+                    ⚠️ Missing{" "}
+                    {streamFilter === "TELECOM"
+                      ? "BSNL + Paybull Sales"
+                      : streamFilter === "AADHAAR"
+                      ? "Aadhaar Kendra"
+                      : "Sales / Aadhaar"}{" "}
+                    Reports
+                  </h3>
+                  <span className="bg-red-200 text-red-900 font-black px-2.5 py-0.5 rounded text-xs">
+                    {missingSales.length} Partners
+                  </span>
+                </div>
+                <div className="max-h-64 overflow-y-auto p-4 space-y-2">
+                  {missingSales.length === 0 ? (
+                    <p className="text-sm text-green-600 font-bold text-center py-4">
+                      ✅ All filtered partners have submitted reports.
+                    </p>
+                  ) : (
+                    missingSales.map((p) => {
+                      const locData = p.locations;
+                      const l: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
+                      return (
+                        <div
+                          key={p.id}
+                          className="text-sm border-b pb-2 flex justify-between items-center"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-800">
+                              {p.partner_name}
                             </p>
-                            <p className="text-[9px] text-slate-400 font-bold">
-                              Sent:{" "}
-                              {new Date(m.created_at).toLocaleString("en-IN")}
+                            <p className="text-xs text-slate-500">
+                              [{l?.center_code || "NO-CODE"}] {l?.center_name} (
+                              {l?.dist})
                             </p>
                           </div>
-                        ))
-                      )}
+                          <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                            {p.role}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-amber-200 overflow-hidden">
+                <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center">
+                  <h3 className="font-black text-amber-800 text-xs uppercase tracking-widest">
+                    ⏳ Missing{" "}
+                    {streamFilter === "TELECOM"
+                      ? "BSNL + Paybull"
+                      : streamFilter === "AADHAAR"
+                      ? "Aadhaar Kendra"
+                      : "Cash"}{" "}
+                    Deposits
+                  </h3>
+                  <span className="bg-amber-200 text-amber-900 font-black px-2.5 py-0.5 rounded text-xs">
+                    {missingDeposits.length} Partners
+                  </span>
+                </div>
+                <div className="max-h-64 overflow-y-auto p-4 space-y-2">
+                  {missingDeposits.length === 0 ? (
+                    <p className="text-sm text-green-600 font-bold text-center py-4">
+                      ✅ All filtered partners have submitted deposits.
+                    </p>
+                  ) : (
+                    missingDeposits.map((p) => {
+                      const locData = p.locations;
+                      const l: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
+                      return (
+                        <div
+                          key={p.id}
+                          className="text-sm border-b pb-2 flex justify-between items-center"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-800">
+                              {p.partner_name}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              [{l?.center_code || "NO-CODE"}] {l?.center_name} (
+                              {l?.dist})
+                            </p>
+                          </div>
+                          <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                            {p.role}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* GROUP 2: TREASURY, FINANCIAL VERIFICATION & BANKING                 */}
+        {/* =================================================================== */}
+        {activeGroup === "treasury" && (isFinanceTeam || isManagerOrAdmin) && (
+          <div className="space-y-6 animate-in fade-in">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {isFinanceTeam && (
+                <div
+                  onClick={() => routeTo("/dashboard/accounts")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-500 transition group cursor-pointer border-t-4 border-t-emerald-500 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-4xl">🏦</span>
+                      <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                        UTR + OCR Audit
+                      </span>
+                    </div>
+                    <h3 className="font-black text-xl text-slate-900 group-hover:text-emerald-600">
+                      Accountant Verification Portal
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                      Verify partner bank deposits, inspect OCR slips
+                      side-by-side with Unique UTR &amp; Reference Codes, and
+                      clear ledgers.
+                    </p>
+                  </div>
+                  <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-emerald-600 uppercase tracking-wider">
+                    <span>Open Verification Queue</span>
+                    <span>&rarr;</span>
+                  </div>
+                </div>
+              )}
+
+              <div
+                onClick={() => routeTo("/dashboard/sales-verification")}
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-500 transition group cursor-pointer border-t-4 border-t-amber-500 flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-4xl">⚖️</span>
+                    <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                      Telecom + Aadhaar
+                    </span>
+                  </div>
+                  <h3 className="font-black text-xl text-slate-900 group-hover:text-amber-600">
+                    Sales &amp; Aadhaar Correction Audit
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                    Review partner edit requests and enforce audited financial
+                    overrides across BSNL, Paybull, and Aadhaar daily ledgers.
+                  </p>
+                </div>
+                <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-amber-600 uppercase tracking-wider">
+                  <span>Open Audit Hub</span>
+                  <span>&rarr;</span>
+                </div>
+              </div>
+
+              {isManagerOrAdmin && (
+                <div
+                  onClick={() => routeTo("/dashboard/banking")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-500 transition group cursor-pointer border-t-4 border-t-blue-600 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-4xl">💳</span>
+                      <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                        CMS + UPI + QR
+                      </span>
+                    </div>
+                    <h3 className="font-black text-xl text-slate-900 group-hover:text-blue-600">
+                      Corporate Banking &amp; Treasury Hub
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                      Configure physical Master Banks, center-mapped Virtual
+                      Accounts, dynamic UPI IDs, and store QR stickers.
+                    </p>
+                  </div>
+                  <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-blue-600 uppercase tracking-wider">
+                    <span>Manage Treasury Channels</span>
+                    <span>&rarr;</span>
+                  </div>
+                </div>
+              )}
+
+              <div
+                onClick={() => routeTo("/dashboard/reports")}
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-500 transition group cursor-pointer border-t-4 border-t-indigo-600 flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-4xl">📈</span>
+                    <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                      CSV &amp; PDF Exports
+                    </span>
+                  </div>
+                  <h3 className="font-black text-xl text-slate-900 group-hover:text-indigo-600">
+                    Corporate MIS &amp; Multi-Stream Export Hub
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                    Generate Station-wise, Operator-wise, and Consolidated
+                    closing ledger exports in CSV and watermarked A4 PDF.
+                  </p>
+                </div>
+                <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-indigo-600 uppercase tracking-wider">
+                  <span>Open Export Console</span>
+                  <span>&rarr;</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* GROUP 3: VERTICAL OPERATIONS (AADHAAR, MIS, OCSC & LOGISTICS)       */}
+        {/* =================================================================== */}
+        {activeGroup === "operations" && (
+          <div className="space-y-6 animate-in fade-in">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div
+                onClick={() => routeTo("/dashboard/aadhaar")}
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-amber-500 transition group cursor-pointer border-t-4 border-t-amber-500 flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-4xl">🆔</span>
+                    <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                      {financials.aadhaarPackets} Packets Logged
+                    </span>
+                  </div>
+                  <h3 className="font-black text-xl text-slate-900 group-hover:text-amber-600">
+                    Aadhaar Seva Kendra Command Hub
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                    Audit 5-category CSV/HTML daily &amp; weekly uploads, live
+                    station working/leave status, ₹100/day penalty waive-offs,
+                    and UIDAI tariffs.
+                  </p>
+                </div>
+                <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-amber-600 uppercase tracking-wider">
+                  <span>Enter Aadhaar Command</span>
+                  <span>&rarr;</span>
+                </div>
+              </div>
+
+              {!isAccountant && (
+                <div
+                  onClick={() => routeTo("/dashboard/manager-mis")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-500 transition group cursor-pointer border-t-4 border-t-indigo-600 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-4xl">📊</span>
+                      <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                        OTF Matrix
+                      </span>
+                    </div>
+                    <h3 className="font-black text-xl text-slate-900 group-hover:text-indigo-600">
+                      Manager MIS &amp; OTF Balances
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                      Log daily Master CTOP Opening/Closing balances, central
+                      stock procurements, monthly center sales, and OTF
+                      variances.
+                    </p>
+                  </div>
+                  <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-indigo-600 uppercase tracking-wider">
+                    <span>Open Manager MIS</span>
+                    <span>&rarr;</span>
+                  </div>
+                </div>
+              )}
+
+              {isManagerOrAdmin && (
+                <>
+                  <div
+                    onClick={() => routeTo("/dashboard/ocsc")}
+                    className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-500 transition group cursor-pointer border-t-4 border-t-blue-600 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex justify-between items-start mb-3">
+                        <span className="text-4xl">📡</span>
+                        <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                          Master &amp; Agent CTOP
+                        </span>
+                      </div>
+                      <h3 className="font-black text-xl text-slate-900 group-hover:text-blue-600">
+                        Telecom &amp; OCSC CTOP Architecture
+                      </h3>
+                      <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                        Manage Master CTOP accounts anchored to HQs, Sanchar
+                        Soft IDs, MPINs, and strictly mapped Agent CTOP
+                        credentials.
+                      </p>
+                    </div>
+                    <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-blue-600 uppercase tracking-wider">
+                      <span>Configure OCSC Credentials</span>
+                      <span>&rarr;</span>
                     </div>
                   </div>
-                </div>
+
+                  <div
+                    onClick={() => routeTo("/dashboard/logistics")}
+                    className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-500 transition group cursor-pointer border-t-4 border-t-emerald-600 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex justify-between items-start mb-3">
+                        <span className="text-4xl">📦</span>
+                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
+                          Stock &amp; SIM Dispatch
+                        </span>
+                      </div>
+                      <h3 className="font-black text-xl text-slate-900 group-hover:text-emerald-600">
+                        Logistics &amp; Supply Command
+                      </h3>
+                      <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
+                        Approve digital CTOP/CBP balance top-ups and mark
+                        physical SIM requisitions as dispatched across centers.
+                      </p>
+                    </div>
+                    <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-emerald-600 uppercase tracking-wider">
+                      <span>Open Supply Queue</span>
+                      <span>&rarr;</span>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ===================================================================== */}
-      {/* MODAL 2: INLINE AADHAAR & CENTER CODE MAPPING MODAL (PRESERVED)       */}
-      {/* ===================================================================== */}
-      {mappingPartner && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl border max-w-md w-full overflow-hidden animate-in zoom-in-95">
-            <div className="bg-slate-900 text-white p-5 flex justify-between items-center">
-              <div>
-                <h3 className="font-black text-base">
-                  Map Center &amp; Aadhaar Credentials
-                </h3>
-                <p className="text-xs text-amber-400 font-bold mt-0.5">
-                  {mappingPartner.partner_name}
+        {/* =================================================================== */}
+        {/* GROUP 4: NETWORK & ONBOARDING (APPS, PARTNERS, LOCATIONS & FEEDS)   */}
+        {/* =================================================================== */}
+        {activeGroup === "network" && isOpsTeam && (
+          <div className="space-y-6 animate-in fade-in">
+            {/* 4 ONBOARDING & INFRASTRUCTURE KPI CARDS */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div
+                onClick={() => routeTo("/dashboard/applications")}
+                className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-yellow-400 hover:shadow-md transition cursor-pointer"
+              >
+                <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest mb-1">
+                  Action Required
+                </p>
+                <h2 className="text-3xl font-black text-slate-900">
+                  {stats.pending}
+                </h2>
+                <p className="text-yellow-600 font-black mt-2 text-xs flex items-center justify-between">
+                  Pending Applications <span>&rarr;</span>
                 </p>
               </div>
-              <button
-                onClick={() => setMappingPartner(null)}
-                className="text-2xl font-black text-slate-400 hover:text-white"
+
+              <div
+                onClick={() => routeTo("/dashboard/partners")}
+                className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-emerald-500 hover:shadow-md transition cursor-pointer"
               >
-                &times;
-              </button>
-            </div>
-            <form
-              onSubmit={handleSaveMapping}
-              className="p-6 space-y-4 text-xs"
-            >
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                  Assigned Center [Center Code] *
-                </label>
-                <select
-                  required
-                  value={mapForm.center_id}
-                  onChange={(e) =>
-                    setMapForm({ ...mapForm, center_id: e.target.value })
-                  }
-                  className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold bg-slate-50"
-                >
-                  <option value="" disabled>
-                    -- Select Center --
-                  </option>
-                  {locations
-                    .filter((l) => !l.is_master_node)
-                    .map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        [{loc.center_code || "NO-CODE"}] {loc.center_name} (
-                        {loc.state})
-                      </option>
-                    ))}
-                </select>
+                <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest mb-1">
+                  Network Growth
+                </p>
+                <h2 className="text-3xl font-black text-slate-900">
+                  {stats.approved}
+                </h2>
+                <p className="text-emerald-600 font-black mt-2 text-xs flex items-center justify-between">
+                  Approved Partners <span>&rarr;</span>
+                </p>
               </div>
 
-              <label className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
-                <div>
-                  <span className="font-black text-amber-950 uppercase block">
-                    Enable Aadhaar Seva Kendra Role
-                  </span>
-                  <span className="text-[10px] font-bold text-amber-700">
-                    Allows CSV/HTML daily report uploads
+              <div
+                onClick={() => routeTo("/dashboard/applications")}
+                className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-red-500 hover:shadow-md transition cursor-pointer"
+              >
+                <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest mb-1">
+                  Declined Queue
+                </p>
+                <h2 className="text-3xl font-black text-slate-900">
+                  {stats.rejected}
+                </h2>
+                <p className="text-red-600 font-black mt-2 text-xs flex items-center justify-between">
+                  Rejected Applications <span>&rarr;</span>
+                </p>
+              </div>
+
+              <div
+                onClick={() => routeTo("/dashboard/locations")}
+                className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-blue-600 hover:shadow-md transition cursor-pointer"
+              >
+                <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest mb-1">
+                  Infrastructure
+                </p>
+                <h2 className="text-3xl font-black text-slate-900">
+                  {stats.locations}
+                </h2>
+                <p className="text-blue-600 font-black mt-2 text-xs flex items-center justify-between">
+                  Active Centers <span>&rarr;</span>
+                </p>
+              </div>
+            </div>
+
+            {/* 3 CORE NETWORK MODULE CARDS */}
+            {isManagerOrAdmin && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div
+                  onClick={() => routeTo("/dashboard/applications")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-500 transition group cursor-pointer border-t-4 border-t-blue-600"
+                >
+                  <div className="text-3xl mb-3">📝</div>
+                  <h3 className="font-black text-lg text-slate-900 group-hover:text-blue-600">
+                    Franchise Onboarding
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                    Inspect watermarked KYC PDFs, map official Center Codes, and
+                    provision partner credentials.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => routeTo("/dashboard/partners")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-500 transition group cursor-pointer border-t-4 border-t-emerald-600"
+                >
+                  <div className="text-3xl mb-3">🤝</div>
+                  <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">
+                    Master Partner Database &amp; 360° Profiles
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                    Inspect full 360° KYC dossiers, passport photos, CTOP/Bank
+                    mappings, and export the master partner database.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => routeTo("/dashboard/locations")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-500 transition group cursor-pointer border-t-4 border-t-indigo-600"
+                >
+                  <div className="text-3xl mb-3">📍</div>
+                  <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">
+                    Infrastructure &amp; Locations
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                    Deploy Master HQs and Spoke Centers, toggle Aadhaar/OCSC/CM
+                    roles, and allocate Field Supervisors.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* WEBSITE ENQUIRIES & RECENT FRANCHISE APPLICATIONS */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-6 h-fit">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-5">
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-wider">
+                    🌐 Website Enquiries ({enquiries.length})
+                  </h3>
+                  <span className="text-[10px] font-black uppercase text-slate-400">
+                    Public Contact Feed
                   </span>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={mapForm.role_aadhaar}
-                  onChange={(e) =>
-                    setMapForm({ ...mapForm, role_aadhaar: e.target.checked })
-                  }
-                  className="w-5 h-5 accent-amber-600"
-                />
-              </label>
-
-              {mapForm.role_aadhaar && (
-                <div className="space-y-3 pt-2">
-                  <div>
-                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                      UIDAI Operator ID *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. MYS_FAAFREEN"
-                      value={mapForm.aadhaar_operator_id}
-                      onChange={(e) =>
-                        setMapForm({
-                          ...mapForm,
-                          aadhaar_operator_id: e.target.value.toUpperCase(),
-                        })
-                      }
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black uppercase"
-                    />
+                {enquiries.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 font-bold">
+                    No recent enquiries found.
                   </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto pr-1">
+                    {enquiries.map((enquiry) => (
+                      <div
+                        key={enquiry.id}
+                        className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:shadow-sm transition"
+                      >
+                        <div className="flex justify-between items-start mb-1.5">
+                          <h4 className="font-black text-blue-700 text-sm">
+                            {enquiry.name}
+                          </h4>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">
+                            {formatToDDMMYYYY(
+                              String(enquiry.created_at || "").split("T")[0]
+                            )}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-bold mb-2.5">
+                          ✉️ {enquiry.email}
+                        </p>
+                        <p className="text-slate-700 bg-white p-3 rounded-lg border border-slate-200 text-xs font-medium italic">
+                          &quot;{enquiry.message}&quot;
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-fit">
+                <div className="bg-slate-900 p-4 flex justify-between items-center text-white">
+                  <h3 className="font-black text-xs uppercase tracking-widest">
+                    Recent Franchise Apps
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => routeTo("/dashboard/applications")}
+                    className="text-[10px] font-black uppercase text-amber-400 hover:underline"
+                  >
+                    View All &rarr;
+                  </button>
+                </div>
+                <div className="flex-1">
+                  {recentApps.length === 0 ? (
+                    <p className="p-6 text-center text-slate-400 font-bold">
+                      No recent applications.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-slate-100">
+                      {recentApps.map((app) => (
+                        <li
+                          key={app.id}
+                          onClick={() =>
+                            routeTo(`/dashboard/applications/${app.id}`)
+                          }
+                          className="p-4 hover:bg-slate-50 transition cursor-pointer"
+                        >
+                          <div className="flex justify-between items-start mb-1">
+                            <span className="font-black text-slate-800 text-sm">
+                              {app.name}
+                            </span>
+                            <span
+                              className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${
+                                app.status === "Approved"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : app.status === "Rejected"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              {app.status || "Pending"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-blue-600 font-black uppercase">
+                            {app.requested_role}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1 font-bold">
+                            {formatToDDMMYYYY(
+                              String(app.created_at || "").split("T")[0]
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* GROUP 5: GOVERNANCE, SLA HELPDESK, DEFAULTER ENGINE & HR            */}
+        {/* =================================================================== */}
+        {activeGroup === "governance" && !isAccountant && (
+          <div className="space-y-8 animate-in fade-in">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div
+                onClick={() => setActiveView("support")}
+                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md hover:border-red-500 transition group cursor-pointer border-t-4 border-t-red-500 flex flex-col justify-between"
+              >
+                <div>
+                  <div className="text-3xl mb-3">🎧</div>
+                  <h3 className="font-black text-lg text-slate-900 group-hover:text-red-600">
+                    Support &amp; Escalation Desk
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                    Review partner BSNL &amp; Company tickets, inspect evidence,
+                    and resolve or escalate across L1/L2/L3 SLAs.
+                  </p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] font-black text-red-600 uppercase flex justify-between">
+                  <span>Launch Helpdesk SPA</span>
+                  <span>&rarr;</span>
+                </div>
+              </div>
+
+              {isManagerOrAdmin && (
+                <>
+                  <div
+                    onClick={() => routeTo("/dashboard/compliance")}
+                    className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md hover:border-rose-500 transition group cursor-pointer border-t-4 border-t-rose-600 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex justify-between items-start mb-3">
+                        <span className="text-3xl">🚨</span>
+                        <span className="bg-red-100 text-red-700 text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-widest border border-red-200 animate-pulse">
+                          Auto-Scan
+                        </span>
+                      </div>
+                      <h3 className="font-black text-lg text-slate-900 group-hover:text-rose-600">
+                        Compliance &amp; Defaulter Engine
+                      </h3>
+                      <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                        Automated tracking for unlogged yesterday reports,
+                        &gt;₹1K cash limit breaches, and ignored alerts.
+                      </p>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] font-black text-rose-600 uppercase flex justify-between">
+                      <span>Open Defaulter Roster</span>
+                      <span>&rarr;</span>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => routeTo("/dashboard/messages")}
+                    className="bg-white p-6 rounded-2xl border border-slate-200 hover:shadow-md hover:border-purple-500 transition group cursor-pointer border-t-4 border-t-purple-600 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="text-3xl mb-3">💬</div>
+                      <h3 className="font-black text-lg text-slate-900 group-hover:text-purple-600">
+                        Partner Alerts Command
+                      </h3>
+                      <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                        Dispatch targeted compliance warnings or global network
+                        broadcasts and track partner read receipts.
+                      </p>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] font-black text-purple-600 uppercase flex justify-between">
+                      <span>Open Alerts Command</span>
+                      <span>&rarr;</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {isGodMode && (
+                <div
+                  onClick={() => routeTo("/dashboard/staff-reports")}
+                  className="bg-white p-6 rounded-2xl border border-slate-200 hover:shadow-md hover:border-violet-500 transition group cursor-pointer border-t-4 border-t-violet-600 flex flex-col justify-between"
+                >
                   <div>
-                    <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
-                      UIDAI Station ID (5 Digits) *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={5}
-                      placeholder="e.g. 21505"
-                      value={mapForm.aadhaar_station_id}
-                      onChange={(e) =>
-                        setMapForm({
-                          ...mapForm,
-                          aadhaar_station_id: e.target.value.replace(/\D/g, ""),
-                        })
-                      }
-                      className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-black"
-                    />
+                    <div className="text-3xl mb-3">⏱️</div>
+                    <h3 className="font-black text-lg text-slate-900 group-hover:text-violet-600">
+                      Staff Productivity Matrix
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
+                      Real-time back-office staff output analytics and live
+                      audit feed across all enterprise modules.
+                    </p>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] font-black text-violet-600 uppercase flex justify-between">
+                    <span>View Staff Telemetry</span>
+                    <span>&rarr;</span>
                   </div>
                 </div>
               )}
+            </div>
 
-              <div className="flex gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setMappingPartner(null)}
-                  className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSavingMap}
-                  className="flex-1 py-3 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-wider rounded-lg shadow"
-                >
-                  {isSavingMap ? "Saving..." : "Save Mapping"}
-                </button>
-              </div>
-            </form>
+            {/* GOD-MODE STAFF MANAGEMENT ENGINE */}
+            {isGodMode && <StaffManagementEngine />}
           </div>
-        </div>
-      )}
+        )}
+      </main>
+
+      {/* MOBILE STICKY BOTTOM DEPARTMENT BAR */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950 border-t border-slate-800 grid grid-cols-5 gap-1 px-1.5 py-1.5 shadow-2xl">
+        {visibleDeptGroups.map((group) => {
+          const isActive = activeGroup === group.id;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              onClick={() => setActiveGroup(group.id)}
+              className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition ${
+                isActive
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <span className="text-base leading-none">{group.icon}</span>
+              <span className="text-[9px] font-black uppercase tracking-tighter mt-1 truncate max-w-full px-0.5">
+                {group.shortLabel}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
