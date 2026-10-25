@@ -1,12 +1,13 @@
 // FILE PATH: ./app/components/SessionManager.tsx
 "use client";
 
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
 const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const ACTIVITY_STORAGE_KEY = "fapl_last_active_ts";
 
 export default function SessionManager({
   children,
@@ -17,6 +18,7 @@ export default function SessionManager({
   const pathname = usePathname();
 
   const lastActivity = useRef<number>(Date.now());
+  const lastStorageSync = useRef<number>(0);
   const heartbeatTimer = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -27,17 +29,28 @@ export default function SessionManager({
     pathname.includes("/partner/sales") ||
     pathname.includes("/partner/deposit") ||
     pathname.includes("/partner/helpdesk") ||
-    pathname.includes("/partner/aadhaar");
+    pathname.includes("/partner/aadhaar") ||
+    pathname.includes("/partner/terms") ||
+    pathname.includes("/partner/resubmit");
 
   const executeLogout = async (reason: string) => {
     alert(reason);
     localStorage.removeItem("fapl_session_token");
+    localStorage.removeItem(ACTIVITY_STORAGE_KEY);
     await supabase.auth.signOut();
     router.push(pathname.includes("/partner") ? "/partner/login" : "/login");
   };
 
   const handleActivity = () => {
-    lastActivity.current = Date.now();
+    const now = Date.now();
+    lastActivity.current = now;
+    // Throttle localStorage writes to once every 5 seconds so multi-tab sessions stay synced
+    if (now - lastStorageSync.current > 5000) {
+      lastStorageSync.current = now;
+      try {
+        localStorage.setItem(ACTIVITY_STORAGE_KEY, String(now));
+      } catch (_) {}
+    }
   };
 
   const checkHeartbeatAndConcurrency = async () => {
@@ -47,7 +60,7 @@ export default function SessionManager({
       } = await supabase.auth.getSession();
       if (!session) return;
 
-      let localToken = localStorage.getItem("fapl_session_token");
+      const localToken = localStorage.getItem("fapl_session_token");
 
       const { data: dbSession, error } = await supabase
         .from("active_sessions")
@@ -64,11 +77,14 @@ export default function SessionManager({
           const newToken = `RECOVERED_${Date.now()}_${Math.random()
             .toString(36)
             .substring(2)}`;
-          await supabase.from("active_sessions").upsert({
-            user_id: session.user.id,
-            session_token: newToken,
-            last_active: new Date().toISOString(),
-          });
+          await supabase.from("active_sessions").upsert(
+            {
+              user_id: session.user.id,
+              session_token: newToken,
+              last_active: new Date().toISOString(),
+            },
+            { onConflict: "user_id" }
+          );
           localStorage.setItem("fapl_session_token", newToken);
           return;
         }
@@ -92,7 +108,16 @@ export default function SessionManager({
   };
 
   const checkInactivity = () => {
-    const timeSinceLastActive = Date.now() - lastActivity.current;
+    let latestActiveTs = lastActivity.current;
+    try {
+      const sharedTs = Number(localStorage.getItem(ACTIVITY_STORAGE_KEY) || 0);
+      if (sharedTs > latestActiveTs) {
+        latestActiveTs = sharedTs;
+        lastActivity.current = sharedTs;
+      }
+    } catch (_) {}
+
+    const timeSinceLastActive = Date.now() - latestActiveTs;
     if (timeSinceLastActive >= INACTIVITY_LIMIT_MS) {
       executeLogout(
         "Session Expired: You have been logged out due to 10 minutes of inactivity to protect your financial data."
@@ -103,6 +128,8 @@ export default function SessionManager({
   useEffect(() => {
     if (!isProtectedRoute) return;
 
+    handleActivity();
+
     const events = [
       "mousemove",
       "mousedown",
@@ -111,6 +138,16 @@ export default function SessionManager({
       "scroll",
     ];
     events.forEach((event) => window.addEventListener(event, handleActivity));
+
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key === ACTIVITY_STORAGE_KEY && e.newValue) {
+        const ts = Number(e.newValue);
+        if (!isNaN(ts) && ts > lastActivity.current) {
+          lastActivity.current = ts;
+        }
+      }
+    };
+    window.addEventListener("storage", handleStorageSync);
 
     heartbeatTimer.current = setInterval(
       checkHeartbeatAndConcurrency,
@@ -122,6 +159,7 @@ export default function SessionManager({
       events.forEach((event) =>
         window.removeEventListener(event, handleActivity)
       );
+      window.removeEventListener("storage", handleStorageSync);
       if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
       if (inactivityTimer.current) clearInterval(inactivityTimer.current);
     };

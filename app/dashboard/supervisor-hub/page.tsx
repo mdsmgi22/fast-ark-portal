@@ -78,6 +78,7 @@ export default function SupervisorHub() {
   }, []);
 
   const initializeSupervisorEngine = async () => {
+    setLoading(true);
     try {
       const {
         data: { session },
@@ -87,10 +88,17 @@ export default function SupervisorHub() {
       const { data: staff } = await supabase
         .from("back_office_staff")
         .select("*")
-        .eq("email", session.user.email)
-        .single();
+        .ilike("email", (session.user.email || "").trim())
+        .maybeSingle();
 
-      if (!staff || staff.role !== "Supervisor") {
+      const safeRole = String(staff?.role || "")
+        .trim()
+        .toLowerCase();
+      if (
+        !staff ||
+        staff.status !== "Active" ||
+        !["supervisor", "admin", "manager"].includes(safeRole)
+      ) {
         return router.push("/login");
       }
       setStaffProfile(staff);
@@ -103,6 +111,7 @@ export default function SupervisorHub() {
         .eq("supervisor_id", staff.auth_id);
 
       if (!allocations || allocations.length === 0) {
+        setAllocatedLocations([]);
         setLoading(false);
         return;
       }
@@ -159,7 +168,17 @@ export default function SupervisorHub() {
         return false;
       });
 
+      setRegionalPartners(permittedPartners);
+
       const permittedPartnerIds = permittedPartners.map((p) => p.id);
+      if (permittedPartnerIds.length === 0) {
+        setRegionalSales([]);
+        setRegionalDeposits([]);
+        setRegionalAadhaar([]);
+        setRegionalPenalties([]);
+        setLoading(false);
+        return;
+      }
 
       const [salesRes, depositsRes, aadhaarRes, penRes] = await Promise.all([
         supabase
@@ -175,7 +194,7 @@ export default function SupervisorHub() {
             "*, active_partners(partner_name, locations(id, center_name, center_code, state, parent_master_id))"
           )
           .in("partner_id", permittedPartnerIds)
-          .order("created_at", { ascending: false }),
+          .order("deposit_date", { ascending: false }),
         supabase
           .from("aadhaar_daily_reports")
           .select(
@@ -190,7 +209,6 @@ export default function SupervisorHub() {
           .eq("is_settled", false),
       ]);
 
-      setRegionalPartners(permittedPartners);
       setRegionalSales(salesRes.data || []);
       setRegionalDeposits(depositsRes.data || []);
       setRegionalAadhaar(aadhaarRes.data || []);
@@ -209,7 +227,7 @@ export default function SupervisorHub() {
     setViewingSlipId(deposit.id);
 
     try {
-      if (deposit.deposit_slip_url.startsWith("http")) {
+      if (String(deposit.deposit_slip_url || "").startsWith("http")) {
         window.open(deposit.deposit_slip_url, "_blank");
         setViewingSlipId(null);
         return;

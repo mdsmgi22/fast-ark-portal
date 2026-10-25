@@ -7,6 +7,10 @@ import { supabase } from "../../lib/supabase";
 import { formatToDDMMYYYY } from "../../lib/aadhaarEngine";
 import { reportAndMaskError, logSystemTelemetry } from "../../lib/errorCodes";
 
+// Prevents pdf-lib StandardFonts (WinAnsi) from throwing encoding errors on special characters
+const sanitizePdfText = (val: string): string =>
+  String(val || "").replace(/[^\x20-\x7E]/g, " ");
+
 const AADHAAR_DOC_PRESETS = [
   "NSEIT Certificate",
   "LMS Certificate",
@@ -35,7 +39,11 @@ interface UpgradeModuleProps {
   isCredentialsLocked: boolean;
   upgradeForm: { operator_id: string; station_id: string; nseit_no: string };
   setUpgradeForm: React.Dispatch<
-    React.SetStateAction<{ operator_id: string; station_id: string; nseit_no: string }>
+    React.SetStateAction<{
+      operator_id: string;
+      station_id: string;
+      nseit_no: string;
+    }>
   >;
   showBanner: (type: "success" | "error" | "info", text: string) => void;
   onRefreshPortal: () => Promise<void>;
@@ -50,29 +58,55 @@ export default function PartnerAadhaarUpgradeModule({
   showBanner,
   onRefreshPortal,
 }: UpgradeModuleProps) {
-  const [isEditingPendingReq, setIsEditingPendingReq] = useState<boolean>(false);
-  const [confirmUpgradeCheck, setConfirmUpgradeCheck] = useState<boolean>(false);
+  const [isEditingPendingReq, setIsEditingPendingReq] =
+    useState<boolean>(false);
+  const [confirmUpgradeCheck, setConfirmUpgradeCheck] =
+    useState<boolean>(false);
   const [docSlots, setDocSlots] = useState<DocSlot[]>([
-    { id: "slot-1", presetName: "NSEIT Certificate", customName: "", file: null },
-    { id: "slot-2", presetName: "Police Verification Certificate", customName: "", file: null },
+    {
+      id: "slot-1",
+      presetName: "NSEIT Certificate",
+      customName: "",
+      file: null,
+    },
+    {
+      id: "slot-2",
+      presetName: "Police Verification Certificate",
+      customName: "",
+      file: null,
+    },
     { id: "slot-3", presetName: "EA Request Form", customName: "", file: null },
   ]);
-  const [mergedPdfPreviewUrl, setMergedPdfPreviewUrl] = useState<string | null>(null);
-  const [mergedPdfBytesState, setMergedPdfBytesState] = useState<Uint8Array | null>(null);
+  const [mergedPdfPreviewUrl, setMergedPdfPreviewUrl] = useState<string | null>(
+    null
+  );
+  const [mergedPdfBytesState, setMergedPdfBytesState] =
+    useState<Uint8Array | null>(null);
   const [isMergingPdf, setIsMergingPdf] = useState<boolean>(false);
-  const [isSubmittingUpgrade, setIsSubmittingUpgrade] = useState<boolean>(false);
-  const [isDownloadingSubmittedPdf, setIsDownloadingSubmittedPdf] = useState<boolean>(false);
+  const [isSubmittingUpgrade, setIsSubmittingUpgrade] =
+    useState<boolean>(false);
+  const [isDownloadingSubmittedPdf, setIsDownloadingSubmittedPdf] =
+    useState<boolean>(false);
 
   const handleAddDocSlot = () => {
     if (isCredentialsLocked) return;
     if (docSlots.length >= 10)
-      return showBanner("info", "Maximum limit of 10 compliance documents reached.");
+      return showBanner(
+        "info",
+        "Maximum limit of 10 compliance documents reached."
+      );
     const usedPresets = new Set(docSlots.map((s) => s.presetName));
     const nextPreset =
-      AADHAAR_DOC_PRESETS.find((p) => !usedPresets.has(p)) || "Other (Custom Document Name)";
+      AADHAAR_DOC_PRESETS.find((p) => !usedPresets.has(p)) ||
+      "Other (Custom Document Name)";
     setDocSlots((prev) => [
       ...prev,
-      { id: `slot-${Date.now()}-${prev.length + 1}`, presetName: nextPreset, customName: "", file: null },
+      {
+        id: `slot-${Date.now()}-${prev.length + 1}`,
+        presetName: nextPreset,
+        customName: "",
+        file: null,
+      },
     ]);
     setMergedPdfBytesState(null);
     if (mergedPdfPreviewUrl) URL.revokeObjectURL(mergedPdfPreviewUrl);
@@ -87,12 +121,21 @@ export default function PartnerAadhaarUpgradeModule({
     setMergedPdfPreviewUrl(null);
   };
 
-  const handleSlotChange = (id: string, field: "presetName" | "customName" | "file", value: any) => {
+  const handleSlotChange = (
+    id: string,
+    field: "presetName" | "customName" | "file",
+    value: any
+  ) => {
     if (isCredentialsLocked) return;
     if (field === "file" && value && value.size > 5 * 1024 * 1024) {
-      return showBanner("error", `File "${value.name}" exceeds the 5MB limit per document.`);
+      return showBanner(
+        "error",
+        `File "${value.name}" exceeds the 5MB limit per document.`
+      );
     }
-    setDocSlots((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
+    setDocSlots((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, [field]: value } : s))
+    );
     setMergedPdfBytesState(null);
     if (mergedPdfPreviewUrl) URL.revokeObjectURL(mergedPdfPreviewUrl);
     setMergedPdfPreviewUrl(null);
@@ -101,13 +144,22 @@ export default function PartnerAadhaarUpgradeModule({
   const generateMergedCompliancePDF = async (): Promise<Uint8Array | null> => {
     const activeSlots = docSlots.filter((s) => s.file !== null);
     if (activeSlots.length === 0) {
-      showBanner("error", "Please attach at least 1 compliance document to generate the merged PDF.");
+      showBanner(
+        "error",
+        "Please attach at least 1 compliance document to generate the merged PDF."
+      );
       return null;
     }
 
     for (const s of activeSlots) {
-      if (s.presetName === "Other (Custom Document Name)" && !s.customName.trim()) {
-        showBanner("error", "Please type a Document Name for all 'Other' document slots.");
+      if (
+        s.presetName === "Other (Custom Document Name)" &&
+        !s.customName.trim()
+      ) {
+        showBanner(
+          "error",
+          "Please type a Document Name for all 'Other' document slots."
+        );
         return null;
       }
     }
@@ -117,22 +169,37 @@ export default function PartnerAadhaarUpgradeModule({
       const pdfDoc = await PDFDocument.create();
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
       const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const timestamp = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+      const timestamp = sanitizePdfText(
+        new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+      );
 
       const a4W = 595.28;
       const a4H = 841.89;
       const cover = pdfDoc.addPage([a4W, a4H]);
 
-      cover.drawRectangle({ x: 0, y: 760, width: a4W, height: 82, color: rgb(0.06, 0.09, 0.16) });
-      cover.drawText("FAST ARK PRIVATE LIMITED — AADHAAR OPERATOR COMPLIANCE DOSSIER", {
-        x: 40,
-        y: 805,
-        size: 13,
-        font: boldFont,
-        color: rgb(1, 1, 1),
+      cover.drawRectangle({
+        x: 0,
+        y: 760,
+        width: a4W,
+        height: 82,
+        color: rgb(0.06, 0.09, 0.16),
       });
       cover.drawText(
-        `Generated: ${timestamp} IST   |   Total Attached Documents: ${activeSlots.length} / 10`,
+        sanitizePdfText(
+          "FAST ARK PRIVATE LIMITED - AADHAAR OPERATOR COMPLIANCE DOSSIER"
+        ),
+        {
+          x: 40,
+          y: 805,
+          size: 13,
+          font: boldFont,
+          color: rgb(1, 1, 1),
+        }
+      );
+      cover.drawText(
+        sanitizePdfText(
+          `Generated: ${timestamp} IST   |   Total Attached Documents: ${activeSlots.length} / 10`
+        ),
         {
           x: 40,
           y: 782,
@@ -144,8 +211,20 @@ export default function PartnerAadhaarUpgradeModule({
 
       let y = 720;
       const drawMetaRow = (label: string, val: string) => {
-        cover.drawText(label, { x: 45, y, size: 10, font: boldFont, color: rgb(0.2, 0.2, 0.2) });
-        cover.drawText(val || "N/A", { x: 220, y, size: 10, font: font, color: rgb(0, 0, 0) });
+        cover.drawText(sanitizePdfText(label), {
+          x: 45,
+          y,
+          size: 10,
+          font: boldFont,
+          color: rgb(0.2, 0.2, 0.2),
+        });
+        cover.drawText(sanitizePdfText(val || "N/A"), {
+          x: 220,
+          y,
+          size: 10,
+          font: font,
+          color: rgb(0, 0, 0),
+        });
         y -= 22;
       };
 
@@ -158,9 +237,18 @@ export default function PartnerAadhaarUpgradeModule({
           partner?.locations?.center_name || "Unassigned"
         }`
       );
-      drawMetaRow("Requested UIDAI Operator ID:", upgradeForm.operator_id.trim().toUpperCase());
-      drawMetaRow("Requested UIDAI Station ID:", upgradeForm.station_id.trim());
-      drawMetaRow("NSEIT Certificate Number:", upgradeForm.nseit_no.trim().toUpperCase());
+      drawMetaRow(
+        "Requested UIDAI Operator ID:",
+        upgradeForm.operator_id.trim().toUpperCase()
+      );
+      drawMetaRow(
+        "Requested UIDAI Station ID:",
+        upgradeForm.station_id.trim()
+      );
+      drawMetaRow(
+        "NSEIT Certificate Number:",
+        upgradeForm.nseit_no.trim().toUpperCase()
+      );
 
       y -= 15;
       cover.drawText("ATTACHED COMPLIANCE DOCUMENTS INDEX", {
@@ -171,7 +259,12 @@ export default function PartnerAadhaarUpgradeModule({
         color: rgb(0.06, 0.09, 0.16),
       });
       y -= 8;
-      cover.drawLine({ start: { x: 45, y }, end: { x: 550, y }, thickness: 1, color: rgb(0.8, 0.8, 0.8) });
+      cover.drawLine({
+        start: { x: 45, y },
+        end: { x: 550, y },
+        thickness: 1,
+        color: rgb(0.8, 0.8, 0.8),
+      });
       y -= 20;
 
       activeSlots.forEach((slot, idx) => {
@@ -179,22 +272,38 @@ export default function PartnerAadhaarUpgradeModule({
           slot.presetName === "Other (Custom Document Name)"
             ? slot.customName.trim().toUpperCase()
             : slot.presetName;
-        cover.drawText(`${idx + 1}. ${docLabel}`, { x: 55, y, size: 10, font: boldFont });
-        cover.drawText(`File: ${slot.file?.name || ""}`, {
-          x: 310,
+        cover.drawText(sanitizePdfText(`${idx + 1}. ${docLabel}`), {
+          x: 55,
           y,
-          size: 9,
-          font,
-          color: rgb(0.35, 0.35, 0.35),
+          size: 10,
+          font: boldFont,
         });
+        cover.drawText(
+          sanitizePdfText(`File: ${slot.file?.name || ""}`).slice(0, 48),
+          {
+            x: 310,
+            y,
+            size: 9,
+            font,
+            color: rgb(0.35, 0.35, 0.35),
+          }
+        );
         y -= 20;
       });
 
-      cover.drawRectangle({ x: 0, y: 0, width: a4W, height: 22, color: rgb(0.06, 0.09, 0.16) });
+      cover.drawRectangle({
+        x: 0,
+        y: 0,
+        width: a4W,
+        height: 22,
+        color: rgb(0.06, 0.09, 0.16),
+      });
       cover.drawText(
-        `VERIFIED BY PARTNER: ${partner?.partner_name?.toUpperCase()} | OP: ${upgradeForm.operator_id.toUpperCase()} | STN: ${
-          upgradeForm.station_id
-        } | ${timestamp}`,
+        sanitizePdfText(
+          `VERIFIED BY PARTNER: ${partner?.partner_name?.toUpperCase()} | OP: ${upgradeForm.operator_id.toUpperCase()} | STN: ${
+            upgradeForm.station_id
+          } | ${timestamp}`
+        ).slice(0, 115),
         { x: 15, y: 7, size: 7, font: boldFont, color: rgb(1, 1, 1) }
       );
 
@@ -205,11 +314,13 @@ export default function PartnerAadhaarUpgradeModule({
           slot.presetName === "Other (Custom Document Name)"
             ? slot.customName.trim().toUpperCase()
             : slot.presetName.toUpperCase();
-        const stamp = `DOC ${i + 1}/${
-          activeSlots.length
-        }: ${docTitle} | PARTNER: ${partner?.partner_name?.toUpperCase()} | OP: ${upgradeForm.operator_id.toUpperCase()} | STN: ${
-          upgradeForm.station_id
-        } | ${timestamp}`;
+        const stamp = sanitizePdfText(
+          `DOC ${i + 1}/${
+            activeSlots.length
+          }: ${docTitle} | PARTNER: ${partner?.partner_name?.toUpperCase()} | OP: ${upgradeForm.operator_id.toUpperCase()} | STN: ${
+            upgradeForm.station_id
+          } | ${timestamp}`
+        ).slice(0, 115);
 
         const arrayBuffer = await file.arrayBuffer();
         const lowerName = file.name.toLowerCase();
@@ -224,13 +335,24 @@ export default function PartnerAadhaarUpgradeModule({
           lowerName.endsWith(".jpeg");
 
         if (isPdf) {
-          const srcPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-          const copiedPages = await pdfDoc.copyPages(srcPdf, srcPdf.getPageIndices());
+          const srcPdf = await PDFDocument.load(arrayBuffer, {
+            ignoreEncryption: true,
+          });
+          const copiedPages = await pdfDoc.copyPages(
+            srcPdf,
+            srcPdf.getPageIndices()
+          );
           copiedPages.forEach((p) => {
             pdfDoc.addPage(p);
             const { width } = p.getSize();
-            p.drawRectangle({ x: 0, y: 0, width, height: 20, color: rgb(0, 0, 0) });
-            p.drawText(stamp.slice(0, 115), {
+            p.drawRectangle({
+              x: 0,
+              y: 0,
+              width,
+              height: 20,
+              color: rgb(0, 0, 0),
+            });
+            p.drawText(stamp, {
               x: 10,
               y: 6,
               size: 7,
@@ -251,7 +373,7 @@ export default function PartnerAadhaarUpgradeModule({
           }
           const page = pdfDoc.addPage([595.28, Math.max(height + 70, 400)]);
           const pageH = page.getSize().height;
-          page.drawText(`DOCUMENT ${i + 1}: ${docTitle}`, {
+          page.drawText(sanitizePdfText(`DOCUMENT ${i + 1}: ${docTitle}`), {
             x: 20,
             y: pageH - 25,
             size: 10,
@@ -259,8 +381,14 @@ export default function PartnerAadhaarUpgradeModule({
             color: rgb(0.1, 0.1, 0.1),
           });
           page.drawImage(img, { x: 20, y: 30, width, height });
-          page.drawRectangle({ x: 0, y: 0, width: 595.28, height: 22, color: rgb(0, 0, 0) });
-          page.drawText(stamp.slice(0, 115), {
+          page.drawRectangle({
+            x: 0,
+            y: 0,
+            width: 595.28,
+            height: 22,
+            color: rgb(0, 0, 0),
+          });
+          page.drawText(stamp, {
             x: 10,
             y: 7,
             size: 7,
@@ -277,7 +405,9 @@ export default function PartnerAadhaarUpgradeModule({
       const finalBytes = await pdfDoc.save();
       setMergedPdfBytesState(finalBytes);
       if (mergedPdfPreviewUrl) URL.revokeObjectURL(mergedPdfPreviewUrl);
-      const blob = new Blob([finalBytes as unknown as BlobPart], { type: "application/pdf" });
+      const blob = new Blob([finalBytes as unknown as BlobPart], {
+        type: "application/pdf",
+      });
       const url = URL.createObjectURL(blob);
       setMergedPdfPreviewUrl(url);
       return finalBytes;
@@ -299,12 +429,14 @@ export default function PartnerAadhaarUpgradeModule({
       bytes = await generateMergedCompliancePDF();
     }
     if (!bytes) return;
-    const blob = new Blob([bytes as unknown as BlobPart], { type: "application/pdf" });
+    const blob = new Blob([bytes as unknown as BlobPart], {
+      type: "application/pdf",
+    });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `FastArk_Aadhaar_Compliance_${upgradeForm.operator_id || "OP"}_${
-      upgradeForm.station_id || "STN"
-    }.pdf`;
+    link.download = `FastArk_Aadhaar_Compliance_${
+      upgradeForm.operator_id || "OP"
+    }_${upgradeForm.station_id || "STN"}.pdf`;
     link.click();
   };
 
@@ -312,13 +444,15 @@ export default function PartnerAadhaarUpgradeModule({
     path: string | null,
     action: "view" | "download"
   ) => {
-    if (!path) return showBanner("error", "No compliance PDF found for this record.");
+    if (!path)
+      return showBanner("error", "No compliance PDF found for this record.");
     setIsDownloadingSubmittedPdf(true);
     try {
       const { data, error } = await supabase.storage
         .from("application_documents")
         .createSignedUrl(path, 3600);
-      if (error || !data?.signedUrl) throw error || new Error("Could not generate secure link.");
+      if (error || !data?.signedUrl)
+        throw error || new Error("Could not generate secure link.");
 
       if (action === "view") {
         window.open(data.signedUrl, "_blank");
@@ -335,10 +469,14 @@ export default function PartnerAadhaarUpgradeModule({
         document.body.removeChild(link);
       }
     } catch (err: any) {
-      const safeMsg = await reportAndMaskError(err, "AADHAAR_COMPLIANCE_DOWNLOAD", {
-        id: partner?.id,
-        email: partner?.email,
-      });
+      const safeMsg = await reportAndMaskError(
+        err,
+        "AADHAAR_COMPLIANCE_DOWNLOAD",
+        {
+          id: partner?.id,
+          email: partner?.email,
+        }
+      );
       showBanner("error", safeMsg);
     } finally {
       setIsDownloadingSubmittedPdf(false);
@@ -357,7 +495,10 @@ export default function PartnerAadhaarUpgradeModule({
       return showBanner("error", "Please enter your UIDAI Operator ID.");
     }
     if (upgradeForm.station_id.trim().length !== 5) {
-      return showBanner("error", "Validation Error: UIDAI Station ID must be 5 digits.");
+      return showBanner(
+        "error",
+        "Validation Error: UIDAI Station ID must be 5 digits."
+      );
     }
     if (!upgradeForm.nseit_no.trim()) {
       return showBanner("error", "Please enter your NSEIT Certificate Number.");
@@ -387,7 +528,8 @@ export default function PartnerAadhaarUpgradeModule({
         : null;
 
       if (hasNewFiles) {
-        const pdfBytes = mergedPdfBytesState || (await generateMergedCompliancePDF());
+        const pdfBytes =
+          mergedPdfBytesState || (await generateMergedCompliancePDF());
         if (!pdfBytes) {
           setIsSubmittingUpgrade(false);
           return;
@@ -430,7 +572,9 @@ export default function PartnerAadhaarUpgradeModule({
             {
               partner_id: partner.id,
               center_id: partner.center_id,
-              requested_operator_id: upgradeForm.operator_id.trim().toUpperCase(),
+              requested_operator_id: upgradeForm.operator_id
+                .trim()
+                .toUpperCase(),
               requested_station_id: upgradeForm.station_id.trim(),
               nseit_cert_no: upgradeForm.nseit_no.trim().toUpperCase(),
               compliance_pdf_url: finalPdfPath,
@@ -505,7 +649,9 @@ export default function PartnerAadhaarUpgradeModule({
             </p>
             <p
               className={`text-[10px] font-black mt-1 ${
-                partner?.locations?.role_aadhaar ? "text-emerald-400" : "text-amber-400"
+                partner?.locations?.role_aadhaar
+                  ? "text-emerald-400"
+                  : "text-amber-400"
               }`}
             >
               {partner?.locations?.role_aadhaar
@@ -526,7 +672,9 @@ export default function PartnerAadhaarUpgradeModule({
                 partner?.role_aadhaar ? "text-emerald-400" : "text-red-400"
               }`}
             >
-              {partner?.role_aadhaar ? "✅ Approved by Admin" : "🔒 Requires Admin Approval"}
+              {partner?.role_aadhaar
+                ? "✅ Approved by Admin"
+                : "🔒 Requires Admin Approval"}
             </p>
           </div>
 
@@ -560,24 +708,27 @@ export default function PartnerAadhaarUpgradeModule({
               <span className="text-3xl">🔒</span>
               <div>
                 <h3 className="font-black text-emerald-950 text-lg uppercase tracking-wide">
-                  Approved Aadhaar Credentials &amp; Compliance Dossier (Read-Only)
+                  Approved Aadhaar Credentials &amp; Compliance Dossier
+                  (Read-Only)
                 </h3>
                 <p className="text-xs font-bold text-emerald-800 mt-0.5">
-                  Your Aadhaar credentials and uploaded compliance documents have been verified
-                  and locked by Corporate Admin. Editing or re-uploading files is permanently
-                  disabled.
+                  Your Aadhaar credentials and uploaded compliance documents
+                  have been verified and locked by Corporate Admin. Editing or
+                  re-uploading files is permanently disabled.
                 </p>
               </div>
             </div>
 
-            {(latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url) && (
+            {(latestUpgradeReq?.compliance_pdf_url ||
+              partner?.compliance_docs_url) && (
               <div className="flex flex-wrap gap-2 shrink-0">
                 <button
                   type="button"
                   disabled={isDownloadingSubmittedPdf}
                   onClick={() =>
                     handleViewOrDownloadSubmittedPdf(
-                      latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url,
+                      latestUpgradeReq?.compliance_pdf_url ||
+                        partner?.compliance_docs_url,
                       "view"
                     )
                   }
@@ -590,7 +741,8 @@ export default function PartnerAadhaarUpgradeModule({
                   disabled={isDownloadingSubmittedPdf}
                   onClick={() =>
                     handleViewOrDownloadSubmittedPdf(
-                      latestUpgradeReq?.compliance_pdf_url || partner?.compliance_docs_url,
+                      latestUpgradeReq?.compliance_pdf_url ||
+                        partner?.compliance_docs_url,
                       "download"
                     )
                   }
@@ -643,8 +795,8 @@ export default function PartnerAadhaarUpgradeModule({
                   Upgrade Request Under Corporate Review
                 </h3>
                 <p className="text-xs font-bold text-amber-800 mt-0.5">
-                  Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}. You may edit your
-                  request only while it is pending approval.
+                  Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}.
+                  You may edit your request only while it is pending approval.
                 </p>
               </div>
             </div>
@@ -743,8 +895,8 @@ export default function PartnerAadhaarUpgradeModule({
                   : "Submit Aadhaar Operator Credentials & Documents (Up to 10)"}
               </h2>
               <p className="text-xs font-bold text-slate-500 mt-0.5">
-                Add up to 10 named compliance documents below. All uploaded files are
-                automatically merged into a single watermarked PDF.
+                Add up to 10 named compliance documents below. All uploaded
+                files are automatically merged into a single watermarked PDF.
               </p>
             </div>
 
@@ -771,7 +923,10 @@ export default function PartnerAadhaarUpgradeModule({
                   placeholder="e.g., MYS_FAAFREEN"
                   value={upgradeForm.operator_id}
                   onChange={(e) =>
-                    setUpgradeForm({ ...upgradeForm, operator_id: e.target.value.toUpperCase() })
+                    setUpgradeForm({
+                      ...upgradeForm,
+                      operator_id: e.target.value.toUpperCase(),
+                    })
                   }
                   className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black text-sm uppercase bg-white outline-none focus:border-blue-600"
                 />
@@ -805,7 +960,10 @@ export default function PartnerAadhaarUpgradeModule({
                   placeholder="Certificate Number"
                   value={upgradeForm.nseit_no}
                   onChange={(e) =>
-                    setUpgradeForm({ ...upgradeForm, nseit_no: e.target.value.toUpperCase() })
+                    setUpgradeForm({
+                      ...upgradeForm,
+                      nseit_no: e.target.value.toUpperCase(),
+                    })
                   }
                   className="w-full border-2 border-slate-300 p-2.5 rounded-lg font-black text-sm uppercase bg-white outline-none focus:border-blue-600"
                 />
@@ -816,10 +974,12 @@ export default function PartnerAadhaarUpgradeModule({
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                 <div>
                   <label className="block text-xs font-black uppercase text-slate-800 tracking-wider">
-                    4. Aadhaar Compliance Documents ({docSlots.length} / 10 Slots)
+                    4. Aadhaar Compliance Documents ({docSlots.length} / 10
+                    Slots)
                   </label>
                   <p className="text-[11px] font-bold text-slate-500">
-                    Select the document name and attach PDF, JPG, or PNG files (Max 5MB each).
+                    Select the document name and attach PDF, JPG, or PNG files
+                    (Max 5MB each).
                   </p>
                 </div>
 
@@ -846,7 +1006,13 @@ export default function PartnerAadhaarUpgradeModule({
                       </label>
                       <select
                         value={slot.presetName}
-                        onChange={(e) => handleSlotChange(slot.id, "presetName", e.target.value)}
+                        onChange={(e) =>
+                          handleSlotChange(
+                            slot.id,
+                            "presetName",
+                            e.target.value
+                          )
+                        }
                         className="w-full border border-slate-300 p-2 rounded-lg text-xs font-bold bg-white"
                       >
                         {AADHAAR_DOC_PRESETS.map((preset) => (
@@ -862,7 +1028,11 @@ export default function PartnerAadhaarUpgradeModule({
                           placeholder="TYPE CUSTOM DOCUMENT NAME..."
                           value={slot.customName}
                           onChange={(e) =>
-                            handleSlotChange(slot.id, "customName", e.target.value.toUpperCase())
+                            handleSlotChange(
+                              slot.id,
+                              "customName",
+                              e.target.value.toUpperCase()
+                            )
                           }
                           className="w-full border border-blue-300 p-2 rounded-lg text-xs font-black uppercase bg-white"
                         />
@@ -878,7 +1048,11 @@ export default function PartnerAadhaarUpgradeModule({
                         type="file"
                         accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/*"
                         onChange={(e) =>
-                          handleSlotChange(slot.id, "file", e.target.files?.[0] || null)
+                          handleSlotChange(
+                            slot.id,
+                            "file",
+                            e.target.files?.[0] || null
+                          )
                         }
                         className="w-full bg-white border border-slate-300 p-1.5 rounded-lg text-xs font-bold cursor-pointer"
                       />
@@ -904,7 +1078,8 @@ export default function PartnerAadhaarUpgradeModule({
                   <div>
                     <p className="text-xs font-black uppercase tracking-wider text-amber-400">
                       📄 Single Merged PDF Compiler (
-                      {docSlots.filter((s) => s.file !== null).length} File(s) Ready)
+                      {docSlots.filter((s) => s.file !== null).length} File(s)
+                      Ready)
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
@@ -914,7 +1089,9 @@ export default function PartnerAadhaarUpgradeModule({
                       onClick={generateMergedCompliancePDF}
                       className="bg-blue-600 hover:bg-blue-500 text-white font-black px-3.5 py-2 rounded-lg text-[10px] uppercase tracking-widest shadow"
                     >
-                      {isMergingPdf ? "Merging PDF..." : "🔄 Merge & Preview PDF"}
+                      {isMergingPdf
+                        ? "Merging PDF..."
+                        : "🔄 Merge & Preview PDF"}
                     </button>
                     {mergedPdfPreviewUrl && (
                       <a
@@ -959,16 +1136,19 @@ export default function PartnerAadhaarUpgradeModule({
               />
               <span className="text-xs font-bold text-blue-950 leading-relaxed">
                 I confirm that my UIDAI Operator ID (
-                <strong>{upgradeForm.operator_id || "N/A"}</strong>), 5-digit Station ID (
-                <strong>{upgradeForm.station_id || "N/A"}</strong>), NSEIT Certificate Number (
-                <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all attached compliance
-                documents are accurate.
+                <strong>{upgradeForm.operator_id || "N/A"}</strong>), 5-digit
+                Station ID (<strong>{upgradeForm.station_id || "N/A"}</strong>
+                ), NSEIT Certificate Number (
+                <strong>{upgradeForm.nseit_no || "N/A"}</strong>), and all
+                attached compliance documents are accurate.
               </span>
             </label>
 
             <button
               type="submit"
-              disabled={isSubmittingUpgrade || isMergingPdf || !confirmUpgradeCheck}
+              disabled={
+                isSubmittingUpgrade || isMergingPdf || !confirmUpgradeCheck
+              }
               className="w-full py-4 bg-slate-900 hover:bg-blue-600 text-white font-black uppercase tracking-widest text-xs rounded-xl shadow-lg disabled:opacity-40 transition"
             >
               {isSubmittingUpgrade
