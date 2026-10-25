@@ -1,13 +1,18 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
+// FILE PATH: ./app/api/forgot-password/route.ts
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
 
 export async function POST(request: Request) {
   try {
     const { email } = await request.json();
-    if (!email) return NextResponse.json({ success: false, error: 'Email is required' }, { status: 400 });
+    if (!email)
+      return NextResponse.json(
+        { success: false, error: "Email is required" },
+        { status: 400 }
+      );
 
-    const targetEmail = email.trim().toLowerCase();
+    const targetEmail = String(email).trim().toLowerCase();
 
     // =========================================================================
     // 1. Strict Environment Variable Validation
@@ -17,22 +22,36 @@ export async function POST(request: Request) {
     const resendKey = process.env.RESEND_API_KEY;
 
     if (!supabaseUrl || !serviceKey || !resendKey) {
-      console.error("❌ CRITICAL SERVER ERROR: Environment variables missing.");
-      return NextResponse.json({ 
-        success: false, 
-        error: "Server Configuration Error: The backend API keys are missing." 
-      }, { status: 500 });
+      console.error(
+        "❌ CRITICAL SERVER ERROR: Environment variables missing."
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Server Configuration Error: The backend API keys are missing.",
+        },
+        { status: 500 }
+      );
     }
 
     const supabaseAdmin = createClient(supabaseUrl, serviceKey);
     const resend = new Resend(resendKey);
 
     // =========================================================================
-    // 2. STRICT DATABASE VERIFICATION (Bulletproof Clearance Check)
+    // 2. STRICT DATABASE VERIFICATION (Case-Insensitive Clearance Check)
     // =========================================================================
     const [staffRes, partnerRes] = await Promise.all([
-      supabaseAdmin.from("back_office_staff").select("status, name").eq("email", targetEmail).maybeSingle(),
-      supabaseAdmin.from("active_partners").select("status, partner_name").eq("email", targetEmail).maybeSingle()
+      supabaseAdmin
+        .from("back_office_staff")
+        .select("status, name")
+        .ilike("email", targetEmail)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("active_partners")
+        .select("status, partner_name")
+        .ilike("email", targetEmail)
+        .maybeSingle(),
     ]);
 
     const staffData = staffRes.data;
@@ -41,7 +60,6 @@ export async function POST(request: Request) {
     let isAuthorized = false;
     let userName = "User";
 
-    // Deterministic status verification based on profile type
     if (staffData) {
       if (staffData.status === "Active") {
         isAuthorized = true;
@@ -55,45 +73,53 @@ export async function POST(request: Request) {
     }
 
     if (!staffData && !partnerData) {
-      return NextResponse.json({ 
-        success: false, 
-        error: "Access Denied: This email is not registered in the corporate or partner directory." 
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Access Denied: This email is not registered in the corporate or partner directory.",
+        },
+        { status: 403 }
+      );
     }
 
     if (!isAuthorized) {
-      return NextResponse.json({ 
-        success: false, 
-        error: "Account Deactivated: Your clearance has been revoked. Password recovery is disabled." 
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Account Deactivated: Your clearance has been revoked. Password recovery is disabled.",
+        },
+        { status: 403 }
+      );
     }
 
     // =====================================================================
     // 3. SILENT LINK GENERATION (Bypasses Supabase default email)
     // =====================================================================
-    const origin = request.headers.get('origin') || 'https://fastark.in';
+    const origin = request.headers.get("origin") || "https://fastark.in";
     const redirectUrl = `${origin}/update-password`;
 
-    // Generate the raw cryptographic link securely in the background
-    const { data: linkData, error: authError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'recovery',
-      email: targetEmail,
-      options: { redirectTo: redirectUrl },
-    });
+    const { data: linkData, error: authError } =
+      await supabaseAdmin.auth.admin.generateLink({
+        type: "recovery",
+        email: targetEmail,
+        options: { redirectTo: redirectUrl },
+      });
 
     if (authError) throw authError;
 
     const secureActionLink = linkData.properties.action_link;
 
     // =====================================================================
-    // 4. CUSTOM RESEND DISPATCH (Hides the raw URL in a branded button)
+    // 4. CUSTOM RESEND DISPATCH
     // =====================================================================
     await resend.emails.send({
-      from: 'Fast Ark Security <updates@fastark.in>',
+      from: "Fast Ark Security <updates@fastark.in>",
       to: targetEmail,
-      subject: 'Fast Ark - Authorized Password Recovery',
+      subject: "Fast Ark - Authorized Password Recovery",
       html: `
-        <div style="font-family: Arial, sans-serif; max-w: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
           <div style="text-align: center; margin-bottom: 20px;">
             <h1 style="color: #0f172a; margin: 0;">FAST ARK</h1>
             <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">Command Center Security</p>
@@ -115,28 +141,33 @@ export async function POST(request: Request) {
             </p>
           </div>
         </div>
-      `
+      `,
     });
 
     // =====================================================================
-    // 5. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+    // 5. ENTERPRISE SECURITY TELEMETRY
     // =====================================================================
-    await supabaseAdmin.from('staff_activity_logs').insert([{
-      staff_id: 'SYSTEM',
-      staff_email: targetEmail,
-      action_type: 'SECURITY_AUDIT',
-      module: 'AUTHENTICATION',
-      target_id: 'PASSWORD_RESET_REQUEST',
-      details: `Generated silent reset token and dispatched custom HTML recovery link via Resend to ${targetEmail}.`
-    }]);
+    await supabaseAdmin.from("staff_activity_logs").insert([
+      {
+        staff_id: "SYSTEM",
+        staff_email: targetEmail,
+        action_type: "SECURITY_AUDIT",
+        module: "AUTHENTICATION",
+        target_id: "PASSWORD_RESET_REQUEST",
+        details: `Generated silent reset token and dispatched custom HTML recovery link via Resend to ${targetEmail}.`,
+      },
+    ]);
 
-    return NextResponse.json({ 
-      success: true, 
-      message: "✅ Password reset link has been securely dispatched to your email address." 
+    return NextResponse.json({
+      success: true,
+      message:
+        "✅ Password reset link has been securely dispatched to your email address.",
     });
-
   } catch (error: any) {
     console.error("Forgot Password API Error:", error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 }
+    );
   }
 }

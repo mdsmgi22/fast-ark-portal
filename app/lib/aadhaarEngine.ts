@@ -1,10 +1,15 @@
 // FILE PATH: ./app/lib/aadhaarEngine.ts
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
+const sanitizePdfText = (val: unknown): string =>
+  String(val ?? "").replace(/[^\x20-\x7E]/g, " ");
+
 // --- STRICT INDIAN STANDARD DATE FORMATTERS (DD/MM/YYYY) ---
 export const getISTDateString = (offsetDays = 0): string => {
   const now = new Date();
-  const istTime = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
+  const istTime = new Date(
+    now.getTime() + (330 + now.getTimezoneOffset()) * 60000
+  );
   if (offsetDays !== 0) istTime.setDate(istTime.getDate() + offsetDays);
   const y = istTime.getFullYear();
   const m = String(istTime.getMonth() + 1).padStart(2, "0");
@@ -23,7 +28,10 @@ export const formatToDDMMYYYY = (yyyy_mm_dd: string): string => {
 export const convertDDMMYYYYtoYYYYMMDD = (dd_mm_yyyy: string): string => {
   const parts = dd_mm_yyyy.trim().split("/");
   if (parts.length !== 3) return dd_mm_yyyy;
-  return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+  return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(
+    2,
+    "0"
+  )}`;
 };
 
 // --- SHARED 7-OPTION DATE PRESET ENGINE (IST SAFE) ---
@@ -36,9 +44,13 @@ export type DatePresetMode =
   | "all"
   | "custom";
 
-export const getDateRangeFromPreset = (preset: DatePresetMode): { start: string; end: string } => {
+export const getDateRangeFromPreset = (
+  preset: DatePresetMode
+): { start: string; end: string } => {
   const now = new Date();
-  const istNow = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
+  const istNow = new Date(
+    now.getTime() + (330 + now.getTimezoneOffset()) * 60000
+  );
 
   const formatYMD = (d: Date) => {
     const year = d.getFullYear();
@@ -70,7 +82,11 @@ export const getDateRangeFromPreset = (preset: DatePresetMode): { start: string;
     return { start: formatYMD(firstDay), end: todayStr };
   }
   if (preset === "previous_month") {
-    const firstDayPrev = new Date(istNow.getFullYear(), istNow.getMonth() - 1, 1);
+    const firstDayPrev = new Date(
+      istNow.getFullYear(),
+      istNow.getMonth() - 1,
+      1
+    );
     const lastDayPrev = new Date(istNow.getFullYear(), istNow.getMonth(), 0);
     return { start: formatYMD(firstDayPrev), end: formatYMD(lastDayPrev) };
   }
@@ -86,7 +102,10 @@ export const extractDateFromEID = (eid: string): string => {
   if (clean.length < 22) return "";
   const yyyymmdd = clean.slice(14, 22);
   if (!/^\d{8}$/.test(yyyymmdd)) return "";
-  return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
+  return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(
+    6,
+    8
+  )}`;
 };
 
 // Quote-safe CSV line splitter
@@ -128,7 +147,13 @@ export const classifyEnrollmentRow = (
   mbu: string,
   totalAmt: number,
   tariff: Partial<TariffRule> | any
-): "CAT1_NEW" | "CAT2_MBU_FREE" | "CAT3_MBU_PAID" | "CAT4_DEMO" | "CAT5_BIO" | "INVALID" => {
+):
+  | "CAT1_NEW"
+  | "CAT2_MBU_FREE"
+  | "CAT3_MBU_PAID"
+  | "CAT4_DEMO"
+  | "CAT5_BIO"
+  | "INVALID" => {
   const t = type.trim().toUpperCase();
   const m = mbu.trim().toUpperCase();
   const amt = Number(totalAmt);
@@ -140,7 +165,8 @@ export const classifyEnrollmentRow = (
   if (t === "N" && m === "NO" && amt === 0) return "CAT1_NEW";
   if (t === "U" && m === "YES" && amt === 0) return "CAT2_MBU_FREE";
   if (t === "U" && m === "YES" && amt > 0) return "CAT3_MBU_PAID";
-  if (t === "U" && m === "NO" && amt > demoMin && amt < demoMax) return "CAT4_DEMO";
+  if (t === "U" && m === "NO" && amt > demoMin && amt < demoMax)
+    return "CAT4_DEMO";
   if (t === "U" && m === "NO" && amt >= bioMin) return "CAT5_BIO";
   return "INVALID";
 };
@@ -150,7 +176,11 @@ export const parseAndValidateDualFiles = async (
   csvFile: File,
   htmlFile: File,
   mode: "DAILY" | "WEEKLY",
-  expectedDateOrRange: { reportDate?: string; startDate?: string; endDate?: string },
+  expectedDateOrRange: {
+    reportDate?: string;
+    startDate?: string;
+    endDate?: string;
+  },
   expectedOperatorId: string,
   expectedStationId: string,
   activeTariff: Partial<TariffRule> | any
@@ -161,7 +191,10 @@ export const parseAndValidateDualFiles = async (
     );
   }
 
-  const [csvText, htmlText] = await Promise.all([csvFile.text(), htmlFile.text()]);
+  const [csvText, htmlText] = await Promise.all([
+    csvFile.text(),
+    htmlFile.text(),
+  ]);
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlText, "text/html");
@@ -178,7 +211,9 @@ export const parseAndValidateDualFiles = async (
 
   const htmlOperator = (metaMap["operator"] || "").toUpperCase();
   const htmlStation = (metaMap["station id"] || "").trim();
-  const pickDateHeader = (doc.querySelector(".pick_date h3")?.textContent || "").trim();
+  const pickDateHeader = (
+    doc.querySelector(".pick_date h3")?.textContent || ""
+  ).trim();
 
   if (htmlOperator !== expectedOperatorId.trim().toUpperCase()) {
     throw new Error(
@@ -191,7 +226,9 @@ export const parseAndValidateDualFiles = async (
     );
   }
 
-  const dateMatches = pickDateHeader.match(/(\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})/i);
+  const dateMatches = pickDateHeader.match(
+    /(\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})/i
+  );
   if (!dateMatches) {
     throw new Error(
       "Invalid HTML Report: Could not locate 'Report Generated for Date: DD/MM/YYYY to DD/MM/YYYY' header."
@@ -208,7 +245,9 @@ export const parseAndValidateDualFiles = async (
       throw new Error(
         `Date Mismatch: Selected date is ${formatToDDMMYYYY(
           expectedDateOrRange.reportDate!
-        )}, but HTML report was generated for ${dateMatches[1]} to ${dateMatches[2]}.`
+        )}, but HTML report was generated for ${dateMatches[1]} to ${
+          dateMatches[2]
+        }.`
       );
     }
   } else {
@@ -251,7 +290,8 @@ export const parseAndValidateDualFiles = async (
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  if (csvLines.length < 2) throw new Error("CSV file is empty or missing headers.");
+  if (csvLines.length < 2)
+    throw new Error("CSV file is empty or missing headers.");
 
   const csvRows = csvLines.slice(1).map((line) => {
     const cols = parseCSVLine(line);
@@ -323,7 +363,9 @@ export const parseAndValidateDualFiles = async (
     const eidDate = extractDateFromEID(c.eid);
     if (mode === "DAILY" && eidDate !== expectedDateOrRange.reportDate) {
       throw new Error(
-        `Packet Date Mismatch on Row #${i + 1} (${c.eid}): Packet date is ${formatToDDMMYYYY(
+        `Packet Date Mismatch on Row #${i + 1} (${
+          c.eid
+        }): Packet date is ${formatToDDMMYYYY(
           eidDate
         )}, expected ${formatToDDMMYYYY(expectedDateOrRange.reportDate!)}.`
       );
@@ -332,9 +374,9 @@ export const parseAndValidateDualFiles = async (
     const cat = classifyEnrollmentRow(c.type, c.mbu, c.totalAmt, activeTariff);
     if (cat === "INVALID") {
       throw new Error(
-        `Unrecognized UIDAI Category on Row #${i + 1} (${c.eid}): Type=${c.type}, MBU=${
-          c.mbu
-        }, Amt=₹${c.totalAmt}.`
+        `Unrecognized UIDAI Category on Row #${i + 1} (${c.eid}): Type=${
+          c.type
+        }, MBU=${c.mbu}, Amt=₹${c.totalAmt}.`
       );
     }
 
@@ -403,8 +445,11 @@ export const parseAndValidateDualFiles = async (
   };
 };
 
-// --- AUTOMATED LATE PAYMENT PENALTY SYNC ENGINE (RESPECTS WAIVE-OFFS & CUMULATIVE DEPOSITS) ---
-export const syncAadhaarLatePenalties = async (supabase: any, partnerId: string) => {
+// --- AUTOMATED LATE PAYMENT PENALTY SYNC ENGINE (UTC-SAFE CALENDAR ARITHMETIC) ---
+export const syncAadhaarLatePenalties = async (
+  supabase: any,
+  partnerId: string
+) => {
   const todayIST = getISTDateString(0);
 
   const [overdueRes, tariffRes, existingPenRes] = await Promise.all([
@@ -440,20 +485,20 @@ export const syncAadhaarLatePenalties = async (supabase: any, partnerId: string)
   const penaltyRate = Number(tariffRes.data?.daily_late_penalty || 100.0);
 
   for (const rep of overdueReports) {
-    const repDate = new Date(`${rep.report_date}T00:00:00+05:30`);
-    const curDate = new Date(`${todayIST}T00:00:00+05:30`);
+    // Use UTC midnight on YYYY-MM-DD strings so adding 86400000ms never shifts dates backward by 5.5h
+    const repDateUTC = new Date(`${rep.report_date}T00:00:00Z`);
+    const curDateUTC = new Date(`${todayIST}T00:00:00Z`);
     const diffDays = Math.floor(
-      (curDate.getTime() - repDate.getTime()) / (1000 * 60 * 60 * 24)
+      (curDateUTC.getTime() - repDateUTC.getTime()) / 86400000
     );
 
     if (diffDays <= 0) continue;
 
     for (let d = 1; d <= diffDays; d++) {
-      const penaltyDateObj = new Date(repDate.getTime() + d * 86400000);
+      const penaltyDateObj = new Date(repDateUTC.getTime() + d * 86400000);
       const pDateStr = penaltyDateObj.toISOString().split("T")[0];
       const compositeKey = `${rep.id}_${pDateStr}`;
 
-      // Skip if this day's penalty was already logged, settled, or waived off by Admin
       if (existingKeys.has(compositeKey)) continue;
 
       const { data: inserted, error } = await supabase
@@ -495,7 +540,10 @@ export const syncAadhaarLatePenalties = async (supabase: any, partnerId: string)
 };
 
 // --- MULTI-FORMAT EXPORT ENGINE (CSV & OFFICIAL A4 PDF) ---
-export const downloadAadhaarCSVReport = (reports: any[], filterLabel: string) => {
+export const downloadAadhaarCSVReport = (
+  reports: any[],
+  filterLabel: string
+) => {
   if (reports.length === 0)
     return alert("No records available to export for the current filter.");
 
@@ -527,7 +575,9 @@ export const downloadAadhaarCSVReport = (reports: any[], filterLabel: string) =>
     sanitize(r.operator_id),
     sanitize(r.station_id),
     sanitize(
-      r.has_files ? "With CSV & HTML Files" : "Without Files (Manual/Exemption)"
+      r.has_files
+        ? "With CSV & HTML Files"
+        : "Without Files (Manual/Exemption)"
     ),
     r.cat1_new_qty || 0,
     r.cat2_mbu_free_qty || 0,
@@ -545,9 +595,10 @@ export const downloadAadhaarCSVReport = (reports: any[], filterLabel: string) =>
     sanitize(r.exemption_reason || "Verified File Upload"),
   ]);
 
-  const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join(
-    "\n"
-  );
+  const csvContent = [
+    headers.join(","),
+    ...rows.map((row) => row.join(",")),
+  ].join("\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
@@ -581,7 +632,7 @@ export const downloadAadhaarPDFReport = async (
       color: rgb(0.06, 0.09, 0.16),
     });
     page.drawText(
-      "FAST ARK PRIVATE LIMITED — AADHAAR SEVA KENDRA AUDIT LEDGER",
+      "FAST ARK PRIVATE LIMITED - AADHAAR SEVA KENDRA AUDIT LEDGER",
       {
         x: 30,
         y: 565,
@@ -591,9 +642,11 @@ export const downloadAadhaarPDFReport = async (
       }
     );
     page.drawText(
-      `Filter Mode: ${filterLabel.toUpperCase()}   |   Scope: ${titleMeta}   |   Generated: ${formatToDDMMYYYY(
-        getISTDateString()
-      )}`,
+      sanitizePdfText(
+        `Filter Mode: ${filterLabel.toUpperCase()}   |   Scope: ${titleMeta}   |   Generated: ${formatToDDMMYYYY(
+          getISTDateString()
+        )}`
+      ).slice(0, 125),
       {
         x: 30,
         y: 547,
@@ -652,18 +705,21 @@ export const downloadAadhaarPDFReport = async (
     grandPkts += Number(r.total_packets_qty || 0);
     grandCash += Number(r.total_cash_collected || 0);
 
-    page.drawText(formatToDDMMYYYY(r.report_date), {
+    page.drawText(sanitizePdfText(formatToDDMMYYYY(r.report_date)), {
       x: 30,
       y,
       size: 8,
       font: bold,
     });
-    page.drawText(`${r.operator_id} (${r.station_id})`.slice(0, 18), {
-      x: 100,
-      y,
-      size: 8,
-      font,
-    });
+    page.drawText(
+      sanitizePdfText(`${r.operator_id} (${r.station_id})`).slice(0, 18),
+      {
+        x: 100,
+        y,
+        size: 8,
+        font,
+      }
+    );
     page.drawText(r.has_files ? "CSV+HTML" : "Manual/Exemp", {
       x: 205,
       y,
@@ -719,7 +775,7 @@ export const downloadAadhaarPDFReport = async (
       size: 8,
       font: bold,
     });
-    page.drawText((r.deposit_status || "").slice(0, 12), {
+    page.drawText(sanitizePdfText(r.deposit_status || "").slice(0, 12), {
       x: 760,
       y,
       size: 7,
@@ -737,10 +793,12 @@ export const downloadAadhaarPDFReport = async (
     color: rgb(0.06, 0.09, 0.16),
   });
   page.drawText(
-    `TOTAL PACKETS: ${grandPkts}   |   TOTAL CASH COLLECTED: Rs. ${grandCash.toLocaleString(
-      "en-IN",
-      { minimumFractionDigits: 2 }
-    )}`,
+    sanitizePdfText(
+      `TOTAL PACKETS: ${grandPkts}   |   TOTAL CASH COLLECTED: Rs. ${grandCash.toLocaleString(
+        "en-IN",
+        { minimumFractionDigits: 2 }
+      )}`
+    ),
     {
       x: 35,
       y: y,

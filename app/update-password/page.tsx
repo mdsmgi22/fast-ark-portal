@@ -29,7 +29,6 @@ export default function UpdatePasswordPage() {
     setLoading(true);
 
     try {
-      // 1. Verify active session
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -39,22 +38,40 @@ export default function UpdatePasswordPage() {
         );
       }
 
-      // 2. Update password and wipe the must_change_password flag
+      const userEmail = (session.user.email || "Unknown").trim().toLowerCase();
+
+      // 1. Determine Staff vs Partner Role & Terms Acceptance
+      const [staffRes, partnerRes] = await Promise.all([
+        supabase
+          .from("back_office_staff")
+          .select("id, role")
+          .ilike("email", userEmail)
+          .maybeSingle(),
+        supabase
+          .from("active_partners")
+          .select("id, role, tc_accepted")
+          .ilike("email", userEmail)
+          .maybeSingle(),
+      ]);
+
+      const staff = staffRes.data;
+      const partner = partnerRes.data;
+      const resolvedRole =
+        staff?.role ||
+        partner?.role ||
+        session.user.user_metadata?.role ||
+        "Partner";
+
+      // 2. Update password, wipe must_change_password, and sync role for proxy.ts
       const { error: updateError } = await supabase.auth.updateUser({
         password: password,
-        data: { must_change_password: false },
+        data: {
+          must_change_password: false,
+          role: resolvedRole,
+        },
       });
 
       if (updateError) throw updateError;
-
-      const userEmail = (session.user.email || "Unknown").trim().toLowerCase();
-
-      // 3. Determine Staff vs Partner Role & Establish Active Session Token
-      const { data: staff } = await supabase
-        .from("back_office_staff")
-        .select("id, role")
-        .ilike("email", userEmail)
-        .maybeSingle();
 
       const sessionPrefix = staff ? "STAFF" : "PARTNER";
       const sessionToken = `${sessionPrefix}_${Date.now()}_${Math.random()
@@ -63,27 +80,37 @@ export default function UpdatePasswordPage() {
 
       let currentIp = "Unknown";
       try {
-        const ipRes = await fetch("https://api.ipify.org?format=json");
-        currentIp = (await ipRes.json()).ip;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const ipRes = await fetch("https://api.ipify.org?format=json", {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (ipRes.ok) {
+          currentIp = (await ipRes.json()).ip || "Unknown";
+        }
       } catch (_) {}
 
-      await supabase.from("active_sessions").upsert({
-        user_id: session.user.id,
-        session_token: sessionToken,
-        ip_address: currentIp,
-        last_active: new Date().toISOString(),
-      });
-
       localStorage.setItem("fapl_session_token", sessionToken);
+      localStorage.setItem("fapl_last_active_ts", String(Date.now()));
 
-      // 4. ENTERPRISE SECURITY TELEMETRY (Immutable Audit Log)
+      await supabase.from("active_sessions").upsert(
+        {
+          user_id: session.user.id,
+          session_token: sessionToken,
+          ip_address: currentIp,
+          last_active: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+
       await supabase.from("staff_activity_logs").insert([
         {
           staff_id: session.user.id,
           staff_email: userEmail,
           action_type: "SECURITY_AUDIT",
           module: "AUTHENTICATION",
-          target_id: session.user.id,
+          target_id: staff?.id || partner?.id || session.user.id,
           details: `Credentials updated successfully. Password change locked. IP: ${currentIp}`,
         },
       ]);
@@ -102,10 +129,12 @@ export default function UpdatePasswordPage() {
               ? "/dashboard/supervisor-hub"
               : "/dashboard"
           );
+        } else if (partner && !partner.tc_accepted) {
+          router.push("/partner/terms");
         } else {
           router.push("/partner/dashboard");
         }
-      }, 1500);
+      }, 1200);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update password.");
     } finally {

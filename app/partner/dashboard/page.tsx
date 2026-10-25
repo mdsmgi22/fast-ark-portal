@@ -164,7 +164,7 @@ export default function PartnerDashboard() {
       const { data: partnerData } = await supabase
         .from("active_partners")
         .select("*, locations(*)")
-        .ilike("email", session.user.email || "")
+        .ilike("email", (session.user.email || "").trim())
         .maybeSingle();
 
       if (!partnerData) {
@@ -175,15 +175,19 @@ export default function PartnerDashboard() {
         return;
       }
 
-      if (partnerData.tc_accepted === false) return router.push("/partner/terms");
+      if (!partnerData.tc_accepted) return router.push("/partner/terms");
       setPartner(partnerData);
 
       await syncAadhaarLatePenalties(supabase, partnerData.id);
 
-      const { data: fileList } = await supabase.storage
-        .from("application_documents")
-        .list("", { search: `COMPLIANCE_${partnerData.id}` });
-      if (fileList && fileList.length > 0) setHasUploadedDocs(true);
+      if (partnerData.compliance_docs_url) {
+        setHasUploadedDocs(true);
+      } else {
+        const { data: fileList } = await supabase.storage
+          .from("application_documents")
+          .list("", { search: `COMPLIANCE_${partnerData.id}` });
+        if (fileList && fileList.length > 0) setHasUploadedDocs(true);
+      }
 
       if (partnerData.center_id) {
         const [virtualsRes, upisRes] = await Promise.all([
@@ -239,7 +243,7 @@ export default function PartnerDashboard() {
           .from("partner_deposits")
           .select("*")
           .eq("partner_id", partnerId)
-          .order("created_at", { ascending: false }),
+          .order("deposit_date", { ascending: false }),
         supabase
           .from("aadhaar_daily_reports")
           .select("*")
@@ -558,9 +562,16 @@ export default function PartnerDashboard() {
     try {
       let userIp = "Unknown";
       try {
-        userIp = (await (await fetch("https://api.ipify.org?format=json")).json())
-          .ip;
-      } catch (err) {}
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const ipRes = await fetch("https://api.ipify.org?format=json", {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (ipRes.ok) {
+          userIp = (await ipRes.json()).ip || "Unknown";
+        }
+      } catch (_) {}
 
       const mergedPdfBytes = await buildCompliancePDF(
         partner.email,
@@ -631,7 +642,9 @@ export default function PartnerDashboard() {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="bg-red-50 p-8 rounded-2xl shadow-sm border-2 border-red-200 text-center">
-          <h2 className="text-xl font-black text-red-800">Database Sync Error</h2>
+          <h2 className="text-xl font-black text-red-800">
+            Database Sync Error
+          </h2>
           <p className="text-sm text-red-900 mt-2">{syncError}</p>
           <button
             onClick={handleSignOut}
@@ -820,7 +833,8 @@ export default function PartnerDashboard() {
           <div className="bg-red-600 text-white p-4 rounded-xl shadow-lg border-2 border-red-800 flex flex-col md:flex-row items-start md:items-center justify-between animate-pulse">
             <div>
               <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2">
-                <span className="text-2xl">🚨</span> Priority Remittance Required
+                <span className="text-2xl">🚨</span> Priority Remittance
+                Required
               </h3>
               <p className="font-bold text-sm mt-1">
                 Your pending cash balance has exceeded the ₹1,000 limit. Settle
