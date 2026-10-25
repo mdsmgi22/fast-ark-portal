@@ -75,7 +75,9 @@ export default function AdminAadhaarCommandHub() {
   const [fCenter, setFCenter] = useState<string>("ALL");
   const [fStation, setFStation] = useState<string>("ALL");
   const [fPartner, setFPartner] = useState<string>("ALL");
-  const [fFileMode, setFFileMode] = useState<"ALL" | "WITH_FILES" | "WITHOUT_FILES">("ALL");
+  const [fFileMode, setFFileMode] = useState<
+    "ALL" | "WITH_FILES" | "WITHOUT_FILES"
+  >("ALL");
 
   // Sub-filters for Collections (Menu 3) & Live Station Attendance (Menu 4)
   const [collectionStatusFilter, setCollectionStatusFilter] = useState<
@@ -87,7 +89,8 @@ export default function AdminAadhaarCommandHub() {
   // Station-Wise vs Operator-Wise Grouping Mode & Mandatory Download Gate Checkbox
   const [reportGroupMode, setReportGroupMode] =
     useState<ReportGroupingMode>("DAILY_LEDGER");
-  const [confirmDownloadCheck, setConfirmDownloadCheck] = useState<boolean>(false);
+  const [confirmDownloadCheck, setConfirmDownloadCheck] =
+    useState<boolean>(false);
 
   // Force-Edit / Audit Modal State for Daily Reports (Menu 2)
   const [editingReport, setEditingReport] = useState<any | null>(null);
@@ -173,10 +176,10 @@ export default function AdminAadhaarCommandHub() {
       const { data: staff } = await supabase
         .from("back_office_staff")
         .select("*")
-        .ilike("email", session.user.email || "")
+        .ilike("email", (session.user.email || "").trim())
         .maybeSingle();
 
-      if (!staff) return router.push("/login");
+      if (!staff || staff.status !== "Active") return router.push("/login");
       setStaffUser(staff);
 
       const [
@@ -215,7 +218,7 @@ export default function AdminAadhaarCommandHub() {
           .select(
             "*, active_partners(id, partner_name, aadhaar_operator_id, aadhaar_station_id, locations(id, center_name, center_code, state, parent_master_id, role_aadhaar))"
           )
-          .order("created_at", { ascending: false }),
+          .order("deposit_date", { ascending: false }),
         supabase
           .from("aadhaar_penalty_logs")
           .select(
@@ -350,9 +353,11 @@ export default function AdminAadhaarCommandHub() {
         const loc = p.locations;
         if (!loc || !loc.role_aadhaar) return false;
         if (fState !== "ALL" && loc.state !== fState) return false;
-        if (fHq !== "ALL" && loc.parent_master_id?.toString() !== fHq) return false;
+        if (fHq !== "ALL" && loc.parent_master_id?.toString() !== fHq)
+          return false;
         if (fCenter !== "ALL" && loc.id?.toString() !== fCenter) return false;
-        if (fStation !== "ALL" && p.aadhaar_station_id !== fStation) return false;
+        if (fStation !== "ALL" && p.aadhaar_station_id !== fStation)
+          return false;
         return true;
       }),
     [partners, fState, fHq, fCenter, fStation]
@@ -399,7 +404,7 @@ export default function AdminAadhaarCommandHub() {
     );
   }, [penaltyLogs, fState, fHq, fCenter, fStation, fPartner]);
 
-  // REQUIREMENT #7: Filtered Aadhaar Collections & Remittances (Date + 5-Tier Cascade + Status)
+  // Filtered Aadhaar Collections & Remittances (Date + 5-Tier Cascade + Status)
   const filteredDepositsAllStatuses = useMemo(() => {
     return aadhaarDeposits.filter((d) => {
       const dt = (d.deposit_date || d.created_at || "").split("T")[0];
@@ -408,7 +413,16 @@ export default function AdminAadhaarCommandHub() {
       const stn = d.active_partners?.aadhaar_station_id;
       return matchesCascade(d.partner_id, loc, stn);
     });
-  }, [aadhaarDeposits, fromDate, toDate, fState, fHq, fCenter, fStation, fPartner]);
+  }, [
+    aadhaarDeposits,
+    fromDate,
+    toDate,
+    fState,
+    fHq,
+    fCenter,
+    fStation,
+    fPartner,
+  ]);
 
   const filteredDepositsForTable = useMemo(() => {
     return filteredDepositsAllStatuses.filter((d) => {
@@ -420,17 +434,22 @@ export default function AdminAadhaarCommandHub() {
     });
   }, [filteredDepositsAllStatuses, collectionStatusFilter]);
 
-  // REQUIREMENT #10: Live Working vs. Absent / Leave / Non-Working Stations Matrix
+  // Live Working vs. Absent / Leave / Non-Working Stations Matrix
   const liveStationAttendanceMatrix = useMemo(() => {
     return operatorOptions.map((op) => {
-      const opReports = filteredDailyReports.filter((r) => r.partner_id === op.id);
+      const opReports = filteredDailyReports.filter(
+        (r) => r.partner_id === op.id
+      );
       const latestRep = opReports[0] || null;
 
       let statusCategory: StationWorkingFilter = "NON_WORKING_UNLOGGED";
       let statusBadge = "🔴 Non-Working (No Report Logged)";
 
       if (latestRep) {
-        if (latestRep.has_files || Number(latestRep.total_packets_qty || 0) > 0) {
+        if (
+          latestRep.has_files ||
+          Number(latestRep.total_packets_qty || 0) > 0
+        ) {
           statusCategory = "WORKING";
           statusBadge = `🟢 Live Working (${latestRep.total_packets_qty} Pkts)`;
         } else if (latestRep.exemption_reason === "OPERATOR_LEAVE") {
@@ -589,7 +608,9 @@ export default function AdminAadhaarCommandHub() {
 
   const missingTodayOperators = useMemo(() => {
     const submittedPartnerIds = new Set(
-      dailyReports.filter((r) => r.report_date === toDate).map((r) => r.partner_id)
+      dailyReports
+        .filter((r) => r.report_date === toDate)
+        .map((r) => r.partner_id)
     );
     return operatorOptions.filter((op) => !submittedPartnerIds.has(op.id));
   }, [operatorOptions, dailyReports, toDate]);
@@ -801,7 +822,9 @@ export default function AdminAadhaarCommandHub() {
           .toUpperCase()}`;
 
       return [
-        `"${formatToDDMMYYYY((d.deposit_date || d.created_at || "").split("T")[0])}"`,
+        `"${formatToDDMMYYYY(
+          (d.deposit_date || d.created_at || "").split("T")[0]
+        )}"`,
         `"${refCode}"`,
         `"${loc?.state || "N/A"}"`,
         `"${loc?.center_code || "NO-CODE"}"`,
@@ -902,7 +925,7 @@ export default function AdminAadhaarCommandHub() {
     window.open(data.signedUrl, "_blank");
   };
 
-  // REQUIREMENT #8: Admin Late Payment Penalty Waive-Off Execution
+  // Admin Late Payment Penalty Waive-Off Execution
   const handleConfirmPenaltyWaiveOff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!waivingPenalty) return;
@@ -948,7 +971,9 @@ export default function AdminAadhaarCommandHub() {
             action_type: "PENALTY_WAIVE_OFF",
             module: "AADHAAR_HUB",
             target_id: waivingPenalty.id,
-            details: `Waived off ₹${waivingPenalty.penalty_amount} late penalty (${formatToDDMMYYYY(
+            details: `Waived off ₹${
+              waivingPenalty.penalty_amount
+            } late penalty (${formatToDDMMYYYY(
               waivingPenalty.penalty_for_date
             )}) for ${
               waivingPenalty.active_partners?.partner_name
@@ -1023,6 +1048,7 @@ export default function AdminAadhaarCommandHub() {
   const openReportEditModal = (r: any) => {
     setEditingReport({
       ...r,
+      original_cash: Number(r.total_cash_collected || 0),
       cat1_new_qty: Number(r.cat1_new_qty || 0),
       cat2_mbu_free_qty: Number(r.cat2_mbu_free_qty || 0),
       cat3_mbu_chargeable_qty: Number(r.cat3_mbu_chargeable_qty || 0),
@@ -1045,13 +1071,25 @@ export default function AdminAadhaarCommandHub() {
       const next = { ...prev, [field]: num };
       if (!manualCashOverride) {
         const tariff = getTariffForDate(next.report_date);
-        next.total_cash_collected =
+        const newCash =
           Number(next.cat3_mbu_chargeable_qty || 0) *
             Number(tariff.mbu_chargeable_fee || 125) +
           Number(next.cat4_demographic_qty || 0) *
             Number(tariff.demographic_fee || 75) +
           Number(next.cat5_biometric_qty || 0) *
             Number(tariff.biometric_fee || 125);
+        next.total_cash_collected = newCash;
+
+        // Auto-adjust deposit_status when transitioning between ₹0 and > ₹0 without a linked deposit
+        if (newCash === 0) {
+          next.deposit_status = "Settled";
+        } else if (
+          newCash > 0 &&
+          !next.deposit_id &&
+          next.deposit_status === "Settled"
+        ) {
+          next.deposit_status = "Pending Deposit";
+        }
       }
       return next;
     });
@@ -1071,7 +1109,7 @@ export default function AdminAadhaarCommandHub() {
     )
       return;
 
-    setIsSavingEdit(true);
+    setIsSubmittingEditState(true);
     try {
       const finalRemarks =
         auditReasonCategory === "Other"
@@ -1090,10 +1128,23 @@ export default function AdminAadhaarCommandHub() {
       const finalBase = Number((finalCash / (1 + gstPct / 100)).toFixed(2));
       const finalGst = Number((finalCash - finalBase).toFixed(2));
 
+      // Automatically reset deposit_status to "Pending Deposit" if a zero-cash settled report was increased to > ₹0 without a deposit_id
+      const resolvedDepositStatus =
+        finalCash === 0
+          ? "Settled"
+          : finalCash > 0 &&
+            !editingReport.deposit_id &&
+            editingReport.deposit_status === "Settled" &&
+            Number(editingReport.original_cash || 0) === 0
+          ? "Pending Deposit"
+          : editingReport.deposit_status;
+
       const basePayload: any = {
         cat1_new_qty: Number(editingReport.cat1_new_qty || 0),
         cat2_mbu_free_qty: Number(editingReport.cat2_mbu_free_qty || 0),
-        cat3_mbu_chargeable_qty: Number(editingReport.cat3_mbu_chargeable_qty || 0),
+        cat3_mbu_chargeable_qty: Number(
+          editingReport.cat3_mbu_chargeable_qty || 0
+        ),
         cat4_demographic_qty: Number(editingReport.cat4_demographic_qty || 0),
         cat5_biometric_qty: Number(editingReport.cat5_biometric_qty || 0),
         total_packets_qty: totalPackets,
@@ -1104,8 +1155,7 @@ export default function AdminAadhaarCommandHub() {
         gst_amount: finalGst,
         total_cash_collected: finalCash,
         exemption_reason: finalRemarks,
-        deposit_status:
-          finalCash === 0 ? "Settled" : editingReport.deposit_status,
+        deposit_status: resolvedDepositStatus,
       };
 
       const { error: richErr } = await supabase
@@ -1142,7 +1192,7 @@ export default function AdminAadhaarCommandHub() {
               editingReport.operator_id
             }, Stn: ${
               editingReport.station_id
-            }). Packets: ${totalPackets}, Cash: ₹${finalCash}. Reason: ${finalRemarks}`,
+            }). Packets: ${totalPackets}, Cash: ₹${finalCash}, Status: ${resolvedDepositStatus}. Reason: ${finalRemarks}`,
           },
         ]),
         logSystemTelemetry({
@@ -1155,6 +1205,7 @@ export default function AdminAadhaarCommandHub() {
           metadata: {
             packets: totalPackets,
             cash: finalCash,
+            deposit_status: resolvedDepositStatus,
             reason: finalRemarks,
           },
         }),
@@ -1170,7 +1221,7 @@ export default function AdminAadhaarCommandHub() {
               editingReport.station_id
             }) was updated by Admin (Packets: ${totalPackets}, Cash: ₹${finalCash.toLocaleString(
               "en-IN"
-            )}). Reason: ${finalRemarks}.`,
+            )}, Status: ${resolvedDepositStatus}). Reason: ${finalRemarks}.`,
           },
         ]),
       ]);
@@ -1185,8 +1236,12 @@ export default function AdminAadhaarCommandHub() {
       });
       alert(safeMsg);
     } finally {
-      setIsSavingEdit(false);
+      setIsSubmittingEditState(false);
     }
+  };
+
+  const setIsSubmittingEditState = (val: boolean) => {
+    setIsSavingEdit(val);
   };
 
   const handleDismissCorrectionRequest = async (reportId: string) => {
@@ -1211,7 +1266,9 @@ export default function AdminAadhaarCommandHub() {
   const handleCreateNewTariffVersion = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((staffUser?.role || "").toLowerCase() !== "admin") {
-      return alert("Forbidden: Only Super Admins can modify UIDAI Tariff rates.");
+      return alert(
+        "Forbidden: Only Super Admins can modify UIDAI Tariff rates."
+      );
     }
     if (
       !confirm(
@@ -1499,18 +1556,18 @@ export default function AdminAadhaarCommandHub() {
       {/* RIGHT MAIN WORKSPACE                                                  */}
       {/* ===================================================================== */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto space-y-6 max-w-[1500px]">
-        {/* REQUIREMENT #6: IMPROVED ADMIN AADHAAR FILTER CONSOLE HEADER & DESCRIPTION */}
+        {/* IMPROVED ADMIN AADHAAR FILTER CONSOLE HEADER & DESCRIPTION */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 border-b border-slate-100 pb-3">
             <div>
               <h2 className="font-black text-base text-slate-900 uppercase tracking-wider">
-                Aadhaar Seva Kendra — Network Operations, Collection &amp; Station
-                Telemetry Console
+                Aadhaar Seva Kendra — Network Operations, Collection &amp;
+                Station Telemetry Console
               </h2>
               <p className="text-[11px] font-bold text-slate-500 mt-0.5">
-                Multi-tier real-time command filter across State, Regional Master HQ,
-                Aadhaar Kendra Location, UIDAI Machine Station ID, and Operator ID •
-                Active Window:{" "}
+                Multi-tier real-time command filter across State, Regional
+                Master HQ, Aadhaar Kendra Location, UIDAI Machine Station ID,
+                and Operator ID • Active Window:{" "}
                 <span className="text-blue-600 font-black">
                   {formatToDDMMYYYY(fromDate)}
                 </span>{" "}
@@ -1520,8 +1577,8 @@ export default function AdminAadhaarCommandHub() {
                 </span>{" "}
                 •{" "}
                 <span className="text-emerald-700 font-black">
-                  {centerOptions.length} Center(s) • {stationOptions.length} Station
-                  ID(s) • {operatorOptions.length} Operator(s)
+                  {centerOptions.length} Center(s) • {stationOptions.length}{" "}
+                  Station ID(s) • {operatorOptions.length} Operator(s)
                 </span>
               </p>
             </div>
@@ -1566,8 +1623,8 @@ export default function AdminAadhaarCommandHub() {
           {aadhaarEnabledCenters.length === 0 && (
             <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between text-xs font-bold text-amber-900">
               <span>
-                ⚠️ No Aadhaar Centers are mapped yet. Enable an Aadhaar Center and
-                approve an Operator in Menu 7 to track reports.
+                ⚠️ No Aadhaar Centers are mapped yet. Enable an Aadhaar Center
+                and approve an Operator in Menu 7 to track reports.
               </span>
               <button
                 onClick={() => setActiveMenu("operators")}
@@ -1674,8 +1731,8 @@ export default function AdminAadhaarCommandHub() {
                 </option>
                 {stationOptions.map((stn) => (
                   <option key={stn.station_id} value={stn.station_id}>
-                    Stn: {stn.station_id} [{stn.center_code}] ({stn.operatorCount} Op
-                    {stn.operatorCount > 1 ? "s" : ""})
+                    Stn: {stn.station_id} [{stn.center_code}] (
+                    {stn.operatorCount} Op{stn.operatorCount > 1 ? "s" : ""})
                   </option>
                 ))}
               </select>
@@ -1757,6 +1814,7 @@ export default function AdminAadhaarCommandHub() {
               <input
                 type="date"
                 value={toDate}
+                max={getISTDateString(0)}
                 onChange={(e) => {
                   setDatePreset("custom");
                   setToDate(e.target.value);
@@ -1801,13 +1859,15 @@ export default function AdminAadhaarCommandHub() {
               />
               <span className="text-[11px] font-bold text-slate-800">
                 I confirm the selected filter parameters (Station:{" "}
-                <strong className="text-indigo-700">{fStation}</strong> | Operator:{" "}
+                <strong className="text-indigo-700">{fStation}</strong> |
+                Operator:{" "}
                 <strong className="text-emerald-700">
                   {selectedOperatorObj
                     ? selectedOperatorObj.aadhaar_operator_id
                     : "ALL"}
                 </strong>{" "}
-                | {filteredDailyReports.length} rows) and request report download.
+                | {filteredDailyReports.length} rows) and request report
+                download.
               </span>
             </label>
 
@@ -1916,8 +1976,12 @@ export default function AdminAadhaarCommandHub() {
                           <td className="p-3.5 text-center font-bold">
                             {s.reportsCount}
                           </td>
-                          <td className="p-3.5 text-center font-bold">{s.cat1}</td>
-                          <td className="p-3.5 text-center font-bold">{s.cat2}</td>
+                          <td className="p-3.5 text-center font-bold">
+                            {s.cat1}
+                          </td>
+                          <td className="p-3.5 text-center font-bold">
+                            {s.cat2}
+                          </td>
                           <td className="p-3.5 text-center font-bold text-amber-700">
                             {s.cat3}
                           </td>
@@ -1974,8 +2038,12 @@ export default function AdminAadhaarCommandHub() {
                           <td className="p-3.5 text-center font-bold">
                             {o.daysLogged}
                           </td>
-                          <td className="p-3.5 text-center font-bold">{o.cat1}</td>
-                          <td className="p-3.5 text-center font-bold">{o.cat2}</td>
+                          <td className="p-3.5 text-center font-bold">
+                            {o.cat1}
+                          </td>
+                          <td className="p-3.5 text-center font-bold">
+                            {o.cat2}
+                          </td>
                           <td className="p-3.5 text-center font-bold text-amber-700">
                             {o.cat3}
                           </td>
@@ -2063,7 +2131,10 @@ export default function AdminAadhaarCommandHub() {
                   Total Cash Collected
                 </p>
                 <p className="text-2xl font-black mt-1">
-                  ₹{kpi.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹
+                  {kpi.cash.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
                 </p>
                 <p className="text-[10px] text-slate-400 font-bold mt-1">
                   Base: ₹{kpi.base.toLocaleString("en-IN")} + GST: ₹
@@ -2150,7 +2221,8 @@ export default function AdminAadhaarCommandHub() {
                         </p>
                         <p className="text-[10px] font-bold text-slate-500">
                           [{op.locations?.center_code || "NO-CODE"}]{" "}
-                          {op.aadhaar_operator_id} | Stn: {op.aadhaar_station_id}
+                          {op.aadhaar_operator_id} | Stn:{" "}
+                          {op.aadhaar_station_id}
                         </p>
                       </div>
                       <span className="text-[9px] font-black bg-red-100 text-red-700 px-2 py-1 rounded uppercase">
@@ -2182,7 +2254,9 @@ export default function AdminAadhaarCommandHub() {
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
                   <tr>
                     <th className="p-3.5">Date (DD/MM/YYYY)</th>
-                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
+                    <th className="p-3.5">
+                      Aadhaar Center [Code] &amp; Operator
+                    </th>
                     <th className="p-3.5">Mode / Correction Status</th>
                     <th className="p-3.5 text-center">New</th>
                     <th className="p-3.5 text-center">MBU(F)</th>
@@ -2201,7 +2275,9 @@ export default function AdminAadhaarCommandHub() {
                     <tr
                       key={r.id}
                       className={`hover:bg-slate-50 ${
-                        r.edit_request_status === "Pending" ? "bg-amber-50/50" : ""
+                        r.edit_request_status === "Pending"
+                          ? "bg-amber-50/50"
+                          : ""
                       }`}
                     >
                       <td className="p-3.5 font-black">
@@ -2212,8 +2288,10 @@ export default function AdminAadhaarCommandHub() {
                           {r.active_partners?.partner_name}
                         </p>
                         <p className="text-[10px] font-bold text-slate-500">
-                          [{r.active_partners?.locations?.center_code || "NO-CODE"}]
-                          Op:{" "}
+                          [
+                          {r.active_partners?.locations?.center_code ||
+                            "NO-CODE"}
+                          ] Op:{" "}
                           <strong className="text-blue-700">
                             {r.operator_id}
                           </strong>{" "}
@@ -2243,7 +2321,9 @@ export default function AdminAadhaarCommandHub() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => handleDismissCorrectionRequest(r.id)}
+                              onClick={() =>
+                                handleDismissCorrectionRequest(r.id)
+                              }
                               className="text-[8px] font-black text-red-600 underline"
                             >
                               Dismiss
@@ -2287,7 +2367,9 @@ export default function AdminAadhaarCommandHub() {
                         {r.has_files ? (
                           <div className="flex justify-center gap-1">
                             <button
-                              onClick={() => handleDownloadVaultFile(r.csv_file_url)}
+                              onClick={() =>
+                                handleDownloadVaultFile(r.csv_file_url)
+                              }
                               className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                             >
                               CSV
@@ -2323,8 +2405,8 @@ export default function AdminAadhaarCommandHub() {
                         colSpan={13}
                         className="p-10 text-center text-slate-400 font-bold"
                       >
-                        No daily Aadhaar records match the selected Station/Operator
-                        cascade and date filters.
+                        No daily Aadhaar records match the selected
+                        Station/Operator cascade and date filters.
                       </td>
                     </tr>
                   )}
@@ -2345,7 +2427,10 @@ export default function AdminAadhaarCommandHub() {
                   Total Enrolment Collection
                 </p>
                 <p className="text-2xl font-black text-slate-900 mt-1">
-                  ₹{kpi.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹
+                  {kpi.cash.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
                 </p>
                 <p className="text-[10px] font-bold text-slate-500 mt-1">
                   From {filteredDailyReports.length} Daily Reports
@@ -2414,22 +2499,22 @@ export default function AdminAadhaarCommandHub() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex bg-slate-800 p-1 rounded-lg text-[10px] font-black uppercase">
-                    {(["Verified", "Pending", "Discrepancy", "ALL"] as const).map(
-                      (st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          onClick={() => setCollectionStatusFilter(st)}
-                          className={`px-2.5 py-1 rounded transition ${
-                            collectionStatusFilter === st
-                              ? "bg-emerald-600 text-white"
-                              : "text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          {st === "Verified" ? "✅ Approved" : st}
-                        </button>
-                      )
-                    )}
+                    {(
+                      ["Verified", "Pending", "Discrepancy", "ALL"] as const
+                    ).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setCollectionStatusFilter(st)}
+                        className={`px-2.5 py-1 rounded transition ${
+                          collectionStatusFilter === st
+                            ? "bg-emerald-600 text-white"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        {st === "Verified" ? "✅ Approved" : st}
+                      </button>
+                    ))}
                   </div>
 
                   <button
@@ -2475,22 +2560,25 @@ export default function AdminAadhaarCommandHub() {
                         <tr key={d.id} className="hover:bg-slate-50">
                           <td className="p-3.5 font-black">
                             {formatToDDMMYYYY(
-                              (d.deposit_date || d.created_at || "").split("T")[0]
+                              (d.deposit_date || d.created_at || "").split(
+                                "T"
+                              )[0]
                             )}
                           </td>
                           <td className="p-3.5 font-mono font-black text-indigo-700">
                             {refCode}
                           </td>
                           <td className="p-3.5 font-bold text-slate-800">
-                            [{loc?.center_code || "NO-CODE"}] {loc?.center_name} (
-                            {loc?.state})
+                            [{loc?.center_code || "NO-CODE"}] {loc?.center_name}{" "}
+                            ({loc?.state})
                           </td>
                           <td className="p-3.5">
                             <span className="font-black text-slate-900">
                               {d.active_partners?.partner_name}
                             </span>
                             <span className="text-[10px] font-bold text-blue-700 block">
-                              Op: {d.active_partners?.aadhaar_operator_id || "N/A"}{" "}
+                              Op:{" "}
+                              {d.active_partners?.aadhaar_operator_id || "N/A"}{" "}
                               | Stn:{" "}
                               {d.active_partners?.aadhaar_station_id || "N/A"}
                             </span>
@@ -2511,7 +2599,10 @@ export default function AdminAadhaarCommandHub() {
                                 : "text-emerald-700"
                             }`}
                           >
-                            ₹{Number(d.deposit_amount || 0).toLocaleString("en-IN")}
+                            ₹
+                            {Number(d.deposit_amount || 0).toLocaleString(
+                              "en-IN"
+                            )}
                           </td>
                           <td className="p-3.5 text-center">
                             <span
@@ -2555,8 +2646,8 @@ export default function AdminAadhaarCommandHub() {
                           colSpan={10}
                           className="p-10 text-center text-slate-400 font-bold"
                         >
-                          No Aadhaar collection records match the selected status
-                          and cascading filters.
+                          No Aadhaar collection records match the selected
+                          status and cascading filters.
                         </td>
                       </tr>
                     )}
@@ -2639,8 +2730,8 @@ export default function AdminAadhaarCommandHub() {
               <div className="p-4 bg-slate-900 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
                   <h3 className="font-black text-xs uppercase tracking-widest text-amber-400">
-                    📡 Live Working, Absent/Leave &amp; Non-Working Stations Report (
-                    {visibleStationAttendance.length} Stations)
+                    📡 Live Working, Absent/Leave &amp; Non-Working Stations
+                    Report ({visibleStationAttendance.length} Stations)
                   </h3>
                   <p className="text-[10px] font-bold text-slate-400 mt-0.5">
                     Tracks live operational status, partner leave/absence, and
@@ -2658,10 +2749,16 @@ export default function AdminAadhaarCommandHub() {
                     }
                     className="bg-slate-800 border border-slate-700 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg outline-none"
                   >
-                    <option value="ALL">All Stations ({liveStationAttendanceMatrix.length})</option>
+                    <option value="ALL">
+                      All Stations ({liveStationAttendanceMatrix.length})
+                    </option>
                     <option value="WORKING">🟢 Live Working Only</option>
-                    <option value="LEAVE_ABSENT">🟡 Absent / On Leave Only</option>
-                    <option value="TECH_OUTAGE">🟠 Tech / Server Outage Only</option>
+                    <option value="LEAVE_ABSENT">
+                      🟡 Absent / On Leave Only
+                    </option>
+                    <option value="TECH_OUTAGE">
+                      🟠 Tech / Server Outage Only
+                    </option>
                     <option value="HOLIDAY">🔵 Holiday Closed Only</option>
                     <option value="NON_WORKING_UNLOGGED">
                       🔴 Non-Working (Unlogged) Only
@@ -2782,7 +2879,9 @@ export default function AdminAadhaarCommandHub() {
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b">
                   <tr>
                     <th className="p-3.5">Week Range (Mon &rarr; Sun)</th>
-                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
+                    <th className="p-3.5">
+                      Aadhaar Center [Code] &amp; Operator
+                    </th>
                     <th className="p-3.5 text-center">Weekly Packets</th>
                     <th className="p-3.5 text-center">Rejected Pkts</th>
                     <th className="p-3.5 text-right">Weekly Cash (₹)</th>
@@ -2802,8 +2901,10 @@ export default function AdminAadhaarCommandHub() {
                           {w.active_partners?.partner_name}
                         </p>
                         <p className="text-[10px] font-bold text-slate-500">
-                          [{w.active_partners?.locations?.center_code || "NO-CODE"}]{" "}
-                          {w.operator_id} | Stn: {w.station_id}
+                          [
+                          {w.active_partners?.locations?.center_code ||
+                            "NO-CODE"}
+                          ] {w.operator_id} | Stn: {w.station_id}
                         </p>
                       </td>
                       <td className="p-3.5 text-center font-black">
@@ -2829,13 +2930,17 @@ export default function AdminAadhaarCommandHub() {
                       <td className="p-3.5 text-center">
                         <div className="flex justify-center gap-1">
                           <button
-                            onClick={() => handleDownloadVaultFile(w.csv_file_url)}
+                            onClick={() =>
+                              handleDownloadVaultFile(w.csv_file_url)
+                            }
                             className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                           >
                             CSV
                           </button>
                           <button
-                            onClick={() => handleDownloadVaultFile(w.html_file_url)}
+                            onClick={() =>
+                              handleDownloadVaultFile(w.html_file_url)
+                            }
                             className="bg-indigo-600 text-white px-2 py-1 rounded text-[9px] font-black uppercase"
                           >
                             HTML
@@ -2882,9 +2987,13 @@ export default function AdminAadhaarCommandHub() {
                   <tr>
                     <th className="p-3.5">Penalty Date (DD/MM/YYYY)</th>
                     <th className="p-3.5">Overdue Report Date</th>
-                    <th className="p-3.5">Aadhaar Center [Code] &amp; Operator</th>
+                    <th className="p-3.5">
+                      Aadhaar Center [Code] &amp; Operator
+                    </th>
                     <th className="p-3.5 text-right">Penalty Charged</th>
-                    <th className="p-3.5 text-center">Status &amp; Audit Record</th>
+                    <th className="p-3.5 text-center">
+                      Status &amp; Audit Record
+                    </th>
                     <th className="p-3.5 text-right">Admin Waive-Off</th>
                   </tr>
                 </thead>
@@ -3155,7 +3264,9 @@ export default function AdminAadhaarCommandHub() {
                   disabled={isSavingTariff}
                   className="w-full py-3.5 bg-slate-900 hover:bg-emerald-600 text-white font-black uppercase tracking-widest rounded-xl shadow mt-2 transition"
                 >
-                  {isSavingTariff ? "Deploying..." : "Commit New Tariff Version"}
+                  {isSavingTariff
+                    ? "Deploying..."
+                    : "Commit New Tariff Version"}
                 </button>
               </form>
             </div>
@@ -3239,11 +3350,16 @@ export default function AdminAadhaarCommandHub() {
                 </button>
               </div>
 
-              <form onSubmit={handleConfirmPenaltyWaiveOff} className="p-6 space-y-4 text-xs">
+              <form
+                onSubmit={handleConfirmPenaltyWaiveOff}
+                className="p-6 space-y-4 text-xs"
+              >
                 <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-xl space-y-1">
                   <p className="font-bold text-amber-950">
                     Overdue Report Date:{" "}
-                    <strong>{formatToDDMMYYYY(waivingPenalty.report_date)}</strong>{" "}
+                    <strong>
+                      {formatToDDMMYYYY(waivingPenalty.report_date)}
+                    </strong>{" "}
                     | Penalty Date:{" "}
                     <strong>
                       {formatToDDMMYYYY(waivingPenalty.penalty_for_date)}
@@ -3310,7 +3426,8 @@ export default function AdminAadhaarCommandHub() {
                   </h3>
                   <p className="text-xs text-amber-400 font-bold mt-0.5">
                     Date: {formatToDDMMYYYY(editingReport.report_date)} | Op:{" "}
-                    {editingReport.operator_id} | Stn: {editingReport.station_id}
+                    {editingReport.operator_id} | Stn:{" "}
+                    {editingReport.station_id}
                   </p>
                 </div>
                 <button
@@ -3321,7 +3438,10 @@ export default function AdminAadhaarCommandHub() {
                 </button>
               </div>
 
-              <form onSubmit={handleSaveReportEdit} className="p-6 space-y-5 text-xs">
+              <form
+                onSubmit={handleSaveReportEdit}
+                className="p-6 space-y-5 text-xs"
+              >
                 {editingReport.edit_request_reason && (
                   <div className="p-3.5 bg-yellow-50 border-2 border-yellow-300 rounded-xl text-yellow-950 font-bold">
                     📝 Partner Correction Request: &quot;
@@ -3357,7 +3477,10 @@ export default function AdminAadhaarCommandHub() {
                       onKeyDown={handleNumericKeyDown}
                       value={editingReport.cat2_mbu_free_qty}
                       onChange={(e) =>
-                        handleEditCategoryQty("cat2_mbu_free_qty", e.target.value)
+                        handleEditCategoryQty(
+                          "cat2_mbu_free_qty",
+                          e.target.value
+                        )
                       }
                       className={`${noScrollNumClass} mt-1`}
                     />
@@ -3441,16 +3564,29 @@ export default function AdminAadhaarCommandHub() {
                     <input
                       type="number"
                       step="0.01"
+                      min="0"
                       disabled={!manualCashOverride}
                       onWheel={handleNumericWheel}
                       onKeyDown={handleNumericKeyDown}
                       value={editingReport.total_cash_collected}
-                      onChange={(e) =>
-                        setEditingReport({
-                          ...editingReport,
-                          total_cash_collected: parseFloat(e.target.value) || 0,
-                        })
-                      }
+                      onChange={(e) => {
+                        const newCash = Math.max(
+                          0,
+                          parseFloat(e.target.value) || 0
+                        );
+                        setEditingReport((prev: any) => ({
+                          ...prev,
+                          total_cash_collected: newCash,
+                          deposit_status:
+                            newCash === 0
+                              ? "Settled"
+                              : newCash > 0 &&
+                                !prev.deposit_id &&
+                                prev.deposit_status === "Settled"
+                              ? "Pending Deposit"
+                              : prev.deposit_status,
+                        }));
+                      }}
                       className={`${noScrollNumClass} text-sm disabled:bg-slate-100`}
                     />
                   </div>
@@ -3470,7 +3606,9 @@ export default function AdminAadhaarCommandHub() {
                       className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-xs bg-white"
                     >
                       <option value="Pending Deposit">Pending Deposit</option>
-                      <option value="Deposit Submitted">Deposit Submitted</option>
+                      <option value="Deposit Submitted">
+                        Deposit Submitted
+                      </option>
                       <option value="Settled">Settled</option>
                     </select>
                   </div>

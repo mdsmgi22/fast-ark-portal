@@ -81,6 +81,16 @@ export default function StaffSalesVerification() {
     useState("");
   const [aadhaarOtherText, setAadhaarOtherText] = useState("");
 
+  const handleNumericWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+    (e.target as HTMLInputElement).blur();
+  };
+
+  const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["ArrowUp", "ArrowDown", "e", "E", "+", "-"].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
+
   const handlePresetChange = (mode: DatePresetMode) => {
     setDatePreset(mode);
     if (mode !== "custom") {
@@ -418,6 +428,7 @@ export default function StaffSalesVerification() {
   const openAadhaarEditModal = (rec: any) => {
     setEditingAadhaar({
       ...rec,
+      original_cash: Number(rec.total_cash_collected || 0),
       cat1_new_qty: Number(rec.cat1_new_qty || 0),
       cat2_mbu_free_qty: Number(rec.cat2_mbu_free_qty || 0),
       cat3_mbu_chargeable_qty: Number(rec.cat3_mbu_chargeable_qty || 0),
@@ -452,6 +463,7 @@ export default function StaffSalesVerification() {
         .from("aadhaar_daily_reports")
         .update({
           edit_request_status: "Rejected",
+          edit_request_reason: null,
         })
         .eq("id", rec.id);
       if (error) throw error;
@@ -475,6 +487,17 @@ export default function StaffSalesVerification() {
           Number(next.cat5_biometric_qty || 0) *
             Number(tariff.biometric_fee || 125);
         next.total_cash_collected = calcCash;
+
+        // Auto-adjust deposit_status when transitioning between ₹0 and > ₹0 without a linked deposit
+        if (calcCash === 0) {
+          next.deposit_status = "Settled";
+        } else if (
+          calcCash > 0 &&
+          !next.deposit_id &&
+          next.deposit_status === "Settled"
+        ) {
+          next.deposit_status = "Pending Deposit";
+        }
       }
       return next;
     });
@@ -527,6 +550,17 @@ export default function StaffSalesVerification() {
       const finalBase = Number((finalCash / (1 + gstPct / 100)).toFixed(2));
       const finalGst = Number((finalCash - finalBase).toFixed(2));
 
+      // Automatically reset deposit_status to "Pending Deposit" if a zero-cash settled report was increased to > ₹0 without a deposit_id
+      const resolvedDepositStatus =
+        finalCash === 0
+          ? "Settled"
+          : finalCash > 0 &&
+            !editingAadhaar.deposit_id &&
+            editingAadhaar.deposit_status === "Settled" &&
+            Number(editingAadhaar.original_cash || 0) === 0
+          ? "Pending Deposit"
+          : editingAadhaar.deposit_status;
+
       const baseUpdatePayload: any = {
         operator_id: editingAadhaar.operator_id.trim().toUpperCase(),
         station_id: editingAadhaar.station_id.trim(),
@@ -545,8 +579,7 @@ export default function StaffSalesVerification() {
         gst_amount: finalGst,
         total_cash_collected: finalCash,
         exemption_reason: editingAadhaar.exemption_reason || finalRemarks,
-        deposit_status:
-          finalCash === 0 ? "Settled" : editingAadhaar.deposit_status,
+        deposit_status: resolvedDepositStatus,
         edit_request_status: null,
         edit_request_reason: null,
       };
@@ -580,7 +613,7 @@ export default function StaffSalesVerification() {
           target_id: editingAadhaar.id,
           details: `Overwrote Aadhaar report for ${formatToDDMMYYYY(
             editingAadhaar.report_date
-          )} (Packets: ${totalPackets}, Cash: ₹${finalCash}). Reason: ${finalRemarks}`,
+          )} (Packets: ${totalPackets}, Cash: ₹${finalCash}, Status: ${resolvedDepositStatus}). Reason: ${finalRemarks}`,
         },
       ]);
 
@@ -594,7 +627,7 @@ export default function StaffSalesVerification() {
             editingAadhaar.report_date
           )} was audited and updated by the Back-Office (Total Packets: ${totalPackets}, Cash Collected: ₹${finalCash.toLocaleString(
             "en-IN"
-          )}). Reason: ${finalRemarks}.`,
+          )}, Status: ${resolvedDepositStatus}). Reason: ${finalRemarks}.`,
         },
       ]);
 
@@ -1402,6 +1435,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.cbp_landline_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "cbp_landline_qty",
@@ -1419,6 +1454,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.cbp_landline_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "cbp_landline_amt",
@@ -1435,6 +1472,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.cbp_gsm_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("cbp_gsm_qty", e.target.value)
                         }
@@ -1449,6 +1488,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.cbp_gsm_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("cbp_gsm_amt", e.target.value)
                         }
@@ -1471,6 +1512,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.ctop_recharge_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "ctop_recharge_qty",
@@ -1488,6 +1531,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.ctop_recharge_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "ctop_recharge_amt",
@@ -1504,6 +1549,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.frc_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("frc_qty", e.target.value)
                         }
@@ -1518,6 +1565,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.frc_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("frc_amt", e.target.value)
                         }
@@ -1540,6 +1589,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.mnp_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("mnp_qty", e.target.value)
                         }
@@ -1554,6 +1605,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.mnp_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("mnp_amt", e.target.value)
                         }
@@ -1568,6 +1621,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.sim_new_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("sim_new_qty", e.target.value)
                         }
@@ -1581,6 +1636,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.sim_upgrade_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "sim_upgrade_qty",
@@ -1597,6 +1654,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.sim_postpaid_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "sim_postpaid_qty",
@@ -1613,6 +1672,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.sim_replacement_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "sim_replacement_qty",
@@ -1629,6 +1690,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.sim_fancy_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("sim_fancy_qty", e.target.value)
                         }
@@ -1644,6 +1707,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.sim_postpaid_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "sim_postpaid_amt",
@@ -1661,6 +1726,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.sim_replacement_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange(
                             "sim_replacement_amt",
@@ -1678,6 +1745,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.sim_fancy_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("sim_fancy_amt", e.target.value)
                         }
@@ -1700,6 +1769,8 @@ export default function StaffSalesVerification() {
                       <input
                         type="number"
                         value={editingSale.cheque_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("cheque_qty", e.target.value)
                         }
@@ -1714,6 +1785,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.cheque_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("cheque_amt", e.target.value)
                         }
@@ -1744,6 +1817,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.other_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("other_amt", e.target.value)
                         }
@@ -1767,6 +1842,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.pb_cbp_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("pb_cbp_amt", e.target.value)
                         }
@@ -1781,6 +1858,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.pb_ctop_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("pb_ctop_amt", e.target.value)
                         }
@@ -1795,6 +1874,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.pb_frc_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("pb_frc_amt", e.target.value)
                         }
@@ -1809,6 +1890,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.pb_mnp_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("pb_mnp_amt", e.target.value)
                         }
@@ -1823,6 +1906,8 @@ export default function StaffSalesVerification() {
                         type="number"
                         step="0.01"
                         value={editingSale.pb_other_amt}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           handleEditInputChange("pb_other_amt", e.target.value)
                         }
@@ -2024,6 +2109,8 @@ export default function StaffSalesVerification() {
                       type="number"
                       min="0"
                       value={editingAadhaar.cat1_new_qty}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
                       onChange={(e) =>
                         handleAadhaarQtyChange("cat1_new_qty", e.target.value)
                       }
@@ -2038,6 +2125,8 @@ export default function StaffSalesVerification() {
                       type="number"
                       min="0"
                       value={editingAadhaar.cat2_mbu_free_qty}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
                       onChange={(e) =>
                         handleAadhaarQtyChange(
                           "cat2_mbu_free_qty",
@@ -2055,6 +2144,8 @@ export default function StaffSalesVerification() {
                       type="number"
                       min="0"
                       value={editingAadhaar.cat3_mbu_chargeable_qty}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
                       onChange={(e) =>
                         handleAadhaarQtyChange(
                           "cat3_mbu_chargeable_qty",
@@ -2072,6 +2163,8 @@ export default function StaffSalesVerification() {
                       type="number"
                       min="0"
                       value={editingAadhaar.cat4_demographic_qty}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
                       onChange={(e) =>
                         handleAadhaarQtyChange(
                           "cat4_demographic_qty",
@@ -2089,6 +2182,8 @@ export default function StaffSalesVerification() {
                       type="number"
                       min="0"
                       value={editingAadhaar.cat5_biometric_qty}
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
                       onChange={(e) =>
                         handleAadhaarQtyChange(
                           "cat5_biometric_qty",
@@ -2116,10 +2211,15 @@ export default function StaffSalesVerification() {
                         type="number"
                         min="0"
                         value={editingAadhaar.completed_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           setEditingAadhaar({
                             ...editingAadhaar,
-                            completed_qty: parseInt(e.target.value, 10) || 0,
+                            completed_qty: Math.max(
+                              0,
+                              parseInt(e.target.value, 10) || 0
+                            ),
                           })
                         }
                         className={numInputClass}
@@ -2133,10 +2233,15 @@ export default function StaffSalesVerification() {
                         type="number"
                         min="0"
                         value={editingAadhaar.inprocess_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           setEditingAadhaar({
                             ...editingAadhaar,
-                            inprocess_qty: parseInt(e.target.value, 10) || 0,
+                            inprocess_qty: Math.max(
+                              0,
+                              parseInt(e.target.value, 10) || 0
+                            ),
                           })
                         }
                         className={numInputClass}
@@ -2150,10 +2255,15 @@ export default function StaffSalesVerification() {
                         type="number"
                         min="0"
                         value={editingAadhaar.rejected_qty}
+                        onWheel={handleNumericWheel}
+                        onKeyDown={handleNumericKeyDown}
                         onChange={(e) =>
                           setEditingAadhaar({
                             ...editingAadhaar,
-                            rejected_qty: parseInt(e.target.value, 10) || 0,
+                            rejected_qty: Math.max(
+                              0,
+                              parseInt(e.target.value, 10) || 0
+                            ),
                           })
                         }
                         className={numInputClass}
@@ -2226,12 +2336,26 @@ export default function StaffSalesVerification() {
                       min="0"
                       disabled={!manualCashOverride}
                       value={editingAadhaar.total_cash_collected}
-                      onChange={(e) =>
-                        setEditingAadhaar({
-                          ...editingAadhaar,
-                          total_cash_collected: parseFloat(e.target.value) || 0,
-                        })
-                      }
+                      onWheel={handleNumericWheel}
+                      onKeyDown={handleNumericKeyDown}
+                      onChange={(e) => {
+                        const newCash = Math.max(
+                          0,
+                          parseFloat(e.target.value) || 0
+                        );
+                        setEditingAadhaar((prev: any) => ({
+                          ...prev,
+                          total_cash_collected: newCash,
+                          deposit_status:
+                            newCash === 0
+                              ? "Settled"
+                              : newCash > 0 &&
+                                !prev.deposit_id &&
+                                prev.deposit_status === "Settled"
+                              ? "Pending Deposit"
+                              : prev.deposit_status,
+                        }));
+                      }}
                       className={`${numInputClass} ${
                         !manualCashOverride
                           ? "bg-slate-100 text-slate-500 cursor-not-allowed"
