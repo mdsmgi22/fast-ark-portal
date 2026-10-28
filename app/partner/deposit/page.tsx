@@ -22,12 +22,20 @@ import {
 export default function PartnerDepositPage() {
   const router = useRouter();
   const [partner, setPartner] = useState<any>(null);
-  const [centerUpi, setCenterUpi] = useState<string>("fastark@upi");
   const [loading, setLoading] = useState(true);
   const [statusBanner, setStatusBanner] = useState<{
     type: "success" | "error" | "info";
     text: string;
   } | null>(null);
+
+  // Relational Treasury & Bank Mapping States (Synced with /dashboard/banking)
+  const [mappedUpis, setMappedUpis] = useState<any[]>([]);
+  const [centerUpi, setCenterUpi] = useState<string>("");
+  const [mappedVirtualAccounts, setMappedVirtualAccounts] = useState<any[]>([]);
+  const [mappedQrStickers, setMappedQrStickers] = useState<any[]>([]);
+  const [qrViewMode, setQrViewMode] = useState<"DYNAMIC_QR" | "STATIC_STICKER">(
+    "DYNAMIC_QR"
+  );
 
   // Desktop Split-Pane & Mobile 3-Tab Switcher ("form" | "viewer" | "ledger")
   const [rightPanel, setRightPanel] = useState<"ledger" | "viewer">("ledger");
@@ -121,16 +129,28 @@ export default function PartnerDepositPage() {
       const { data: partnerData, error: partnerError } = await supabase
         .from("active_partners")
         .select(
-          "id, center_id, partner_name, email, role, locations(center_name, center_code)"
+          "id, center_id, partner_name, email, role, locations(id, center_name, center_code, parent_master_id, qr_asset_url)"
         )
-        .ilike("email", session.user.email || "")
+        .ilike("email", (session.user.email || "").trim())
         .maybeSingle();
 
       if (partnerError || !partnerData)
         throw new Error("Partner profile not found.");
-      setPartner(partnerData);
 
-      const [depRes, salesRes] = await Promise.all([
+      const locObj: any = Array.isArray(partnerData.locations)
+        ? partnerData.locations[0]
+        : partnerData.locations;
+
+      setPartner({ ...partnerData, locations: locObj });
+
+      // Candidate location IDs: Spoke Center ID first, then Parent Master HQ fallback
+      const candidateLocIds = Array.from(
+        new Set(
+          [partnerData.center_id, locObj?.parent_master_id].filter(Boolean)
+        )
+      );
+
+      const [depRes, salesRes, upiRes, vaRes, qrRes] = await Promise.all([
         supabase
           .from("partner_deposits")
           .select("*")
@@ -141,6 +161,36 @@ export default function PartnerDepositPage() {
           .select("*")
           .eq("partner_id", partnerData.id)
           .order("report_date", { ascending: false }),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("upi_ids")
+              .select(
+                "id, upi_id, assigned_location_id, is_active, master_banks(id, bank_name, actual_account_no, ifsc_code, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("virtual_accounts")
+              .select(
+                "id, virtual_account_no, virtual_ifsc, assigned_location_id, is_active, master_banks(id, bank_name, actual_account_no, ifsc_code, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("qr_stickers")
+              .select(
+                "id, qr_file_url, assigned_location_id, is_active, master_banks(id, bank_name, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
       ]);
 
       const telecomDeps = (depRes.data || []).filter(
@@ -154,18 +204,40 @@ export default function PartnerDepositPage() {
       setDeposits(telecomDeps);
       setSalesList(salesRes.data || []);
 
-      if (partnerData.center_id) {
-        const { data: upiData } = await supabase
-          .from("upi_ids")
-          .select("upi_id")
-          .eq("assigned_location_id", partnerData.center_id)
-          .eq("is_active", true)
-          .maybeSingle();
+      // 1. Filter Active UPIs anchored to Active Master Banks (Spoke Center prioritized over HQ)
+      const validUpis = (upiRes.data || []).filter(
+        (u: any) => u.is_active && u.master_banks?.is_active !== false
+      );
+      const centerSpecificUpis = validUpis.filter(
+        (u: any) => u.assigned_location_id === partnerData.center_id
+      );
+      const finalUpis =
+        centerSpecificUpis.length > 0 ? centerSpecificUpis : validUpis;
 
-        if (upiData && upiData.upi_id) {
-          setCenterUpi(upiData.upi_id);
-        }
-      }
+      setMappedUpis(finalUpis);
+      setCenterUpi(finalUpis.length > 0 ? finalUpis[0].upi_id : "");
+
+      // 2. Filter Active CMS Virtual Accounts anchored to Active Master Banks
+      const validVas = (vaRes.data || []).filter(
+        (v: any) => v.is_active && v.master_banks?.is_active !== false
+      );
+      const centerSpecificVas = validVas.filter(
+        (v: any) => v.assigned_location_id === partnerData.center_id
+      );
+      setMappedVirtualAccounts(
+        centerSpecificVas.length > 0 ? centerSpecificVas : validVas
+      );
+
+      // 3. Filter Active Counter QR Stickers anchored to Active Master Banks
+      const validQrs = (qrRes.data || []).filter(
+        (q: any) => q.is_active && q.master_banks?.is_active !== false
+      );
+      const centerSpecificQrs = validQrs.filter(
+        (q: any) => q.assigned_location_id === partnerData.center_id
+      );
+      setMappedQrStickers(
+        centerSpecificQrs.length > 0 ? centerSpecificQrs : validQrs
+      );
     } catch (err: any) {
       await reportAndMaskError(err, "PARTNER_DEPOSIT_INIT");
     } finally {
@@ -409,6 +481,7 @@ export default function PartnerDepositPage() {
           utr_number: cleanUtr,
           transaction_id: cleanTxnId,
           reference_code: finalRefCode,
+          upi_id: form.deposit_method === "UPI" ? centerUpi : null,
         },
       });
 
@@ -492,7 +565,6 @@ export default function PartnerDepositPage() {
 
     setIsSubmitting(true);
     try {
-      // Pre-flight duplicate UTR check excluding the current record being edited
       const { data: dupCheck } = await supabase
         .from("partner_deposits")
         .select("id, reference_code")
@@ -572,7 +644,6 @@ export default function PartnerDepositPage() {
     });
   };
 
-  // Filtered Sales & Deposits by Selected Week / Month / Custom Date Range
   const filteredDeposits = useMemo(() => {
     return deposits.filter((d) => {
       const dt = (d.deposit_date || d.created_at || "").split("T")[0];
@@ -587,7 +658,6 @@ export default function PartnerDepositPage() {
     });
   }, [salesList, filterFromDate, filterToDate]);
 
-  // Total Collection Deducted from Deposit = Balance Payable
   const reconciliationMetrics = useMemo(() => {
     const calcSaleRow = (s: any) =>
       Number(s.cbp_landline_amt || 0) +
@@ -638,13 +708,26 @@ export default function PartnerDepositPage() {
       </div>
     );
 
-  // QR & Mobile Deep-Link Engine (NPCI Compliant)
+  // Relational UPI & QR Resolution
+  const selectedUpiObj =
+    mappedUpis.find((u) => u.upi_id === centerUpi) || mappedUpis[0] || null;
+  const activeQrStickerUrl =
+    mappedQrStickers[0]?.qr_file_url ||
+    partner?.locations?.qr_asset_url ||
+    null;
+
   const userEnteredValue = parseFloat(form.deposit_amount) || 0;
   const safeAmount = userEnteredValue.toFixed(2);
   const safeName = encodeURIComponent("Fast Ark");
-  const rawNote = `Rolling_${partner?.center_id}`;
+  const rawNote = `Rolling_${
+    partner?.locations?.center_code || partner?.center_id
+  }`;
   const safeNote = encodeURIComponent(rawNote.substring(0, 48));
-  const upiString = `upi://pay?pa=${centerUpi}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`;
+  const upiString = centerUpi
+    ? `upi://pay?pa=${encodeURIComponent(
+        centerUpi
+      )}&pn=${safeName}&am=${safeAmount}&cu=INR&tn=${safeNote}`
+    : "";
 
   const isPdfPreview =
     slipImage?.type === "application/pdf" ||
@@ -788,7 +871,7 @@ export default function PartnerDepositPage() {
           </div>
         </div>
 
-        {/* MOBILE 3-TAB SWITCHER (VISIBLE ON PHONES / TABLETS < LG) */}
+        {/* MOBILE 3-TAB SWITCHER */}
         <div className="lg:hidden bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm grid grid-cols-3 gap-1.5">
           <button
             type="button"
@@ -981,7 +1064,7 @@ export default function PartnerDepositPage() {
                     <div
                       className="bg-blue-600 h-full transition-all duration-200"
                       style={{ width: `${scanProgress}%` }}
-                    ></div>
+                    />
                   </div>
                 </div>
               )}
@@ -1110,6 +1193,157 @@ export default function PartnerDepositPage() {
                 </div>
               </div>
 
+              {/* RELATIONAL BANK & UPI TREASURY ROUTING DISPLAY */}
+              {form.deposit_method === "UPI" ? (
+                <div className="bg-slate-900 text-white rounded-xl p-4 border-2 border-slate-800 space-y-3 animate-in fade-in">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="text-[10px] font-black uppercase text-purple-400 tracking-widest">
+                      Center UPI Routing ({mappedUpis.length} Active)
+                    </span>
+                    {activeQrStickerUrl && (
+                      <div className="flex bg-slate-800 p-0.5 rounded text-[9px] font-black uppercase">
+                        <button
+                          type="button"
+                          onClick={() => setQrViewMode("DYNAMIC_QR")}
+                          className={`px-2 py-0.5 rounded ${
+                            qrViewMode === "DYNAMIC_QR"
+                              ? "bg-blue-600 text-white"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          ⚡ Dynamic
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQrViewMode("STATIC_STICKER")}
+                          className={`px-2 py-0.5 rounded ${
+                            qrViewMode === "STATIC_STICKER"
+                              ? "bg-emerald-600 text-white"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          🖨️ Sticker
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {mappedUpis.length > 0 ? (
+                    <>
+                      {mappedUpis.length > 1 ? (
+                        <select
+                          value={centerUpi}
+                          onChange={(e) => setCenterUpi(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 text-white font-black text-xs p-2 rounded-lg outline-none"
+                        >
+                          {mappedUpis.map((u: any) => (
+                            <option key={u.id} value={u.upi_id}>
+                              {u.upi_id} —{" "}
+                              {u.master_banks?.bank_name || "Treasury Bank"}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="flex justify-between items-center text-xs bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                          <span className="font-mono font-black text-white">
+                            {centerUpi}
+                          </span>
+                          <span className="text-[9px] font-black text-emerald-400 uppercase">
+                            🏦{" "}
+                            {selectedUpiObj?.master_banks?.bank_name ||
+                              "Verified"}
+                          </span>
+                        </div>
+                      )}
+
+                      {qrViewMode === "STATIC_STICKER" && activeQrStickerUrl ? (
+                        <div className="flex flex-col items-center pt-1">
+                          <div className="bg-white p-2.5 rounded-xl shadow mb-2 max-w-[180px]">
+                            <img
+                              src={activeQrStickerUrl}
+                              alt="Official Store QR Sticker"
+                              className="w-full h-auto object-contain rounded"
+                            />
+                          </div>
+                          <p className="text-[10px] font-black text-emerald-400 uppercase">
+                            Official Store Counter QR
+                          </p>
+                        </div>
+                      ) : userEnteredValue > 0 && centerUpi ? (
+                        <div className="flex flex-col items-center text-center pt-1">
+                          <div className="bg-white p-3 rounded-xl shadow-lg mb-2">
+                            <QRCodeSVG
+                              value={upiString}
+                              size={145}
+                              level="M"
+                            />
+                          </div>
+                          <p className="text-emerald-400 font-black text-lg">
+                            ₹
+                            {userEnteredValue.toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                            })}
+                          </p>
+                          <a
+                            href={upiString}
+                            className="mt-2 w-full py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] uppercase tracking-widest rounded-lg shadow transition flex items-center justify-center gap-1.5"
+                          >
+                            <span>📲</span> Tap to Pay via UPI App
+                          </a>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 font-bold text-center py-1">
+                          Enter Deposit Amount above to generate dynamic UPI QR.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="bg-red-950/70 border border-red-700 p-3 rounded-lg text-[11px] text-red-200 font-bold">
+                      ⚠️ No active UPI ID mapped to [
+                      {partner?.locations?.center_code || "CENTER"}]. Select
+                      NEFT/IMPS/Cash Deposit or contact Corporate Treasury.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-slate-900 text-white rounded-xl p-4 border-2 border-slate-800 space-y-2.5 animate-in fade-in">
+                  <p className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
+                    🏦 Mapped Center CMS Virtual Account(s)
+                  </p>
+                  {mappedVirtualAccounts.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 font-bold">
+                      No dedicated CMS Virtual Account mapped to this center
+                      yet. Contact Corporate Treasury for bank details.
+                    </p>
+                  ) : (
+                    mappedVirtualAccounts.map((va: any) => (
+                      <div
+                        key={va.id}
+                        className="bg-slate-950 p-3 rounded-lg border border-amber-500/40 space-y-1 text-xs"
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase text-amber-300">
+                            {va.master_banks?.bank_name || "Treasury Bank"}
+                          </span>
+                          <span className="text-[9px] font-black text-emerald-400 uppercase">
+                            Active CMS
+                          </span>
+                        </div>
+                        <p className="font-mono font-black text-sm text-white">
+                          A/C: {va.virtual_account_no}
+                        </p>
+                        <p className="text-[11px] font-bold text-slate-300">
+                          IFSC:{" "}
+                          <strong className="font-mono text-amber-300">
+                            {va.virtual_ifsc}
+                          </strong>
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="text-[10px] font-black text-blue-700 uppercase tracking-widest block mb-1.5">
                   4. Unique UTR Number (12-Digit UPI / Bank Ref) *
@@ -1160,35 +1394,6 @@ export default function PartnerDepositPage() {
                   />
                 </div>
               </div>
-
-              {form.deposit_method === "UPI" && userEnteredValue > 0 && (
-                <div className="bg-slate-900 rounded-xl p-5 text-center border-2 border-slate-800 shadow-inner flex flex-col items-center animate-in fade-in mt-2">
-                  <p className="text-blue-400 font-black uppercase tracking-widest text-xs mb-3">
-                    Scan or Tap to Pay via UPI
-                  </p>
-                  <div className="bg-white p-3 rounded-xl shadow-lg mb-3">
-                    <QRCodeSVG value={upiString} size={145} level="M" />
-                  </div>
-                  <p className="text-white font-bold text-sm">
-                    Fast Ark Pvt Ltd
-                  </p>
-                  <p className="text-slate-400 text-[10px] uppercase tracking-widest mt-0.5">
-                    Routing to: {centerUpi}
-                  </p>
-                  <p className="text-emerald-400 font-black text-lg mt-1">
-                    ₹
-                    {userEnteredValue.toLocaleString("en-IN", {
-                      minimumFractionDigits: 2,
-                    })}
-                  </p>
-                  <a
-                    href={upiString}
-                    className="mt-3 w-full py-3 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] uppercase tracking-widest rounded-lg shadow-md transition flex items-center justify-center gap-2"
-                  >
-                    <span>📲</span> Tap to Pay via UPI App (GPay / PhonePe)
-                  </a>
-                </div>
-              )}
 
               <button
                 type="submit"
@@ -1591,7 +1796,7 @@ export default function PartnerDepositPage() {
                     )}
                   </div>
 
-                  {/* DESKTOP TABLE (VISIBLE ON MD+ SCREENS) */}
+                  {/* DESKTOP TABLE */}
                   <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-left text-xs whitespace-nowrap">
                       <thead className="bg-slate-100 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-200">
