@@ -68,13 +68,7 @@ export default function BackOfficeLoginPage() {
         isStaff = true;
         targetId = staffData.id;
       } else if (partnerData) {
-        if (partnerData.status === "Rejected") {
-          setMessage(
-            "⚠️ Application requires correction. Routing to portal..."
-          );
-          router.push("/partner/resubmit");
-          return;
-        } else if (partnerData.status === "Pending") {
+        if (partnerData.status === "Pending") {
           await supabase.auth.signOut();
           throw new Error(
             "Your franchise application is currently under corporate review."
@@ -84,7 +78,10 @@ export default function BackOfficeLoginPage() {
           throw new Error(
             "Account Suspended: Please contact your Fast Ark manager."
           );
-        } else if (partnerData.status !== "Active") {
+        } else if (
+          partnerData.status !== "Active" &&
+          partnerData.status !== "Rejected"
+        ) {
           await supabase.auth.signOut();
           throw new Error(
             `Access Denied: Your profile status is currently '${partnerData.status}'.`
@@ -159,7 +156,7 @@ export default function BackOfficeLoginPage() {
             module: "AUTHENTICATION",
             target_id: targetId,
             details: `${
-              isStaff ? "Staff" : "Partner"
+              isStaff ? "Staff" : `Partner (${partnerData?.status})`
             } authenticated. IP: ${currentIp}`,
           },
         ]),
@@ -184,6 +181,13 @@ export default function BackOfficeLoginPage() {
             : "/dashboard"
         );
       } else {
+        if (partnerData?.status === "Rejected") {
+          setMessage(
+            "⚠️ Application requires correction. Routing to portal..."
+          );
+          router.push("/partner/resubmit");
+          return;
+        }
         if (!partnerData?.tc_accepted) {
           router.push("/partner/terms");
         } else {

@@ -5,7 +5,6 @@ import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
-import { reportAndMaskError, logSystemTelemetry } from "../../lib/errorCodes";
 import {
   DatePresetMode,
   getDateRangeFromPreset,
@@ -14,28 +13,36 @@ import {
 } from "../../lib/aadhaarEngine";
 
 const sanitizeCSV = (val: unknown): string => {
-  let str = String(val || "").replace(/"/g, '""');
+  let str = String(val ?? "").replace(/"/g, '""');
   if (/^[=+\-@]/.test(str)) {
     str = "'" + str;
   }
   return `"${str}"`;
 };
 
-const normalizeToYYYYMMDD = (dateStr: string) => {
-  if (!dateStr) return "";
-  return dateStr.split("T")[0];
-};
+const DISCREPANCY_REASONS = [
+  "UTR not credited in bank statement",
+  "Deposit amount mismatch with uploaded slip",
+  "Blurred / unreadable receipt image",
+  "Duplicate UTR / receipt already used",
+  "Paid to wrong bank / unmapped UPI ID",
+  "Missing slip exemption not approved",
+  "Other (Specify Below)",
+];
 
-export default function AccountantVerificationDashboard() {
+export default function DepositVerificationPortal() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [staffUser, setStaffUser] = useState<any>(null);
 
-  // Master Directory & Deposit Streams
-  const [allLocations, setAllLocations] = useState<any[]>([]);
-  const [allPartners, setAllPartners] = useState<any[]>([]);
-  const [rawDeposits, setRawDeposits] = useState<any[]>([]);
+  // Master Data Streams
+  const [deposits, setDeposits] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [virtualAccounts, setVirtualAccounts] = useState<any[]>([]);
+  const [upiIds, setUpiIds] = useState<any[]>([]);
 
-  // 7-Option Date Preset + 4-Tier Cascading Filter Engine
+  // 4-Tier Cascade + Stream + Status + 7-Preset Date Filters
   const [datePreset, setDatePreset] = useState<DatePresetMode>("current_month");
   const [fromDate, setFromDate] = useState<string>(
     () => getDateRangeFromPreset("current_month").start
@@ -43,30 +50,44 @@ export default function AccountantVerificationDashboard() {
   const [toDate, setToDate] = useState<string>(
     () => getDateRangeFromPreset("current_month").end
   );
-
-  const [statusFilter, setStatusFilter] = useState("Pending");
-  const [streamFilter, setStreamFilter] = useState<
-    "ALL" | "TELECOM" | "AADHAAR"
-  >("ALL");
   const [fState, setFState] = useState("ALL");
   const [fHq, setFHq] = useState("ALL");
   const [fCenter, setFCenter] = useState("ALL");
-  const [fOperator, setFOperator] = useState("ALL");
+  const [fPartner, setFPartner] = useState("ALL");
+  const [fStream, setFStream] = useState<"ALL" | "TELECOM" | "AADHAAR">("ALL");
+  const [fStatus, setFStatus] = useState<
+    "ALL" | "Pending" | "Verified" | "Discrepancy"
+  >("Pending");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // Parallel Viewer Engine
+  // Side-by-Side Receipt Inspector State
   const [selectedDeposit, setSelectedDeposit] = useState<any | null>(null);
-  const [secureImageUrl, setSecureImageUrl] = useState<string | null>(null);
-  const [imageLoading, setImageLoading] = useState(false);
-  const [imageError, setImageError] = useState<string | null>(null);
+  const [signedSlipUrl, setSignedSlipUrl] = useState<string | null>(null);
+  const [loadingSlip, setLoadingSlip] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
-  // Action Engine
-  const [processingId, setProcessingId] = useState("");
-  const [rejectionReason, setRejectionReason] = useState("");
-  const [showRejectInput, setShowRejectInput] = useState(false);
+  // Inline Edit Mode (Fix Partner UTR / Amount / Method Typos Before Approving)
+  const [isEditingDeposit, setIsEditingDeposit] = useState(false);
+  const [editDepForm, setEditDepForm] = useState({
+    deposit_amount: "",
+    deposit_method: "UPI",
+    utr_number: "",
+    transaction_id: "",
+    deposit_date: "",
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Structured Discrepancy Drawer State
+  const [showDiscrepancyBox, setShowDiscrepancyBox] = useState(false);
+  const [discrepancyPreset, setDiscrepancyPreset] = useState("");
+  const [discrepancyCustomText, setDiscrepancyCustomText] = useState("");
+
+  useEffect(() => {
+    initializeAccountsPortal();
+  }, [fromDate, toDate]);
 
   const handlePresetChange = (mode: DatePresetMode) => {
     setDatePreset(mode);
-    setSelectedDeposit(null);
     if (mode !== "custom") {
       const range = getDateRangeFromPreset(mode);
       setFromDate(range.start);
@@ -74,11 +95,7 @@ export default function AccountantVerificationDashboard() {
     }
   };
 
-  useEffect(() => {
-    fetchDeposits();
-  }, [fromDate, toDate]);
-
-  const fetchDeposits = async () => {
+  const initializeAccountsPortal = async () => {
     setLoading(true);
     try {
       const {
@@ -86,990 +103,1331 @@ export default function AccountantVerificationDashboard() {
       } = await supabase.auth.getSession();
       if (!session) return router.push("/login");
 
-      const [locRes, partRes, depRes] = await Promise.all([
+      const { data: staff } = await supabase
+        .from("back_office_staff")
+        .select("*")
+        .ilike("email", (session.user.email || "").trim())
+        .maybeSingle();
+
+      if (!staff || staff.status !== "Active") {
+        return router.push("/login");
+      }
+      setStaffUser(staff);
+
+      const [locRes, partRes, depRes, vaRes, upiRes] = await Promise.all([
         supabase.from("locations").select("*").order("center_name"),
         supabase
           .from("active_partners")
           .select(
-            "id, partner_name, email, role, role_aadhaar, aadhaar_operator_id, aadhaar_station_id, center_id, locations (id, state, dist, center_name, center_code, parent_master_id)"
+            "id, partner_name, email, mobile, role, center_id, aadhaar_station_id, locations(id, center_name, center_code, state, dist, parent_master_id)"
           )
           .order("partner_name"),
         supabase
           .from("partner_deposits")
           .select(
-            `
-            *,
-            active_partners ( id, partner_name, email, aadhaar_operator_id, aadhaar_station_id, locations (id, state, dist, center_name, center_code, parent_master_id, role_aadhaar) )
-          `
+            "*, active_partners(id, partner_name, email, mobile, role, center_id, aadhaar_station_id, locations(id, center_name, center_code, state, dist, parent_master_id))"
           )
           .gte("deposit_date", fromDate)
           .lte("deposit_date", toDate)
           .order("deposit_date", { ascending: false }),
+        supabase
+          .from("virtual_accounts")
+          .select("*, master_banks(bank_name, actual_account_no, ifsc_code)")
+          .eq("is_active", true),
+        supabase
+          .from("upi_ids")
+          .select("*, master_banks(bank_name, actual_account_no)")
+          .eq("is_active", true),
       ]);
 
-      if (depRes.error) throw depRes.error;
-
-      setAllLocations(locRes.data || []);
-      setAllPartners(partRes.data || []);
-      setRawDeposits(depRes.data || []);
+      setLocations(locRes.data || []);
+      setPartners(partRes.data || []);
+      setDeposits(depRes.data || []);
+      setVirtualAccounts(vaRes.data || []);
+      setUpiIds(upiRes.data || []);
     } catch (err: any) {
-      await reportAndMaskError(err, "ACCOUNTANT_PORTAL_FETCH");
+      console.error("Deposit Verification Init Error:", err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  const isAadhaarDeposit = (d: any) =>
+    d.deposit_stream === "AADHAAR" ||
+    String(d.reference_no || "")
+      .toUpperCase()
+      .startsWith("AADHAAR_");
+
+  const getCleanUtr = (d: any) =>
+    String(
+      d.utr_number || String(d.reference_no || "").replace(/^AADHAAR_/i, "")
+    )
+      .trim()
+      .toUpperCase();
+
+  // Duplicate UTR Map across loaded window
+  const utrFrequencyMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    deposits.forEach((d) => {
+      const u = getCleanUtr(d);
+      if (u && u !== "N/A") {
+        map[u] = (map[u] || 0) + 1;
+      }
+    });
+    return map;
+  }, [deposits]);
+
+  // 4-Tier Cascade Options
   const uniqueStates = useMemo(
     () =>
       Array.from(
-        new Set(allLocations.map((l) => l.state).filter(Boolean))
+        new Set(locations.map((l) => l.state).filter(Boolean))
       ).sort(),
-    [allLocations]
+    [locations]
   );
 
   const hqOptions = useMemo(
     () =>
-      allLocations.filter(
+      locations.filter(
         (l) => l.is_master_node && (fState === "ALL" || l.state === fState)
       ),
-    [allLocations, fState]
+    [locations, fState]
   );
 
-  const locationOptions = useMemo(
+  const centerOptions = useMemo(
     () =>
-      allLocations.filter(
+      locations.filter(
         (l) =>
           !l.is_master_node &&
           (fState === "ALL" || l.state === fState) &&
           (fHq === "ALL" || l.parent_master_id?.toString() === fHq)
       ),
-    [allLocations, fState, fHq]
+    [locations, fState, fHq]
   );
 
-  const operatorOptions = useMemo(
-    () =>
-      allPartners.filter((p) => {
-        const locData = p.locations;
-        const l: any = Array.isArray(locData) ? locData[0] : locData;
-        if (!l) return false;
-        if (fState !== "ALL" && l.state !== fState) return false;
-        if (fHq !== "ALL" && l.parent_master_id?.toString() !== fHq)
-          return false;
-        if (fCenter !== "ALL" && l.id?.toString() !== fCenter) return false;
-        return true;
-      }),
-    [allPartners, fState, fHq, fCenter]
-  );
-
-  const filteredDeposits = useMemo(() => {
-    return rawDeposits.filter((d) => {
-      const p = d.active_partners;
-      const locData = p?.locations;
-      const l: any = Array.isArray(locData) ? locData[0] : locData;
-
-      if (statusFilter !== "All") {
-        if (statusFilter === "Pending") {
-          if (!d.status?.includes("Pending")) return false;
-        } else if (d.status !== statusFilter) {
-          return false;
-        }
-      }
-
-      const isAadhaar =
-        d.deposit_stream === "AADHAAR" ||
-        String(d.reference_no || "")
-          .toUpperCase()
-          .startsWith("AADHAAR_");
-      if (streamFilter === "AADHAAR" && !isAadhaar) return false;
-      if (streamFilter === "TELECOM" && isAadhaar) return false;
-
-      if (fState !== "ALL" && l?.state !== fState) return false;
-      if (fHq !== "ALL" && l?.parent_master_id?.toString() !== fHq)
+  const partnerOptions = useMemo(() => {
+    return partners.filter((p) => {
+      const locData = p.locations;
+      const loc: any = Array.isArray(locData) ? locData[0] : locData;
+      if (!loc) return false;
+      if (fState !== "ALL" && loc.state !== fState) return false;
+      if (fHq !== "ALL" && loc.parent_master_id?.toString() !== fHq)
         return false;
-      if (fCenter !== "ALL" && l?.id?.toString() !== fCenter) return false;
-      if (
-        fOperator !== "ALL" &&
-        d.partner_id !== fOperator &&
-        p?.id !== fOperator
-      )
-        return false;
-
+      if (fCenter !== "ALL" && loc.id?.toString() !== fCenter) return false;
       return true;
     });
+  }, [partners, fState, fHq, fCenter]);
+
+  const filteredDeposits = useMemo(() => {
+    return deposits.filter((d) => {
+      const locData = d.active_partners?.locations;
+      const loc: any = Array.isArray(locData) ? locData[0] : locData;
+      if (!loc) return false;
+
+      if (fState !== "ALL" && loc.state !== fState) return false;
+      if (fHq !== "ALL" && loc.parent_master_id?.toString() !== fHq)
+        return false;
+      if (fCenter !== "ALL" && loc.id?.toString() !== fCenter) return false;
+      if (fPartner !== "ALL" && d.partner_id !== fPartner) return false;
+
+      const isAdh = isAadhaarDeposit(d);
+      if (fStream === "AADHAAR" && !isAdh) return false;
+      if (fStream === "TELECOM" && isAdh) return false;
+
+      if (fStatus !== "ALL") {
+        if (
+          fStatus === "Pending" &&
+          !String(d.status || "").includes("Pending")
+        )
+          return false;
+        if (fStatus !== "Pending" && d.status !== fStatus) return false;
+      }
+
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        d.active_partners?.partner_name?.toLowerCase().includes(q) ||
+        loc.center_code?.toLowerCase().includes(q) ||
+        loc.center_name?.toLowerCase().includes(q) ||
+        getCleanUtr(d).toLowerCase().includes(q) ||
+        String(d.transaction_id || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(d.reference_code || "")
+          .toLowerCase()
+          .includes(q)
+      );
+    });
   }, [
-    rawDeposits,
-    statusFilter,
-    streamFilter,
+    deposits,
     fState,
     fHq,
     fCenter,
-    fOperator,
+    fPartner,
+    fStream,
+    fStatus,
+    searchQuery,
   ]);
 
-  useEffect(() => {
-    const decryptImage = async () => {
-      setSecureImageUrl(null);
-      setImageError(null);
+  const handleInspectDeposit = async (dep: any) => {
+    setSelectedDeposit(dep);
+    setSignedSlipUrl(null);
+    setIsEditingDeposit(false);
+    setShowDiscrepancyBox(false);
+    setDiscrepancyPreset("");
+    setDiscrepancyCustomText("");
 
-      if (!selectedDeposit) return;
-      if (selectedDeposit.is_exempted || !selectedDeposit.deposit_slip_url)
-        return;
+    const cleanUtr = getCleanUtr(dep);
+    setEditDepForm({
+      deposit_amount: String(dep.deposit_amount || ""),
+      deposit_method: dep.deposit_method || "UPI",
+      utr_number: cleanUtr,
+      transaction_id: dep.transaction_id || cleanUtr,
+      deposit_date: String(dep.deposit_date || dep.created_at || "").split(
+        "T"
+      )[0],
+    });
 
-      setImageLoading(true);
-      try {
-        if (selectedDeposit.deposit_slip_url.startsWith("http")) {
-          setSecureImageUrl(selectedDeposit.deposit_slip_url);
-          return;
-        }
+    if (!dep.deposit_slip_url) return;
 
-        const { data, error } = await supabase.storage
-          .from("deposit-slips")
-          .createSignedUrl(selectedDeposit.deposit_slip_url, 3600);
-
-        if (error) throw error;
-        if (!data || !data.signedUrl) {
-          throw new Error("Signed URL generation failed.");
-        }
-
-        setSecureImageUrl(data.signedUrl);
-      } catch (err: any) {
-        const safeMsg = await reportAndMaskError(
-          err,
-          "ACCOUNTANT_SLIP_DECRYPT"
-        );
-        setImageError(safeMsg);
-      } finally {
-        setImageLoading(false);
-      }
-    };
-
-    decryptImage();
-  }, [selectedDeposit]);
-
-  // --- CORE ACTION ENGINE (WITH ISOLATED PENALTY REVERSAL & 3-IDENTIFIER LOGS) ---
-  const handleUpdateStatus = async (newStatus: "Verified" | "Discrepancy") => {
-    if (!selectedDeposit) return;
-    if (
-      newStatus === "Verified" &&
-      !confirm(
-        `Confirm verification of ₹${selectedDeposit.deposit_amount}? This permanently clears this amount from the partner's ledger.`
-      )
-    )
-      return;
-    if (newStatus === "Discrepancy" && rejectionReason.trim().length < 5)
-      return alert(
-        "You must provide a detailed reason for flagging a discrepancy."
-      );
-
-    setProcessingId(selectedDeposit.id);
-
+    setLoadingSlip(true);
     try {
-      const updatePayload: any = { status: newStatus };
-      if (newStatus === "Discrepancy") {
-        updatePayload.rejection_reason = rejectionReason;
+      if (String(dep.deposit_slip_url).startsWith("http")) {
+        setSignedSlipUrl(dep.deposit_slip_url);
+        return;
       }
-
-      const { error } = await supabase
-        .from("partner_deposits")
-        .update(updatePayload)
-        .eq("id", selectedDeposit.id);
+      const { data, error } = await supabase.storage
+        .from("deposit-slips")
+        .createSignedUrl(dep.deposit_slip_url, 1800);
       if (error) throw error;
+      setSignedSlipUrl(data?.signedUrl || null);
+    } catch (err: any) {
+      console.error("Slip load error:", err.message);
+    } finally {
+      setLoadingSlip(false);
+    }
+  };
 
-      const isAadhaarDeposit =
-        selectedDeposit.deposit_stream === "AADHAAR" ||
-        String(selectedDeposit.reference_no || "")
-          .toUpperCase()
-          .startsWith("AADHAAR_");
+  // --- INLINE EDIT AMOUNT / UTR / METHOD BY ACCOUNTANT / ADMIN ---
+  const handleSaveDepositEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDeposit) return;
 
-      if (newStatus === "Verified") {
-        await supabase
-          .from("aadhaar_daily_reports")
-          .update({ deposit_status: "Settled" })
-          .eq("deposit_id", selectedDeposit.id);
-      } else if (newStatus === "Discrepancy") {
-        await supabase
-          .from("aadhaar_daily_reports")
-          .update({ deposit_status: "Pending Deposit", deposit_id: null })
-          .eq("deposit_id", selectedDeposit.id);
+    const amt = parseFloat(editDepForm.deposit_amount);
+    const cleanUtr = editDepForm.utr_number
+      .trim()
+      .replace(/^AADHAAR_/i, "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    const cleanTxn = (editDepForm.transaction_id || cleanUtr)
+      .trim()
+      .toUpperCase();
 
-        if (isAadhaarDeposit) {
-          // Only revert penalties settled by this specific deposit and never touch Admin-waived rows
-          await supabase
-            .from("aadhaar_penalty_logs")
-            .update({ is_settled: false, settled_by_deposit_id: null })
-            .eq("settled_by_deposit_id", selectedDeposit.id)
-            .eq("is_waived", false);
-        }
+    if (isNaN(amt) || amt <= 0)
+      return alert("Deposit Amount must be greater than zero.");
+    if (cleanUtr.length < 4)
+      return alert("Unique UTR Number must be at least 4 characters.");
+
+    setIsSavingEdit(true);
+    try {
+      const isAdh = isAadhaarDeposit(selectedDeposit);
+      const formattedRefNo = isAdh ? `AADHAAR_${cleanUtr}` : cleanUtr;
+
+      const { error: richErr } = await supabase
+        .from("partner_deposits")
+        .update({
+          deposit_amount: amt,
+          deposit_method: editDepForm.deposit_method,
+          deposit_date: editDepForm.deposit_date,
+          reference_no: formattedRefNo,
+          utr_number: cleanUtr,
+          transaction_id: cleanTxn,
+        })
+        .eq("id", selectedDeposit.id);
+
+      if (richErr && richErr.code === "42703") {
+        const { error: fbErr } = await supabase
+          .from("partner_deposits")
+          .update({
+            deposit_amount: amt,
+            deposit_method: editDepForm.deposit_method,
+            deposit_date: editDepForm.deposit_date,
+            reference_no: formattedRefNo,
+          })
+          .eq("id", selectedDeposit.id);
+        if (fbErr) throw fbErr;
+      } else if (richErr) {
+        throw richErr;
       }
 
-      const cleanUtr =
-        selectedDeposit.utr_number ||
-        String(selectedDeposit.reference_no || "").replace(/^AADHAAR_/i, "");
-      const refCode =
-        selectedDeposit.reference_code ||
-        `${isAadhaarDeposit ? "FA-ADH" : "FA-DEP"}-${String(
-          selectedDeposit.id || ""
-        )
-          .slice(0, 6)
-          .toUpperCase()}`;
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.user) {
-        await Promise.all([
-          supabase.from("staff_activity_logs").insert([
-            {
-              staff_id: session.user.id,
-              staff_email: session.user.email,
-              action_type:
-                newStatus === "Verified" ? "VERIFICATION" : "DISCREPANCY",
-              module: "DEPOSITS",
-              target_id: selectedDeposit.id,
-              details:
-                newStatus === "Verified"
-                  ? `Cleared ₹${selectedDeposit.deposit_amount} remittance (Ref: ${refCode} | UTR: ${cleanUtr})`
-                  : `Flagged discrepancy on ₹${selectedDeposit.deposit_amount} (Ref: ${refCode} | UTR: ${cleanUtr}): ${rejectionReason}`,
-            },
-          ]),
-          logSystemTelemetry({
-            actorId: session.user.id,
-            actorEmail: session.user.email,
-            actorRole: "Accountant",
-            module: "ACCOUNTANT_DEPOSIT_AUDIT",
-            actionCode:
-              newStatus === "Verified"
-                ? "DEPOSIT_VERIFIED"
-                : "DEPOSIT_REJECTED",
-            referenceId: refCode,
-            metadata: {
-              deposit_id: selectedDeposit.id,
-              amount: selectedDeposit.deposit_amount,
-              utr_number: cleanUtr,
-              rejection_reason:
-                newStatus === "Discrepancy" ? rejectionReason : null,
-            },
-          }),
-        ]);
-      }
-
-      if (newStatus === "Discrepancy") {
-        await supabase.from("partner_messages").insert([
+      if (staffUser) {
+        await supabase.from("staff_activity_logs").insert([
           {
-            partner_id: selectedDeposit.partner_id,
-            subject: `🚨 Remittance Discrepancy (${refCode}): ${formatToDDMMYYYY(
-              normalizeToYYYYMMDD(
-                selectedDeposit.deposit_date || selectedDeposit.created_at
-              )
-            )}`,
-            body: `Your deposit of ₹${selectedDeposit.deposit_amount} (Ref Code: ${refCode} | UTR: ${cleanUtr}) via ${selectedDeposit.deposit_method} has been flagged by Accounts. Reason: ${rejectionReason}. The amount has been restored to your pending balance ledger.`,
+            staff_id: staffUser.id,
+            staff_email: staffUser.email,
+            action_type: "DEPOSIT_EDIT",
+            module: "ACCOUNTS",
+            target_id: selectedDeposit.id,
+            details: `Updated deposit record (Amount: ₹${amt}, UTR: ${cleanUtr}, Method: ${editDepForm.deposit_method}) for ${selectedDeposit.active_partners?.partner_name}.`,
           },
         ]);
       }
 
-      setRawDeposits((current) =>
-        current.map((d) =>
-          d.id === selectedDeposit.id
-            ? {
-                ...d,
-                status: newStatus,
-                rejection_reason:
-                  newStatus === "Discrepancy" ? rejectionReason : null,
-              }
-            : d
-        )
-      );
-
-      setSelectedDeposit(null);
-      setShowRejectInput(false);
-      setRejectionReason("");
+      const updatedObj = {
+        ...selectedDeposit,
+        deposit_amount: amt,
+        deposit_method: editDepForm.deposit_method,
+        deposit_date: editDepForm.deposit_date,
+        reference_no: formattedRefNo,
+        utr_number: cleanUtr,
+        transaction_id: cleanTxn,
+      };
+      setSelectedDeposit(updatedObj);
+      setIsEditingDeposit(false);
+      await initializeAccountsPortal();
     } catch (err: any) {
-      const safeMsg = await reportAndMaskError(err, "ACCOUNTANT_STATUS_UPDATE");
-      alert(safeMsg);
+      alert("Error updating deposit details: " + err.message);
     } finally {
-      setProcessingId("");
+      setIsSavingEdit(false);
     }
   };
 
-  const downloadCSV = () => {
+  // --- AUDIT DECISION: VERIFY, FLAG DISCREPANCY, OR RESET TO PENDING ---
+  const handleAuditAction = async (
+    dep: any,
+    newStatus: "Verified" | "Discrepancy" | "Pending"
+  ) => {
+    let rejectionReason = "";
+    if (newStatus === "Discrepancy") {
+      if (!discrepancyPreset) {
+        setShowDiscrepancyBox(true);
+        return;
+      }
+      if (
+        discrepancyPreset === "Other (Specify Below)" &&
+        discrepancyCustomText.trim().length < 4
+      ) {
+        return alert("Please enter a clear custom discrepancy reason.");
+      }
+      rejectionReason =
+        discrepancyPreset === "Other (Specify Below)"
+          ? discrepancyCustomText.trim()
+          : discrepancyPreset;
+    } else if (newStatus === "Verified") {
+      if (
+        !confirm(
+          `Verify ₹${Number(dep.deposit_amount).toLocaleString(
+            "en-IN"
+          )} remittance (UTR: ${getCleanUtr(dep)}) for ${
+            dep.active_partners?.partner_name
+          }?`
+        )
+      )
+        return;
+    } else if (newStatus === "Pending") {
+      if (
+        !confirm(
+          `Reset this deposit (₹${Number(dep.deposit_amount).toLocaleString(
+            "en-IN"
+          )}) back to Pending status?`
+        )
+      )
+        return;
+    }
+
+    setProcessingId(dep.id);
+    try {
+      const { error } = await supabase
+        .from("partner_deposits")
+        .update({
+          status: newStatus,
+          rejection_reason: newStatus === "Discrepancy" ? rejectionReason : null,
+        })
+        .eq("id", dep.id);
+
+      if (error) throw error;
+
+      // Sync Aadhaar Daily Reports & Penalty Logs if this is an Aadhaar deposit
+      if (isAadhaarDeposit(dep)) {
+        if (newStatus === "Verified") {
+          await supabase
+            .from("aadhaar_daily_reports")
+            .update({ deposit_status: "Settled" })
+            .eq("deposit_id", dep.id);
+        } else if (newStatus === "Discrepancy") {
+          await supabase
+            .from("aadhaar_daily_reports")
+            .update({ deposit_status: "Pending Deposit", deposit_id: null })
+            .eq("deposit_id", dep.id);
+
+          await supabase
+            .from("aadhaar_penalty_logs")
+            .update({ is_settled: false, settled_by_deposit_id: null })
+            .eq("settled_by_deposit_id", dep.id);
+        } else if (newStatus === "Pending") {
+          await supabase
+            .from("aadhaar_daily_reports")
+            .update({ deposit_status: "Deposit Submitted" })
+            .eq("deposit_id", dep.id);
+        }
+      }
+
+      const cleanUtr = getCleanUtr(dep);
+      if (newStatus !== "Pending") {
+        await supabase.from("partner_messages").insert([
+          {
+            partner_id: dep.partner_id,
+            subject:
+              newStatus === "Verified"
+                ? `✅ Deposit Verified: ₹${Number(
+                    dep.deposit_amount
+                  ).toLocaleString("en-IN")}`
+                : `🚨 Deposit Discrepancy Flagged: ₹${Number(
+                    dep.deposit_amount
+                  ).toLocaleString("en-IN")}`,
+            body:
+              newStatus === "Verified"
+                ? `Your remittance of ₹${Number(
+                    dep.deposit_amount
+                  ).toLocaleString(
+                    "en-IN"
+                  )} (UTR: ${cleanUtr}) has been verified and credited to your ledger.`
+                : `Your remittance of ₹${Number(
+                    dep.deposit_amount
+                  ).toLocaleString(
+                    "en-IN"
+                  )} (UTR: ${cleanUtr}) was marked as Discrepancy. Reason: ${rejectionReason}. Please re-verify and submit a valid receipt.`,
+          },
+        ]);
+      }
+
+      if (staffUser) {
+        await supabase.from("staff_activity_logs").insert([
+          {
+            staff_id: staffUser.id,
+            staff_email: staffUser.email,
+            action_type:
+              newStatus === "Verified"
+                ? "DEPOSIT_VERIFIED"
+                : newStatus === "Discrepancy"
+                ? "DEPOSIT_DISCREPANCY"
+                : "DEPOSIT_RESET_PENDING",
+            module: "ACCOUNTS",
+            target_id: dep.id,
+            details: `Marked deposit of ₹${dep.deposit_amount} (UTR: ${cleanUtr}) as ${newStatus} for ${dep.active_partners?.partner_name}.${
+              rejectionReason ? ` Reason: ${rejectionReason}` : ""
+            }`,
+          },
+        ]);
+      }
+
+      setShowDiscrepancyBox(false);
+      setDiscrepancyPreset("");
+      setDiscrepancyCustomText("");
+      if (selectedDeposit?.id === dep.id) {
+        setSelectedDeposit({
+          ...selectedDeposit,
+          status: newStatus,
+          rejection_reason: rejectionReason || null,
+        });
+      }
+      await initializeAccountsPortal();
+    } catch (err: any) {
+      alert("Verification Error: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleExportCSV = () => {
     if (filteredDeposits.length === 0)
-      return alert("No data to export for the current filters.");
+      return alert("No deposit records match the current filters.");
 
     const headers = [
-      "Date (DD/MM/YYYY)",
-      "System Reference Code",
+      "Deposit Date (DD/MM/YYYY)",
+      "Reference Code",
+      "Vertical Stream",
       "Partner Name",
-      "State",
-      "Master HQ",
-      "District",
-      "Center Name",
       "Center Code",
-      "Stream",
-      "Amount (INR)",
+      "Center Name",
+      "State",
       "Method",
       "Unique UTR No",
       "Transaction ID",
+      "Amount (INR)",
       "Status",
-      "Remarks",
+      "Remarks / Exemption",
     ];
 
-    const csvContent = [
-      headers.join(","),
-      ...filteredDeposits.map((d) => {
-        const p = d.active_partners;
-        const locData = p?.locations;
-        const l: any = Array.isArray(locData) ? locData[0] : locData;
-        const hqName =
-          allLocations.find((h) => h.id === l?.parent_master_id)?.center_name ||
-          "N/A";
-        const isAadhaar =
-          d.deposit_stream === "AADHAAR" ||
-          String(d.reference_no || "")
-            .toUpperCase()
-            .startsWith("AADHAAR_");
-        const cleanUtr =
-          d.utr_number ||
-          String(d.reference_no || "").replace(/^AADHAAR_/i, "");
-        const cleanTxn = d.transaction_id || cleanUtr;
-        const refCode =
-          d.reference_code ||
-          `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(d.id || "")
-            .slice(0, 6)
-            .toUpperCase()}`;
+    const rows = filteredDeposits.map((d) => {
+      const locData = d.active_partners?.locations;
+      const loc: any = Array.isArray(locData) ? locData[0] : locData;
+      const isAdh = isAadhaarDeposit(d);
+      const cleanUtr = getCleanUtr(d);
+      const cleanTxn = d.transaction_id || cleanUtr;
+      const refCode =
+        d.reference_code ||
+        `${isAdh ? "FA-ADH" : "FA-DEP"}-${String(d.id || "")
+          .slice(0, 6)
+          .toUpperCase()}`;
 
-        return [
-          sanitizeCSV(
-            formatToDDMMYYYY(
-              normalizeToYYYYMMDD(d.deposit_date || d.created_at)
-            )
-          ),
-          sanitizeCSV(refCode),
-          sanitizeCSV(p?.partner_name || "N/A"),
-          sanitizeCSV(l?.state || "N/A"),
-          sanitizeCSV(hqName),
-          sanitizeCSV(l?.dist || "N/A"),
-          sanitizeCSV(l?.center_name || "N/A"),
-          sanitizeCSV(l?.center_code || "NO-CODE"),
-          sanitizeCSV(isAadhaar ? "AADHAAR KENDRA" : "TELECOM / PAYBULL"),
-          sanitizeCSV(d.deposit_amount),
-          sanitizeCSV(d.deposit_method),
-          sanitizeCSV(cleanUtr || "N/A"),
-          sanitizeCSV(cleanTxn || "N/A"),
-          sanitizeCSV(d.status),
-          sanitizeCSV(d.rejection_reason || d.exemption_reason || ""),
-        ].join(",");
-      }),
-    ].join("\n");
+      return [
+        sanitizeCSV(
+          formatToDDMMYYYY(String(d.deposit_date || d.created_at).split("T")[0])
+        ),
+        sanitizeCSV(refCode),
+        sanitizeCSV(isAdh ? "AADHAAR KENDRA" : "BSNL + PAYBULL"),
+        sanitizeCSV(d.active_partners?.partner_name || "N/A"),
+        sanitizeCSV(loc?.center_code || "NO-CODE"),
+        sanitizeCSV(loc?.center_name || "Unassigned"),
+        sanitizeCSV(loc?.state || "N/A"),
+        sanitizeCSV(d.deposit_method),
+        sanitizeCSV(cleanUtr),
+        sanitizeCSV(cleanTxn),
+        Number(d.deposit_amount || 0).toFixed(2),
+        sanitizeCSV(d.status),
+        sanitizeCSV(d.rejection_reason || d.exemption_reason || ""),
+      ].join(",");
+    });
 
+    const csvContent = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `FastArk_Deposits_${statusFilter}_${formatToDDMMYYYY(
-      fromDate
-    ).replace(/\//g, "-")}_to_${formatToDDMMYYYY(toDate).replace(
-      /\//g,
-      "-"
-    )}.csv`;
+    link.download = `FastArk_DRS_Deposit_Verification_${formatToDDMMYYYY(
+      toDate
+    ).replace(/\//g, "-")}.csv`;
     link.click();
   };
+
+  // Mapped Bank / UPI Channels for Currently Selected Deposit's Center
+  const selectedCenterChannels = useMemo(() => {
+    if (!selectedDeposit) return { vas: [], upis: [] };
+    const locData = selectedDeposit.active_partners?.locations;
+    const loc: any = Array.isArray(locData) ? locData[0] : locData;
+    const candidateIds = [
+      selectedDeposit.center_id,
+      selectedDeposit.active_partners?.center_id,
+      loc?.id,
+      loc?.parent_master_id,
+    ].filter(Boolean);
+
+    return {
+      vas: virtualAccounts.filter((v) =>
+        candidateIds.includes(v.assigned_location_id)
+      ),
+      upis: upiIds.filter((u) => candidateIds.includes(u.assigned_location_id)),
+    };
+  }, [selectedDeposit, virtualAccounts, upiIds]);
+
+  const totalPendingAmt = filteredDeposits
+    .filter((d) => String(d.status || "").includes("Pending"))
+    .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
+
+  const totalVerifiedAmt = filteredDeposits
+    .filter((d) => d.status === "Verified")
+    .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
+
+  const totalDiscrepancyAmt = filteredDeposits
+    .filter((d) => d.status === "Discrepancy")
+    .reduce((sum, d) => sum + Number(d.deposit_amount || 0), 0);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin"></div>
+        <div className="w-12 h-12 border-4 border-slate-200 border-t-emerald-600 rounded-full animate-spin"></div>
       </div>
     );
   }
 
-  const totalFilteredAmount = filteredDeposits.reduce(
-    (sum, d) => sum + Number(d.deposit_amount || 0),
-    0
-  );
-
   return (
-    <div className="p-4 md:p-8 max-w-[1600px] mx-auto bg-slate-50 min-h-screen font-sans">
-      {/* HEADER & EXPORT */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 border-b border-slate-200 pb-6">
-        <div>
-          <Link
-            href="/dashboard"
-            className="text-blue-600 font-bold hover:underline mb-2 inline-block"
-          >
-            &larr; Back to Command Center
-          </Link>
-          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-            <span className="text-4xl">🏦</span> Accountant Verification Portal
-          </h1>
-          <p className="text-slate-500 font-medium mt-1">
-            Audit Telecom, Paybull, and Aadhaar Seva Kendra remittances with
-            Unique UTR, Transaction ID &amp; Reference Code (
-            {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}).
-          </p>
-        </div>
-        <button
-          onClick={downloadCSV}
-          className="bg-slate-900 hover:bg-slate-800 text-white font-black px-6 py-3 rounded-lg shadow transition flex items-center gap-2"
-        >
-          📥 Export {statusFilter} CSV
-        </button>
-      </div>
-
-      {/* MASTER 4-TIER CASCADING FILTER + 7-PRESET DATE DROPDOWN CONSOLE */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4 mb-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
+      <div className="max-w-[1500px] mx-auto space-y-6">
+        {/* HEADER */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              1. State
-            </label>
-            <select
-              value={fState}
-              onChange={(e) => {
-                setFState(e.target.value);
-                setFHq("ALL");
-                setFCenter("ALL");
-                setFOperator("ALL");
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
+            <Link
+              href="/dashboard"
+              className="text-blue-600 font-black text-xs uppercase tracking-widest mb-1.5 hover:underline inline-block"
             >
-              <option value="ALL">All States</option>
-              {uniqueStates.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
-              ))}
-            </select>
+              &larr; Back to DRS Dashboard
+            </Link>
+            <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
+              <span>🏦</span> Deposit Verification
+            </h1>
+            <p className="text-slate-500 text-sm font-medium mt-1">
+              Verify partner bank slips side-by-side with Unique UTR,
+              Transaction ID, Center Banking Credentials, and Reference Codes.
+            </p>
           </div>
 
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              2. Master HQ
-            </label>
-            <select
-              value={fHq}
-              onChange={(e) => {
-                setFHq(e.target.value);
-                setFCenter("ALL");
-                setFOperator("ALL");
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              onClick={initializeAccountsPortal}
+              className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition"
             >
-              <option value="ALL">All Master HQs</option>
-              {hqOptions.map((hq) => (
-                <option key={hq.id} value={hq.id}>
-                  {hq.center_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              3. Location (Center)
-            </label>
-            <select
-              value={fCenter}
-              onChange={(e) => {
-                setFCenter(e.target.value);
-                setFOperator("ALL");
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
+              ↻ Refresh Queue
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="bg-slate-900 hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-md transition"
             >
-              <option value="ALL">All Locations</option>
-              {locationOptions.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.center_name} [{loc.center_code || "NO-CODE"}]
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              4. Operator / Partner
-            </label>
-            <select
-              value={fOperator}
-              onChange={(e) => {
-                setFOperator(e.target.value);
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
-            >
-              <option value="ALL">
-                All Operators ({operatorOptions.length})
-              </option>
-              {operatorOptions.map((op) => (
-                <option key={op.id} value={op.id}>
-                  {op.partner_name}{" "}
-                  {op.aadhaar_station_id
-                    ? `(Stn: ${op.aadhaar_station_id})`
-                    : ""}
-                </option>
-              ))}
-            </select>
+              📥 Export Filtered CSV ({filteredDeposits.length})
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100">
-          <div>
-            <label className="text-[10px] font-black text-indigo-700 uppercase tracking-widest block mb-1">
-              5. Date Preset
-            </label>
-            <select
-              value={datePreset}
-              onChange={(e) =>
-                handlePresetChange(e.target.value as DatePresetMode)
-              }
-              className="w-full bg-indigo-50 border-2 border-indigo-200 text-indigo-950 font-black text-xs rounded-lg p-2.5 outline-none focus:border-indigo-600"
-            >
-              <option value="today">
-                Today ({formatToDDMMYYYY(getDateRangeFromPreset("today").start)})
-              </option>
-              <option value="yesterday">
-                Yesterday (
-                {formatToDDMMYYYY(getDateRangeFromPreset("yesterday").start)})
-              </option>
-              <option value="current_week">Current Week</option>
-              <option value="current_month">Current Month</option>
-              <option value="previous_month">Previous Month</option>
-              <option value="all">All Time</option>
-              <option value="custom">Custom Filter</option>
-            </select>
+        {/* SUMMARY STRIP */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-xl border border-slate-200 border-l-4 border-l-amber-500 shadow-sm">
+            <p className="text-[10px] font-black uppercase text-amber-700 tracking-widest">
+              Pending Verification
+            </p>
+            <p className="text-2xl font-black text-slate-900 mt-1">
+              ₹{totalPendingAmt.toLocaleString("en-IN")}
+            </p>
           </div>
-
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              From ({formatToDDMMYYYY(fromDate)})
-            </label>
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => {
-                setDatePreset("custom");
-                setFromDate(e.target.value);
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-white border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2 outline-none focus:border-amber-500"
-            />
+          <div className="bg-white p-5 rounded-xl border border-slate-200 border-l-4 border-l-emerald-500 shadow-sm">
+            <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest">
+              Verified &amp; Cleared
+            </p>
+            <p className="text-2xl font-black text-emerald-700 mt-1">
+              ₹{totalVerifiedAmt.toLocaleString("en-IN")}
+            </p>
           </div>
-
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              To ({formatToDDMMYYYY(toDate)})
-            </label>
-            <input
-              type="date"
-              value={toDate}
-              max={getISTDateString(0)}
-              onChange={(e) => {
-                setDatePreset("custom");
-                setToDate(e.target.value);
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-white border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2 outline-none focus:border-amber-500"
-            />
+          <div className="bg-white p-5 rounded-xl border border-slate-200 border-l-4 border-l-red-500 shadow-sm">
+            <p className="text-[10px] font-black uppercase text-red-700 tracking-widest">
+              Flagged Discrepancies
+            </p>
+            <p className="text-2xl font-black text-red-600 mt-1">
+              ₹{totalDiscrepancyAmt.toLocaleString("en-IN")}
+            </p>
           </div>
-
-          <div>
-            <label className="text-[10px] font-black text-amber-700 uppercase tracking-widest block mb-1">
-              6. Revenue Stream
-            </label>
-            <select
-              value={streamFilter}
-              onChange={(e) => {
-                setStreamFilter(e.target.value as any);
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-amber-50 border-2 border-amber-200 text-amber-950 font-black text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
-            >
-              <option value="ALL">📋 All Streams</option>
-              <option value="TELECOM">📡 Telecom &amp; Paybull</option>
-              <option value="AADHAAR">🆔 Aadhaar Kendra Only</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-              7. Audit Status
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
-                setSelectedDeposit(null);
-              }}
-              className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-black text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
-            >
-              <option value="All">All Statuses</option>
-              <option value="Pending">⏳ Pending Audit</option>
-              <option value="Verified">✅ Verified (Approved)</option>
-              <option value="Discrepancy">❌ Discrepancy (Rejected)</option>
-            </select>
+          <div className="bg-slate-900 text-white p-5 rounded-xl shadow-sm">
+            <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">
+              Active Filter Window
+            </p>
+            <p className="text-lg font-black text-white mt-1">
+              {formatToDDMMYYYY(fromDate)} &rarr; {formatToDDMMYYYY(toDate)}
+            </p>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        {/* LEFT PANE: QUEUE / LEDGER */}
-        <div
-          className="xl:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden sticky top-6"
-          style={{ maxHeight: "calc(100vh - 2rem)" }}
-        >
-          <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
+        {/* FILTER CONSOLE */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
             <div>
-              <h3 className="font-black tracking-widest uppercase text-sm">
-                Action Queue
-              </h3>
-              <p className="text-[10px] text-slate-400 font-bold mt-1">
-                Select a row to inspect slip, UTR, Txn ID &amp; Ref Code.
-              </p>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                1. State
+              </label>
+              <select
+                value={fState}
+                onChange={(e) => {
+                  setFState(e.target.value);
+                  setFHq("ALL");
+                  setFCenter("ALL");
+                  setFPartner("ALL");
+                }}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold bg-slate-50"
+              >
+                <option value="ALL">All States</option>
+                {uniqueStates.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="text-right">
-              <p className="font-black text-lg">{filteredDeposits.length}</p>
-              <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
-                ₹{totalFilteredAmount.toLocaleString("en-IN")}
-              </p>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                2. Master HQ
+              </label>
+              <select
+                value={fHq}
+                onChange={(e) => {
+                  setFHq(e.target.value);
+                  setFCenter("ALL");
+                  setFPartner("ALL");
+                }}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold bg-slate-50"
+              >
+                <option value="ALL">All Master HQs</option>
+                {hqOptions.map((hq) => (
+                  <option key={hq.id} value={hq.id}>
+                    {hq.center_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                3. Center / Location
+              </label>
+              <select
+                value={fCenter}
+                onChange={(e) => {
+                  setFCenter(e.target.value);
+                  setFPartner("ALL");
+                }}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold bg-slate-50"
+              >
+                <option value="ALL">All Centers</option>
+                {centerOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    [{c.center_code || "NO-CODE"}] {c.center_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                4. Partner
+              </label>
+              <select
+                value={fPartner}
+                onChange={(e) => setFPartner(e.target.value)}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold bg-slate-50"
+              >
+                <option value="ALL">All Partners</option>
+                {partnerOptions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.partner_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-indigo-600 mb-1">
+                5. Business Vertical
+              </label>
+              <select
+                value={fStream}
+                onChange={(e) => setFStream(e.target.value as any)}
+                className="w-full border-2 border-indigo-200 p-2 rounded-lg text-xs font-black bg-indigo-50 text-indigo-950"
+              >
+                <option value="ALL">🌐 All Verticals</option>
+                <option value="TELECOM">📡 BSNL + Paybull</option>
+                <option value="AADHAAR">🆔 Aadhaar Kendra</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-emerald-700 mb-1">
+                6. Audit Status
+              </label>
+              <select
+                value={fStatus}
+                onChange={(e) => setFStatus(e.target.value as any)}
+                className="w-full border-2 border-emerald-200 p-2 rounded-lg text-xs font-black bg-emerald-50 text-emerald-950"
+              >
+                <option value="Pending">⏳ Pending Action</option>
+                <option value="Verified">✅ Verified</option>
+                <option value="Discrepancy">❌ Discrepancy</option>
+                <option value="ALL">📋 All Statuses</option>
+              </select>
             </div>
           </div>
 
-          <div
-            className="overflow-y-auto"
-            style={{ maxHeight: "calc(100vh - 8rem)" }}
-          >
-            {filteredDeposits.length === 0 ? (
-              <div className="p-12 text-center">
-                <span className="text-4xl mb-3 block">☕</span>
-                <p className="text-slate-500 font-bold">
-                  No records match your cascading filters.
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {filteredDeposits.map((dep) => {
-                  const isSelected = selectedDeposit?.id === dep.id;
-                  const isAadhaar =
-                    dep.deposit_stream === "AADHAAR" ||
-                    String(dep.reference_no || "")
-                      .toUpperCase()
-                      .startsWith("AADHAAR_");
-                  const locData = dep.active_partners?.locations;
-                  const l: any = Array.isArray(locData) ? locData[0] : locData;
-                  const cleanUtr =
-                    dep.utr_number ||
-                    String(dep.reference_no || "").replace(/^AADHAAR_/i, "");
-                  const refCode =
-                    dep.reference_code ||
-                    `${isAadhaar ? "FA-ADH" : "FA-DEP"}-${String(dep.id || "")
-                      .slice(0, 6)
-                      .toUpperCase()}`;
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                Date Preset
+              </label>
+              <select
+                value={datePreset}
+                onChange={(e) =>
+                  handlePresetChange(e.target.value as DatePresetMode)
+                }
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-black bg-slate-50"
+              >
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="current_week">Current Week</option>
+                <option value="current_month">Current Month</option>
+                <option value="previous_month">Previous Month</option>
+                <option value="all">All Time</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                From ({formatToDDMMYYYY(fromDate)})
+              </label>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => {
+                  setDatePreset("custom");
+                  setFromDate(e.target.value);
+                }}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold"
+              />
+            </div>
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                To ({formatToDDMMYYYY(toDate)})
+              </label>
+              <input
+                type="date"
+                value={toDate}
+                max={getISTDateString(0)}
+                onChange={(e) => {
+                  setDatePreset("custom");
+                  setToDate(e.target.value);
+                }}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold"
+              />
+            </div>
+            <div>
+              <label className="block text-[9px] font-black uppercase text-slate-500 mb-1">
+                Search UTR / Ref Code / Partner
+              </label>
+              <input
+                type="text"
+                placeholder="Search UTR, Txn ID, Ref Code..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full border-2 border-slate-200 p-2 rounded-lg text-xs font-bold bg-slate-50 focus:bg-white"
+              />
+            </div>
+          </div>
+        </div>
 
-                  return (
-                    <li
-                      key={dep.id}
-                      onClick={() => {
-                        setSelectedDeposit(dep);
-                        setShowRejectInput(false);
-                      }}
-                      className={`p-4 cursor-pointer transition border-l-4 ${
-                        isSelected
-                          ? "bg-amber-50 border-amber-500"
-                          : "hover:bg-slate-50 border-transparent"
-                      }`}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <p className="font-black text-slate-900 leading-tight">
-                            {dep.active_partners?.partner_name}
-                          </p>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
-                            [{l?.center_code || "NO-CODE"}] {l?.center_name} (
-                            {l?.state})
-                          </p>
-                          <span className="font-mono text-[10px] font-black text-indigo-700 mt-1 inline-block">
-                            {refCode}
-                          </span>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p
-                            className={`text-lg font-black ${
-                              dep.status === "Discrepancy"
-                                ? "text-slate-400 line-through"
-                                : "text-slate-800"
-                            }`}
-                          >
-                            ₹
-                            {Number(dep.deposit_amount).toLocaleString("en-IN")}
-                          </p>
-                          <p className="text-[10px] font-bold text-slate-500">
-                            {formatToDDMMYYYY(
-                              normalizeToYYYYMMDD(
-                                dep.deposit_date || dep.created_at
-                              )
-                            )}
-                          </p>
-                        </div>
-                      </div>
+        {/* SPLIT PANE: DEPOSIT QUEUE + SIDE-BY-SIDE SLIP INSPECTOR */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
+              <h3 className="font-black text-xs uppercase tracking-widest">
+                Remittance Queue ({filteredDeposits.length})
+              </h3>
+              <span className="text-[10px] font-bold text-slate-400">
+                Click any row to inspect slip &amp; verify
+              </span>
+            </div>
+            <div className="overflow-x-auto max-h-[680px]">
+              <table className="w-full text-left text-xs whitespace-nowrap">
+                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 border-b sticky top-0">
+                  <tr>
+                    <th className="p-3.5">Date &amp; Ref Code</th>
+                    <th className="p-3.5">Partner &amp; Center</th>
+                    <th className="p-3.5">UTR &amp; Method</th>
+                    <th className="p-3.5 text-right">Amount (₹)</th>
+                    <th className="p-3.5 text-center">Status</th>
+                    <th className="p-3.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredDeposits.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="p-12 text-center text-slate-400 font-bold"
+                      >
+                        No deposits match the current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredDeposits.map((dep) => {
+                      const locData = dep.active_partners?.locations;
+                      const loc: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
+                      const isAdh = isAadhaarDeposit(dep);
+                      const cleanUtr = getCleanUtr(dep);
+                      const isDupUtr = (utrFrequencyMap[cleanUtr] || 0) > 1;
+                      const refCode =
+                        dep.reference_code ||
+                        `${isAdh ? "FA-ADH" : "FA-DEP"}-${String(dep.id || "")
+                          .slice(0, 6)
+                          .toUpperCase()}`;
+                      const isSelected = selectedDeposit?.id === dep.id;
 
-                      <div className="flex justify-between items-center mt-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {isAadhaar && (
-                            <span className="text-[9px] font-black bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded uppercase tracking-widest">
-                              🆔 Aadhaar
-                            </span>
-                          )}
-                          <span className="text-[9px] font-black bg-slate-200 text-slate-700 px-2 py-0.5 rounded uppercase tracking-widest">
-                            {dep.deposit_method}
-                          </span>
-                          <span className="text-[10px] font-black text-slate-700 tracking-wider truncate max-w-[140px]">
-                            UTR: {cleanUtr}
-                          </span>
-                        </div>
-                        <span
-                          className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border ${
-                            dep.status === "Verified"
-                              ? "bg-green-100 text-green-700 border-green-200"
-                              : dep.status === "Discrepancy"
-                              ? "bg-red-100 text-red-700 border-red-200"
-                              : "bg-amber-100 text-amber-700 border-amber-200"
+                      return (
+                        <tr
+                          key={dep.id}
+                          onClick={() => handleInspectDeposit(dep)}
+                          className={`cursor-pointer transition ${
+                            isSelected
+                              ? "bg-blue-50/90"
+                              : "hover:bg-slate-50"
                           }`}
                         >
-                          {dep.status}
+                          <td className="p-3.5">
+                            <p className="font-black text-slate-900">
+                              {formatToDDMMYYYY(
+                                String(
+                                  dep.deposit_date || dep.created_at
+                                ).split("T")[0]
+                              )}
+                            </p>
+                            <span className="font-mono text-[10px] font-black text-indigo-700">
+                              {refCode}
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            <p className="font-black text-slate-800">
+                              {dep.active_partners?.partner_name}
+                            </p>
+                            <p className="text-[10px] font-bold text-slate-500">
+                              [{loc?.center_code || "NO-CODE"}]{" "}
+                              {loc?.center_name}
+                            </p>
+                          </td>
+                          <td className="p-3.5">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                  isAdh
+                                    ? "bg-amber-100 text-amber-900"
+                                    : "bg-indigo-100 text-indigo-900"
+                                }`}
+                              >
+                                {isAdh ? "🆔 Aadhaar" : "📡 Telecom"} •{" "}
+                                {dep.deposit_method}
+                              </span>
+                              {isDupUtr && (
+                                <span className="bg-red-600 text-white text-[8px] font-black uppercase px-1.5 py-0.5 rounded animate-pulse">
+                                  🚨 DUP UTR
+                                </span>
+                              )}
+                            </div>
+                            <p className="font-mono font-black text-slate-900 mt-1">
+                              UTR: {cleanUtr}
+                            </p>
+                          </td>
+                          <td className="p-3.5 text-right font-black text-sm text-slate-900">
+                            ₹
+                            {Number(dep.deposit_amount).toLocaleString("en-IN")}
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                dep.status === "Verified"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : dep.status === "Discrepancy"
+                                  ? "bg-red-100 text-red-800"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              {dep.status}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleInspectDeposit(dep);
+                              }}
+                              className="bg-slate-900 hover:bg-blue-600 text-white font-black px-3 py-1.5 rounded text-[10px] uppercase"
+                            >
+                              Inspect &rarr;
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* RIGHT PANE: OCR SLIP INSPECTOR, BANK CREDENTIALS & VERIFICATION CONTROLS */}
+          <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden lg:sticky lg:top-8">
+            <div className="p-4 bg-slate-950 text-white flex justify-between items-center">
+              <h3 className="font-black text-xs uppercase tracking-widest text-amber-400">
+                🔍 Side-by-Side Receipt &amp; UTR Inspector
+              </h3>
+              {selectedDeposit && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingDeposit(!isEditingDeposit)}
+                    className="bg-slate-800 hover:bg-blue-600 text-white px-2.5 py-1 rounded text-[10px] font-black uppercase transition"
+                  >
+                    {isEditingDeposit ? "✕ Cancel Edit" : "✏️ Edit UTR / Amt"}
+                  </button>
+                  <button
+                    onClick={() => setSelectedDeposit(null)}
+                    className="text-xs font-black text-slate-400 hover:text-white px-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {!selectedDeposit ? (
+              <div className="p-12 text-center text-slate-400 font-bold text-sm">
+                Select any remittance row on the left to inspect its uploaded
+                bank slip, cross-check Center Banking Credentials, and verify or
+                flag discrepancies.
+              </div>
+            ) : (
+              <div className="p-5 space-y-4 text-xs">
+                {isEditingDeposit ? (
+                  <form
+                    onSubmit={handleSaveDepositEdit}
+                    className="bg-blue-50/70 p-4 rounded-xl border-2 border-blue-300 space-y-3"
+                  >
+                    <p className="text-[10px] font-black uppercase text-blue-900">
+                      ✏️ Correct Deposit Amount / UTR / Method
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          Deposit Amount (₹) *
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required
+                          value={editDepForm.deposit_amount}
+                          onChange={(e) =>
+                            setEditDepForm({
+                              ...editDepForm,
+                              deposit_amount: e.target.value,
+                            })
+                          }
+                          className="w-full border border-blue-300 p-2 rounded-lg font-black bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          Deposit Date *
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={editDepForm.deposit_date}
+                          onChange={(e) =>
+                            setEditDepForm({
+                              ...editDepForm,
+                              deposit_date: e.target.value,
+                            })
+                          }
+                          className="w-full border border-blue-300 p-2 rounded-lg font-bold bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          Unique UTR Number *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={editDepForm.utr_number}
+                          onChange={(e) =>
+                            setEditDepForm({
+                              ...editDepForm,
+                              utr_number: e.target.value.toUpperCase(),
+                            })
+                          }
+                          className="w-full border border-blue-300 p-2 rounded-lg font-mono font-black uppercase bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-black uppercase text-slate-600 mb-1">
+                          Transaction ID *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={editDepForm.transaction_id}
+                          onChange={(e) =>
+                            setEditDepForm({
+                              ...editDepForm,
+                              transaction_id: e.target.value.toUpperCase(),
+                            })
+                          }
+                          className="w-full border border-blue-300 p-2 rounded-lg font-mono font-bold uppercase bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingDeposit(false)}
+                        className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg font-black text-[10px] uppercase"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingEdit}
+                        className="px-4 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[10px] uppercase shadow"
+                      >
+                        {isSavingEdit ? "Saving..." : "💾 Save Corrections"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2.5">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <div>
+                        <span className="font-black text-sm text-slate-900 block">
+                          {selectedDeposit.active_partners?.partner_name}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500">
+                          Status:{" "}
+                          <strong className="uppercase">
+                            {selectedDeposit.status}
+                          </strong>
                         </span>
                       </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
+                      <span className="font-black text-xl text-emerald-700">
+                        ₹
+                        {Number(selectedDeposit.deposit_amount).toLocaleString(
+                          "en-IN"
+                        )}
+                      </span>
+                    </div>
 
-        {/* RIGHT PANE: PARALLEL INSPECTION VIEWER */}
-        <div
-          className="xl:col-span-7 sticky top-6 flex flex-col gap-4"
-          style={{ height: "calc(100vh - 2rem)" }}
-        >
-          {!selectedDeposit ? (
-            <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-slate-400 p-8 text-center">
-              <span className="text-6xl mb-4 opacity-50">👈</span>
-              <h2 className="text-xl font-black text-slate-600 uppercase tracking-widest">
-                Select a Record
-              </h2>
-              <p className="font-bold mt-2 text-sm">
-                Click any row in the left queue to inspect the deposit slip,
-                Unique UTR, Transaction ID, and Reference Code side-by-side.
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Top Action Header with All 3 Identifiers */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-black bg-indigo-50 text-indigo-800 border border-indigo-200 px-2.5 py-0.5 rounded">
-                      {selectedDeposit.reference_code ||
-                        `${
-                          selectedDeposit.deposit_stream === "AADHAAR" ||
-                          String(selectedDeposit.reference_no || "")
-                            .toUpperCase()
-                            .startsWith("AADHAAR_")
-                            ? "FA-ADH"
-                            : "FA-DEP"
-                        }-${String(selectedDeposit.id || "")
-                          .slice(0, 6)
-                          .toUpperCase()}`}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                      Date:{" "}
-                      {formatToDDMMYYYY(
-                        normalizeToYYYYMMDD(
-                          selectedDeposit.deposit_date ||
-                            selectedDeposit.created_at
-                        )
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-3">
-                    <p className="text-3xl font-black text-slate-900">
-                      ₹
-                      {Number(selectedDeposit.deposit_amount).toLocaleString(
-                        "en-IN"
-                      )}
-                    </p>
-                    <p className="text-xs font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded">
-                      {selectedDeposit.deposit_method}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-3 text-xs font-bold text-slate-700 pt-1">
-                    <span>
-                      Unique UTR:{" "}
-                      <strong className="text-slate-950 font-black">
-                        {selectedDeposit.utr_number ||
-                          String(selectedDeposit.reference_no || "").replace(
-                            /^AADHAAR_/i,
-                            ""
+                    {(utrFrequencyMap[getCleanUtr(selectedDeposit)] || 0) >
+                      1 && (
+                      <div className="p-2.5 bg-red-100 border border-red-300 rounded-lg text-red-900 font-black text-[11px]">
+                        🚨 WARNING: UTR &quot;{getCleanUtr(selectedDeposit)}
+                        &quot; appears{" "}
+                        {utrFrequencyMap[getCleanUtr(selectedDeposit)]} times in
+                        this date window!
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">
+                          Unique UTR Number
+                        </span>
+                        <span className="font-mono font-black text-slate-900">
+                          {getCleanUtr(selectedDeposit)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">
+                          Transaction / Scroll ID
+                        </span>
+                        <span className="font-mono font-bold text-slate-800">
+                          {selectedDeposit.transaction_id ||
+                            getCleanUtr(selectedDeposit)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">
+                          Deposit Date
+                        </span>
+                        <span className="font-bold text-slate-800">
+                          {formatToDDMMYYYY(
+                            String(
+                              selectedDeposit.deposit_date ||
+                                selectedDeposit.created_at
+                            ).split("T")[0]
                           )}
-                      </strong>
-                    </span>
-                    <span>&bull;</span>
-                    <span>
-                      Txn ID:{" "}
-                      <strong className="text-slate-900">
-                        {selectedDeposit.transaction_id ||
-                          selectedDeposit.reference_no}
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                {selectedDeposit.status === "Pending" ||
-                selectedDeposit.status === "Pending Verification" ? (
-                  showRejectInput ? (
-                    <div className="flex-1 w-full bg-red-50 p-3 rounded-lg border border-red-200 animate-in fade-in">
-                      <input
-                        autoFocus
-                        type="text"
-                        placeholder="Type discrepancy reason..."
-                        className="w-full border-2 border-red-300 rounded p-2 text-sm outline-none focus:border-red-600 mb-2 font-bold"
-                        value={rejectionReason}
-                        onChange={(e) => setRejectionReason(e.target.value)}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleUpdateStatus("Discrepancy")}
-                          disabled={!!processingId}
-                          className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black py-2 rounded text-xs uppercase tracking-widest transition shadow"
-                        >
-                          {processingId ? "..." : "Confirm Reject"}
-                        </button>
-                        <button
-                          onClick={() => setShowRejectInput(false)}
-                          disabled={!!processingId}
-                          className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-600 font-black px-4 py-2 rounded text-xs uppercase tracking-widest transition"
-                        >
-                          Cancel
-                        </button>
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">
+                          Method &amp; Vertical
+                        </span>
+                        <span className="font-bold text-blue-700">
+                          {selectedDeposit.deposit_method} (
+                          {isAadhaarDeposit(selectedDeposit)
+                            ? "Aadhaar Kendra"
+                            : "BSNL + Paybull"}
+                          )
+                        </span>
                       </div>
                     </div>
-                  ) : (
-                    <div className="flex gap-2 w-full sm:w-auto">
-                      <button
-                        onClick={() => handleUpdateStatus("Verified")}
-                        disabled={!!processingId}
-                        className="flex-1 sm:flex-none bg-green-500 hover:bg-green-600 text-white font-black px-6 py-3 rounded-lg shadow-md uppercase tracking-widest text-xs transition"
-                      >
-                        {processingId ? "..." : "✅ Approve"}
-                      </button>
-                      <button
-                        onClick={() => setShowRejectInput(true)}
-                        disabled={!!processingId}
-                        className="bg-white hover:bg-red-50 border-2 border-red-200 hover:border-red-500 text-red-600 font-black px-4 py-3 rounded-lg shadow-sm uppercase tracking-widest text-xs transition"
-                      >
-                        Reject
-                      </button>
+
+                    {/* MAPPED CENTER BANKING CREDENTIALS REFERENCE */}
+                    <div className="pt-2 border-t border-slate-200 space-y-1">
+                      <span className="text-[9px] font-black uppercase text-indigo-600 block">
+                        🏦 Mapped Center Banking Credentials (Expected Destination)
+                      </span>
+                      {selectedCenterChannels.upis.length === 0 &&
+                      selectedCenterChannels.vas.length === 0 ? (
+                        <p className="text-[10px] text-slate-400 font-bold">
+                          No specific CMS/UPI mapped to this center.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedCenterChannels.upis.map((u: any) => (
+                            <span
+                              key={u.id}
+                              className="bg-purple-50 text-purple-900 border border-purple-200 px-2 py-0.5 rounded text-[10px] font-black"
+                            >
+                              UPI: {u.upi_id} ({u.master_banks?.bank_name})
+                            </span>
+                          ))}
+                          {selectedCenterChannels.vas.map((v: any) => (
+                            <span
+                              key={v.id}
+                              className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-black"
+                            >
+                              CMS: {v.virtual_account_no} (IFSC:{" "}
+                              {v.virtual_ifsc})
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )
-                ) : (
-                  <div
-                    className={`px-6 py-3 rounded-lg border ${
-                      selectedDeposit.status === "Verified"
-                        ? "bg-green-50 border-green-200 text-green-700"
-                        : "bg-red-50 border-red-200 text-red-700"
-                    }`}
-                  >
-                    <p className="font-black uppercase tracking-widest text-xs">
-                      {selectedDeposit.status}
-                    </p>
-                    {selectedDeposit.rejection_reason && (
-                      <p className="text-[10px] font-bold mt-1">
-                        Reason: {selectedDeposit.rejection_reason}
-                      </p>
-                    )}
                   </div>
                 )}
-              </div>
 
-              {/* Bottom Image / PDF Viewer */}
-              <div className="flex-1 bg-slate-900 rounded-xl shadow-inner border border-slate-800 flex items-center justify-center overflow-hidden p-2 relative">
+                {/* SLIP PREVIEW */}
                 {selectedDeposit.is_exempted ? (
-                  <div className="text-center p-8 bg-slate-800 border border-amber-500/50 rounded-2xl max-w-md shadow-2xl">
-                    <span className="text-6xl">⚠️</span>
-                    <h3 className="text-amber-500 font-black uppercase tracking-widest mt-4">
-                      Slip Exempted
-                    </h3>
-                    <p className="text-slate-300 text-sm font-bold mt-3 p-4 bg-slate-900 rounded">
-                      &quot;{selectedDeposit.exemption_reason}&quot;
-                    </p>
-                    <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-4 font-black">
-                      Audit manually via bank portal using UTR:{" "}
-                      {selectedDeposit.utr_number ||
-                        selectedDeposit.reference_no}
-                    </p>
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 font-bold">
+                    ⚠️ Partner declared Missing Slip Exemption:{" "}
+                    <strong>
+                      {selectedDeposit.exemption_reason || "No slip attached"}
+                    </strong>
                   </div>
-                ) : imageLoading ? (
-                  <div className="flex flex-col items-center">
-                    <div className="w-10 h-10 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-                    <p className="text-blue-400 font-bold text-xs uppercase tracking-widest animate-pulse">
-                      Decrypting Vault Document...
-                    </p>
+                ) : loadingSlip ? (
+                  <div className="p-10 text-center text-slate-400 font-bold animate-pulse">
+                    Decrypting slip from vault...
                   </div>
-                ) : imageError ? (
-                  <div className="text-center p-6 bg-red-950/50 border border-red-900 rounded-2xl max-w-md shadow-2xl flex flex-col items-center">
-                    <span className="text-4xl">🚫</span>
-                    <h3 className="text-red-500 font-black uppercase tracking-widest mt-4">
-                      Storage Access Failed
-                    </h3>
-                    <p className="text-red-300 text-xs font-bold mt-2 bg-red-950 p-3 rounded">
-                      {imageError}
-                    </p>
-                  </div>
-                ) : secureImageUrl ? (
-                  <div className="w-full h-full flex justify-center items-center overflow-auto p-4 relative group">
-                    {String(selectedDeposit.deposit_slip_url || "")
-                      .toLowerCase()
-                      .endsWith(".pdf") ? (
-                      <iframe
-                        src={`${secureImageUrl}#toolbar=0`}
-                        className="w-full h-full rounded shadow-2xl border border-slate-700 bg-white"
-                        title="Decrypted PDF Proof"
-                      />
-                    ) : (
-                      <img
-                        src={secureImageUrl}
-                        alt="Decrypted Deposit Proof"
-                        className="max-w-full h-auto object-contain rounded shadow-2xl transition-transform duration-300 bg-white"
-                        style={{ maxHeight: "100%" }}
-                        onError={() => {
-                          setSecureImageUrl(null);
-                          setImageError(
-                            "[ERR-VLT-301] The image failed to load or bucket permissions blocked access."
-                          );
-                        }}
-                      />
-                    )}
-
-                    <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                ) : signedSlipUrl ? (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-black uppercase text-slate-500">
+                        Attached Payment Proof
+                      </span>
                       <a
-                        href={secureImageUrl}
+                        href={signedSlipUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="bg-slate-900/80 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded shadow-lg backdrop-blur-sm transition border border-slate-700"
+                        className="text-[10px] font-black uppercase text-blue-600 hover:underline"
                       >
                         Open Full Screen ↗
                       </a>
                     </div>
+                    {String(selectedDeposit.deposit_slip_url || "")
+                      .toLowerCase()
+                      .endsWith(".pdf") ? (
+                      <iframe
+                        src={`${signedSlipUrl}#toolbar=0`}
+                        className="w-full h-80 rounded-xl border border-slate-300 bg-white"
+                        title="Deposit Slip PDF"
+                      />
+                    ) : (
+                      <img
+                        src={signedSlipUrl}
+                        alt="Deposit Slip"
+                        className="w-full max-h-80 object-contain rounded-xl border border-slate-200 bg-slate-900 p-2"
+                      />
+                    )}
                   </div>
                 ) : (
-                  <p className="text-slate-600 font-black text-sm uppercase tracking-widest">
-                    Document unavailable or deleted.
-                  </p>
+                  <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center text-slate-400 font-bold">
+                    No receipt image found on this record.
+                  </div>
+                )}
+
+                {/* STRUCTURED DISCREPANCY DRAWER */}
+                {showDiscrepancyBox && (
+                  <div className="bg-red-50 p-4 rounded-xl border-2 border-red-200 space-y-3 animate-in fade-in">
+                    <label className="block text-[10px] font-black uppercase text-red-800">
+                      Select Discrepancy Reason *
+                    </label>
+                    <select
+                      value={discrepancyPreset}
+                      onChange={(e) => {
+                        setDiscrepancyPreset(e.target.value);
+                        setDiscrepancyCustomText("");
+                      }}
+                      className="w-full border border-red-300 p-2.5 rounded-lg font-bold bg-white text-slate-900"
+                    >
+                      <option value="" disabled>
+                        -- Choose Discrepancy Reason --
+                      </option>
+                      {DISCREPANCY_REASONS.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+
+                    {discrepancyPreset === "Other (Specify Below)" && (
+                      <input
+                        type="text"
+                        placeholder="Type detailed discrepancy reason..."
+                        value={discrepancyCustomText}
+                        onChange={(e) =>
+                          setDiscrepancyCustomText(e.target.value)
+                        }
+                        className="w-full border border-red-300 p-2.5 rounded-lg font-bold bg-white"
+                      />
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowDiscrepancyBox(false)}
+                        className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg font-black text-[10px] uppercase"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={processingId === selectedDeposit.id}
+                        onClick={() =>
+                          handleAuditAction(selectedDeposit, "Discrepancy")
+                        }
+                        className="px-4 py-1.5 bg-red-600 text-white rounded-lg font-black text-[10px] uppercase shadow"
+                      >
+                        Confirm Discrepancy Flag
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* VERIFY / DISCREPANCY / RESET ACTION BUTTONS */}
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={
+                      processingId === selectedDeposit.id ||
+                      selectedDeposit.status === "Verified"
+                    }
+                    onClick={() =>
+                      handleAuditAction(selectedDeposit, "Verified")
+                    }
+                    className="py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black uppercase tracking-widest rounded-xl shadow transition"
+                  >
+                    ✅ Approve &amp; Verify
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      processingId === selectedDeposit.id ||
+                      selectedDeposit.status === "Discrepancy"
+                    }
+                    onClick={() => setShowDiscrepancyBox(true)}
+                    className="py-3 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-black uppercase tracking-widest rounded-xl shadow transition"
+                  >
+                    ❌ Flag Discrepancy
+                  </button>
+                </div>
+
+                {selectedDeposit.status !== "Pending" && (
+                  <button
+                    type="button"
+                    disabled={processingId === selectedDeposit.id}
+                    onClick={() =>
+                      handleAuditAction(selectedDeposit, "Pending")
+                    }
+                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-widest text-[10px] rounded-xl border border-slate-300 transition"
+                  >
+                    ↺ Reset Status to Pending
+                  </button>
                 )}
               </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

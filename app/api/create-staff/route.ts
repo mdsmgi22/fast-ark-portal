@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 
-// Define strict enterprise limits (Includes Supervisor limit of 20)
+// Define strict enterprise limits (Active headcount per role)
 const ROLE_LIMITS: Record<string, number> = {
   Manager: 5,
   Accountant: 3,
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // 2. Data Extraction & Quota Verification
+    // 2. Data Extraction & Active Quota Verification
     // =========================================================================
     const { name, email, role, mobile } = await request.json();
 
@@ -88,13 +88,14 @@ export async function POST(request: Request) {
       const { count, error: countError } = await supabaseAdmin
         .from("back_office_staff")
         .select("*", { count: "exact", head: true })
-        .ilike("role", role);
+        .ilike("role", role)
+        .eq("status", "Active");
 
       if (!countError && count !== null && count >= maxLimit) {
         return NextResponse.json(
           {
             success: false,
-            error: `Limit Reached: You have reached the maximum quota of ${maxLimit} for the ${role} role.`,
+            error: `Limit Reached: You have reached the maximum active quota of ${maxLimit} for the ${role} role.`,
           },
           { status: 400 }
         );
@@ -145,6 +146,17 @@ export async function POST(request: Request) {
         must_change_password: true,
       },
     });
+
+    await supabaseAdmin.from("staff_activity_logs").insert([
+      {
+        staff_id: requestingUser.id,
+        staff_email: requestingUser.email,
+        action_type: "APPROVAL",
+        module: "STAFF_ADMIN",
+        target_id: newUserId,
+        details: `Provisioned new ${role} account for ${String(name).trim()} (${cleanEmail}).`,
+      },
+    ]);
 
     // =========================================================================
     // 4. Secure Credential Dispatch via Resend

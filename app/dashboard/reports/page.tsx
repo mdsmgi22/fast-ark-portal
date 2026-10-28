@@ -160,7 +160,6 @@ export default function CorporateMISReportsPage() {
       setRawSales(salesRes.data || []);
       setRawAadhaar(aadhaarRes.data || []);
       setRawDeposits(depRes.data || []);
-      // Filter out Admin-waived penalties so waived fines are never added to net closing due
       setRawPenalties((penRes.data || []).filter((p: any) => !p.is_waived));
     } catch (err: any) {
       console.error("MIS Fetch Error:", err.message);
@@ -552,7 +551,7 @@ export default function CorporateMISReportsPage() {
   );
 
   // =========================================================================
-  // UNIFIED CSV & PDF EXPORT HANDLERS (INCLUDES REF CODE, UNIQUE UTR & TXN ID)
+  // UNIFIED CSV & PDF EXPORT HANDLERS
   // =========================================================================
   const handleExecuteCSVExport = () => {
     if (!isDownloadReady) return;
@@ -616,7 +615,7 @@ export default function CorporateMISReportsPage() {
         );
         triggerBlobDownload(
           [headers.join(","), ...rows].join("\n"),
-          `FastArk_MIS_Aadhaar_STATION_WISE_${dateTag}.csv`
+          `FastArk_DRS_Aadhaar_STATION_WISE_${dateTag}.csv`
         );
         return;
       }
@@ -664,7 +663,7 @@ export default function CorporateMISReportsPage() {
         );
         triggerBlobDownload(
           [headers.join(","), ...rows].join("\n"),
-          `FastArk_MIS_Aadhaar_OPERATOR_WISE_${dateTag}.csv`
+          `FastArk_DRS_Aadhaar_OPERATOR_WISE_${dateTag}.csv`
         );
         return;
       }
@@ -731,7 +730,7 @@ export default function CorporateMISReportsPage() {
       });
       triggerBlobDownload(
         [headers.join(","), ...rows].join("\n"),
-        `FastArk_MIS_Telecom_Sales_${dateTag}.csv`
+        `FastArk_DRS_Daily_MIS_Sales_${dateTag}.csv`
       );
       return;
     }
@@ -781,9 +780,7 @@ export default function CorporateMISReportsPage() {
           sanitizeCSV(loc?.center_code || "NO-CODE"),
           sanitizeCSV(loc?.center_name || "N/A"),
           sanitizeCSV(d.active_partners?.partner_name || "N/A"),
-          sanitizeCSV(
-            isAadhaarDep ? "AADHAAR KENDRA" : "TELECOM & PAYBULL"
-          ),
+          sanitizeCSV(isAadhaarDep ? "AADHAAR KENDRA" : "TELECOM & PAYBULL"),
           sanitizeCSV(d.deposit_method),
           sanitizeCSV(cleanUtr || "N/A"),
           sanitizeCSV(cleanTxn || "N/A"),
@@ -794,7 +791,7 @@ export default function CorporateMISReportsPage() {
       });
       triggerBlobDownload(
         [headers.join(","), ...rows].join("\n"),
-        `FastArk_MIS_Deposits_${dateTag}.csv`
+        `FastArk_DRS_Deposits_${dateTag}.csv`
       );
       return;
     }
@@ -840,7 +837,7 @@ export default function CorporateMISReportsPage() {
       );
       triggerBlobDownload(
         [headers.join(","), ...rows].join("\n"),
-        `FastArk_MIS_Consolidated_Ledger_${dateTag}.csv`
+        `FastArk_DRS_Consolidated_Ledger_${dateTag}.csv`
       );
     }
   };
@@ -878,11 +875,10 @@ export default function CorporateMISReportsPage() {
               href="/dashboard"
               className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-block"
             >
-              &larr; Back to Command Center
+              &larr; Back to DRS Dashboard
             </Link>
             <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-              <span className="text-4xl">📈</span> Corporate MIS &amp;
-              Multi-Stream Export Hub
+              <span className="text-4xl">📈</span> DRS MIS
             </h1>
             <p className="text-slate-500 font-medium mt-1">
               Generate Station-wise, Operator-wise, and Center-wise financial
@@ -913,7 +909,7 @@ export default function CorporateMISReportsPage() {
             {
               id: "sales",
               icon: "📡",
-              title: "2. Telecom & Paybull Sales",
+              title: "2. Daily MIS (BSNL & Paybull)",
               sub: "BSNL CBP, CTOP, SIM & Paybull",
               count: filteredSales.length,
               activeColor: "border-blue-600 bg-blue-50/60 text-blue-950",
@@ -921,7 +917,7 @@ export default function CorporateMISReportsPage() {
             {
               id: "deposits",
               icon: "🏦",
-              title: "3. Bank Remittances",
+              title: "3. Cash Deposits",
               sub: "Ref Code, Unique UTR & Txn ID",
               count: filteredDeposits.length,
               activeColor:
@@ -980,7 +976,7 @@ export default function CorporateMISReportsPage() {
               <h2 className="font-black text-sm text-slate-900 uppercase tracking-wider">
                 {isStrictAadhaarMode
                   ? "🔒 Strict Aadhaar-Mapped 5-Tier Filter (State ➔ HQ ➔ Aadhaar Center ➔ Station ID ➔ Operator)"
-                  : "🌐 Network 5-Tier Filter (State ➔ Master HQ ➔ Center ➔ Station ID ➔ Partner)"}
+                  : "🌐 DRS 5-Tier Filter (State ➔ Master HQ ➔ Center ➔ Station ID ➔ Partner)"}
               </h2>
               <p className="text-[11px] font-bold text-slate-500 mt-0.5">
                 {centerOptions.length} Center(s) • {stationOptions.length}{" "}
@@ -1092,7 +1088,7 @@ export default function CorporateMISReportsPage() {
                 3.{" "}
                 {isStrictAadhaarMode
                   ? "Mapped Aadhaar Center [Code]"
-                  : "Location / Center [Code]"}
+                  : "Center / Location [Code]"}
               </label>
               <select
                 value={fCenter}
@@ -1299,8 +1295,9 @@ export default function CorporateMISReportsPage() {
                 <strong>
                   {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}
                 </strong>{" "}
-                • Station: <strong className="text-indigo-700">{fStation}</strong>{" "}
-                • <strong>{activeRowCount} matching rows</strong>) and request
+                • Station:{" "}
+                <strong className="text-indigo-700">{fStation}</strong> •{" "}
+                <strong>{activeRowCount} matching rows</strong>) and request
                 report download.
               </span>
             </label>
@@ -1352,9 +1349,9 @@ export default function CorporateMISReportsPage() {
                     " "
                   )} (${activeRowCount} Rows)`
                 : reportType === "sales"
-                ? `📡 Telecom & Paybull Sales Preview (${activeRowCount} Rows)`
+                ? `📡 Daily MIS (BSNL & Paybull) Preview (${activeRowCount} Rows)`
                 : reportType === "deposits"
-                ? `🏦 Bank Remittances Preview (${activeRowCount} Rows)`
+                ? `🏦 Cash Deposits Preview (${activeRowCount} Rows)`
                 : `📊 Consolidated Partner Closing Ledger (${activeRowCount} Partners)`}
             </h3>
             <span className="text-[10px] font-bold text-slate-300">
@@ -1365,150 +1362,156 @@ export default function CorporateMISReportsPage() {
           </div>
 
           <div className="overflow-x-auto max-h-[600px]">
-            {reportType === "aadhaar" && aadhaarGroupMode === "DAILY_LEDGER" && (
-              <table className="w-full text-left text-xs whitespace-nowrap">
-                <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b sticky top-0">
-                  <tr>
-                    <th className="p-3.5">Date (DD/MM/YYYY)</th>
-                    <th className="p-3.5">Aadhaar Center [Code]</th>
-                    <th className="p-3.5">Operator &amp; Station ID</th>
-                    <th className="p-3.5 text-center">New</th>
-                    <th className="p-3.5 text-center">MBU(F)</th>
-                    <th className="p-3.5 text-center">MBU(P)</th>
-                    <th className="p-3.5 text-center">Demo</th>
-                    <th className="p-3.5 text-center">Bio</th>
-                    <th className="p-3.5 text-center">Total Pkts</th>
-                    <th className="p-3.5 text-right">Cash (₹)</th>
-                    <th className="p-3.5 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredAadhaar.map((r) => {
-                    const locData = r.active_partners?.locations;
-                    const loc: any = Array.isArray(locData)
-                      ? locData[0]
-                      : locData;
-                    return (
-                      <tr key={r.id} className="hover:bg-slate-50">
-                        <td className="p-3.5 font-black">
-                          {formatToDDMMYYYY(r.report_date)}
+            {reportType === "aadhaar" &&
+              aadhaarGroupMode === "DAILY_LEDGER" && (
+                <table className="w-full text-left text-xs whitespace-nowrap">
+                  <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b sticky top-0">
+                    <tr>
+                      <th className="p-3.5">Date (DD/MM/YYYY)</th>
+                      <th className="p-3.5">Aadhaar Center [Code]</th>
+                      <th className="p-3.5">Operator &amp; Station ID</th>
+                      <th className="p-3.5 text-center">New</th>
+                      <th className="p-3.5 text-center">MBU(F)</th>
+                      <th className="p-3.5 text-center">MBU(P)</th>
+                      <th className="p-3.5 text-center">Demo</th>
+                      <th className="p-3.5 text-center">Bio</th>
+                      <th className="p-3.5 text-center">Total Pkts</th>
+                      <th className="p-3.5 text-right">Cash (₹)</th>
+                      <th className="p-3.5 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredAadhaar.map((r) => {
+                      const locData = r.active_partners?.locations;
+                      const loc: any = Array.isArray(locData)
+                        ? locData[0]
+                        : locData;
+                      return (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="p-3.5 font-black">
+                            {formatToDDMMYYYY(r.report_date)}
+                          </td>
+                          <td className="p-3.5 font-bold">
+                            [{loc?.center_code || "NO-CODE"}] {loc?.center_name}
+                          </td>
+                          <td className="p-3.5">
+                            <span className="font-black text-slate-900">
+                              {r.active_partners?.partner_name}
+                            </span>
+                            <span className="text-[10px] font-bold text-indigo-700 block">
+                              Op: {r.operator_id} | Stn: {r.station_id}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-bold">
+                            {r.cat1_new_qty}
+                          </td>
+                          <td className="p-3.5 text-center font-bold">
+                            {r.cat2_mbu_free_qty}
+                          </td>
+                          <td className="p-3.5 text-center font-bold text-amber-700">
+                            {r.cat3_mbu_chargeable_qty}
+                          </td>
+                          <td className="p-3.5 text-center font-bold text-blue-700">
+                            {r.cat4_demographic_qty}
+                          </td>
+                          <td className="p-3.5 text-center font-bold text-purple-700">
+                            {r.cat5_biometric_qty}
+                          </td>
+                          <td className="p-3.5 text-center font-black">
+                            {r.total_packets_qty}
+                          </td>
+                          <td className="p-3.5 text-right font-black text-emerald-700">
+                            ₹
+                            {Number(r.total_cash_collected).toLocaleString(
+                              "en-IN"
+                            )}
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                r.deposit_status === "Pending Deposit"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {r.deposit_status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+            {reportType === "aadhaar" &&
+              aadhaarGroupMode === "STATION_WISE" && (
+                <table className="w-full text-left text-xs whitespace-nowrap">
+                  <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b sticky top-0">
+                    <tr>
+                      <th className="p-3.5">UIDAI Station ID</th>
+                      <th className="p-3.5">Mapped Center [Code]</th>
+                      <th className="p-3.5">Operators Working on Station</th>
+                      <th className="p-3.5 text-center">Reports</th>
+                      <th className="p-3.5 text-center">New</th>
+                      <th className="p-3.5 text-center">MBU(F)</th>
+                      <th className="p-3.5 text-center">MBU(P)</th>
+                      <th className="p-3.5 text-center">Demo</th>
+                      <th className="p-3.5 text-center">Bio</th>
+                      <th className="p-3.5 text-center">Total Pkts</th>
+                      <th className="p-3.5 text-right">Station Cash (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {aadhaarStationWiseMatrix.map((s: any) => (
+                      <tr key={s.station_id} className="hover:bg-slate-50">
+                        <td className="p-3.5 font-black text-indigo-700 text-sm">
+                          Stn: {s.station_id}
                         </td>
                         <td className="p-3.5 font-bold">
-                          [{loc?.center_code || "NO-CODE"}] {loc?.center_name}
+                          [{s.center_code}] {s.center_name} ({s.state})
                         </td>
                         <td className="p-3.5">
-                          <span className="font-black text-slate-900">
-                            {r.active_partners?.partner_name}
-                          </span>
-                          <span className="text-[10px] font-bold text-indigo-700 block">
-                            Op: {r.operator_id} | Stn: {r.station_id}
-                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {s.operatorsList.map((opId: string) => (
+                              <span
+                                key={opId}
+                                className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-black"
+                              >
+                                {opId}
+                              </span>
+                            ))}
+                          </div>
                         </td>
                         <td className="p-3.5 text-center font-bold">
-                          {r.cat1_new_qty}
+                          {s.reportsCount}
                         </td>
                         <td className="p-3.5 text-center font-bold">
-                          {r.cat2_mbu_free_qty}
+                          {s.cat1}
+                        </td>
+                        <td className="p-3.5 text-center font-bold">
+                          {s.cat2}
                         </td>
                         <td className="p-3.5 text-center font-bold text-amber-700">
-                          {r.cat3_mbu_chargeable_qty}
+                          {s.cat3}
                         </td>
                         <td className="p-3.5 text-center font-bold text-blue-700">
-                          {r.cat4_demographic_qty}
+                          {s.cat4}
                         </td>
                         <td className="p-3.5 text-center font-bold text-purple-700">
-                          {r.cat5_biometric_qty}
+                          {s.cat5}
                         </td>
                         <td className="p-3.5 text-center font-black">
-                          {r.total_packets_qty}
+                          {s.totalPkts}
                         </td>
                         <td className="p-3.5 text-right font-black text-emerald-700">
-                          ₹
-                          {Number(r.total_cash_collected).toLocaleString(
-                            "en-IN"
-                          )}
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                              r.deposit_status === "Pending Deposit"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-emerald-100 text-emerald-700"
-                            }`}
-                          >
-                            {r.deposit_status}
-                          </span>
+                          ₹{s.totalCash.toLocaleString("en-IN")}
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-
-            {reportType === "aadhaar" && aadhaarGroupMode === "STATION_WISE" && (
-              <table className="w-full text-left text-xs whitespace-nowrap">
-                <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b sticky top-0">
-                  <tr>
-                    <th className="p-3.5">UIDAI Station ID</th>
-                    <th className="p-3.5">Mapped Center [Code]</th>
-                    <th className="p-3.5">Operators Working on Station</th>
-                    <th className="p-3.5 text-center">Reports</th>
-                    <th className="p-3.5 text-center">New</th>
-                    <th className="p-3.5 text-center">MBU(F)</th>
-                    <th className="p-3.5 text-center">MBU(P)</th>
-                    <th className="p-3.5 text-center">Demo</th>
-                    <th className="p-3.5 text-center">Bio</th>
-                    <th className="p-3.5 text-center">Total Pkts</th>
-                    <th className="p-3.5 text-right">Station Cash (₹)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {aadhaarStationWiseMatrix.map((s: any) => (
-                    <tr key={s.station_id} className="hover:bg-slate-50">
-                      <td className="p-3.5 font-black text-indigo-700 text-sm">
-                        Stn: {s.station_id}
-                      </td>
-                      <td className="p-3.5 font-bold">
-                        [{s.center_code}] {s.center_name} ({s.state})
-                      </td>
-                      <td className="p-3.5">
-                        <div className="flex flex-wrap gap-1">
-                          {s.operatorsList.map((opId: string) => (
-                            <span
-                              key={opId}
-                              className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-black"
-                            >
-                              {opId}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3.5 text-center font-bold">
-                        {s.reportsCount}
-                      </td>
-                      <td className="p-3.5 text-center font-bold">{s.cat1}</td>
-                      <td className="p-3.5 text-center font-bold">{s.cat2}</td>
-                      <td className="p-3.5 text-center font-bold text-amber-700">
-                        {s.cat3}
-                      </td>
-                      <td className="p-3.5 text-center font-bold text-blue-700">
-                        {s.cat4}
-                      </td>
-                      <td className="p-3.5 text-center font-bold text-purple-700">
-                        {s.cat5}
-                      </td>
-                      <td className="p-3.5 text-center font-black">
-                        {s.totalPkts}
-                      </td>
-                      <td className="p-3.5 text-right font-black text-emerald-700">
-                        ₹{s.totalCash.toLocaleString("en-IN")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                    ))}
+                  </tbody>
+                </table>
+              )}
 
             {reportType === "aadhaar" &&
               aadhaarGroupMode === "OPERATOR_WISE" && (
@@ -1548,8 +1551,12 @@ export default function CorporateMISReportsPage() {
                         <td className="p-3.5 text-center font-bold">
                           {o.daysLogged}
                         </td>
-                        <td className="p-3.5 text-center font-bold">{o.cat1}</td>
-                        <td className="p-3.5 text-center font-bold">{o.cat2}</td>
+                        <td className="p-3.5 text-center font-bold">
+                          {o.cat1}
+                        </td>
+                        <td className="p-3.5 text-center font-bold">
+                          {o.cat2}
+                        </td>
                         <td className="p-3.5 text-center font-bold text-amber-700">
                           {o.cat3}
                         </td>
@@ -1639,7 +1646,6 @@ export default function CorporateMISReportsPage() {
               </table>
             )}
 
-            {/* 3. BANK REMITTANCES PREVIEW (WITH REF CODE, UNIQUE UTR & TXN ID) */}
             {reportType === "deposits" && (
               <table className="w-full text-left text-xs whitespace-nowrap">
                 <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b sticky top-0">
@@ -1706,7 +1712,10 @@ export default function CorporateMISReportsPage() {
                           {cleanTxn}
                         </td>
                         <td className="p-3.5 text-right font-black">
-                          ₹{Number(d.deposit_amount || 0).toLocaleString("en-IN")}
+                          ₹
+                          {Number(d.deposit_amount || 0).toLocaleString(
+                            "en-IN"
+                          )}
                         </td>
                         <td className="p-3.5 text-center">
                           <span

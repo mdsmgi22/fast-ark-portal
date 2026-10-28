@@ -39,10 +39,13 @@ export default function StaffSalesVerification() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
 
-  // Active Ledger Stream Toggle (Telecom/Paybull vs Aadhaar Kendra)
+  // Active Ledger Stream Toggle (Daily MIS Telecom/Paybull vs Aadhaar Kendra)
   const [activeStream, setActiveStream] = useState<"telecom" | "aadhaar">(
     "telecom"
   );
+
+  // Queue Filter Mode (All Reports vs Pending Edit Requests Only)
+  const [queueFilter, setQueueFilter] = useState<"ALL" | "PENDING_ONLY">("ALL");
 
   // Master Directory & Ledger Streams
   const [allLocations, setAllLocations] = useState<any[]>([]);
@@ -235,20 +238,36 @@ export default function StaffSalesVerification() {
       p?.id !== fPartner
     )
       return false;
+    if (
+      queueFilter === "PENDING_ONLY" &&
+      row.edit_request_status !== "Pending"
+    )
+      return false;
     return true;
   };
 
   const filteredSales = useMemo(
     () => rawSales.filter(matchesCascade),
-    [rawSales, fState, fHq, fCenter, fPartner]
+    [rawSales, fState, fHq, fCenter, fPartner, queueFilter]
   );
   const filteredAadhaar = useMemo(
     () => rawAadhaar.filter(matchesCascade),
-    [rawAadhaar, fState, fHq, fCenter, fPartner]
+    [rawAadhaar, fState, fHq, fCenter, fPartner, queueFilter]
+  );
+
+  const pendingTelecomRequestsCount = useMemo(
+    () =>
+      rawSales.filter((r) => r.edit_request_status === "Pending").length,
+    [rawSales]
+  );
+  const pendingAadhaarRequestsCount = useMemo(
+    () =>
+      rawAadhaar.filter((r) => r.edit_request_status === "Pending").length,
+    [rawAadhaar]
   );
 
   // =========================================================================
-  // TELECOM & PAYBULL SALES EDIT / AUDIT HANDLERS
+  // TELECOM & PAYBULL DAILY MIS EDIT / AUDIT HANDLERS
   // =========================================================================
   const openEditModal = (sale: any) => {
     setEditingSale({
@@ -292,7 +311,7 @@ export default function StaffSalesVerification() {
 
     if (
       !confirm(
-        "Are you sure you want to forcefully overwrite this partner's sales ledger? This action will be permanently logged."
+        "Are you sure you want to forcefully overwrite this partner's Daily MIS ledger? This action will be permanently logged."
       )
     )
       return;
@@ -360,7 +379,7 @@ export default function StaffSalesVerification() {
           action_type: "AUDIT",
           module: "SALES",
           target_id: editingSale.id,
-          details: `Overwrote Telecom/Paybull sales report for ${formatToDDMMYYYY(
+          details: `Overwrote Daily MIS (Telecom/Paybull) report for ${formatToDDMMYYYY(
             editingSale.report_date
           )}. Reason: ${finalRemarks}`,
         },
@@ -369,16 +388,16 @@ export default function StaffSalesVerification() {
       await supabase.from("partner_messages").insert([
         {
           partner_id: editingSale.partner_id,
-          subject: `⚠ Financial Ledger Correction: ${formatToDDMMYYYY(
+          subject: `⚠ Daily MIS Ledger Correction: ${formatToDDMMYYYY(
             editingSale.report_date
           )}`,
-          body: `Your sales report for ${formatToDDMMYYYY(
+          body: `Your Daily MIS report for ${formatToDDMMYYYY(
             editingSale.report_date
           )} was audited and corrected by the Back-Office. Reason: ${finalRemarks}. Please check your updated ledger balance.`,
         },
       ]);
 
-      alert("✅ Sales Ledger Successfully Overwritten.");
+      alert("✅ Daily MIS Ledger Successfully Overwritten.");
       setIsEditModalOpen(false);
       fetchAuditData();
     } catch (err: any) {
@@ -395,11 +414,32 @@ export default function StaffSalesVerification() {
     if (!confirm(`Are you sure you want to mark this request as ${action}?`))
       return;
     try {
+      const targetRow = rawSales.find((r) => r.id === saleId);
       const { error } = await supabase
         .from("daily_sales_reports")
         .update({ edit_request_status: action })
         .eq("id", saleId);
       if (error) throw error;
+
+      if (targetRow?.partner_id) {
+        await supabase.from("partner_messages").insert([
+          {
+            partner_id: targetRow.partner_id,
+            subject: `⚖️ Daily MIS Edit Request ${action} (${formatToDDMMYYYY(
+              targetRow.report_date
+            )})`,
+            body:
+              action === "Approved"
+                ? `Your request to edit the Daily MIS report for ${formatToDDMMYYYY(
+                    targetRow.report_date
+                  )} has been APPROVED. Please open your Daily MIS portal to submit the corrected figures.`
+                : `Your request to edit the Daily MIS report for ${formatToDDMMYYYY(
+                    targetRow.report_date
+                  )} was declined by the audit desk.`,
+          },
+        ]);
+      }
+
       fetchAuditData();
     } catch (err: any) {
       alert("Error processing edit request: " + err.message);
@@ -664,47 +704,58 @@ export default function StaffSalesVerification() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
       <div className="max-w-[1400px] mx-auto space-y-6">
-        {/* HEADER & DUAL-STREAM SWITCHER */}
+        {/* HEADER & DUAL-STREAM SWITCHER (DRS BRANDING APPLIED) */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-200 pb-6 gap-4">
           <div>
             <Link
               href="/dashboard"
               className="text-blue-600 font-bold text-sm mb-2 hover:underline inline-block"
             >
-              &larr; Back to Admin Dashboard
+              &larr; Back to DRS Dashboard
             </Link>
             <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-              <span className="text-4xl">⚖️</span> Sales &amp; Aadhaar Audit
-              Correction Hub
+              <span className="text-4xl">⚖️</span> Report Correction
             </h1>
             <p className="text-slate-500 font-medium mt-1">
-              Review raw Telecom, Paybull, and Aadhaar Kendra reports and
-              enforce audited ledger corrections ({formatToDDMMYYYY(fromDate)}{" "}
-              to {formatToDDMMYYYY(toDate)}).
+              Review Daily MIS (BSNL &amp; Paybull) and Aadhaar Kendra reports
+              and enforce audited ledger corrections (
+              {formatToDDMMYYYY(fromDate)} to {formatToDDMMYYYY(toDate)}).
             </p>
           </div>
 
-          <div className="flex bg-slate-200 p-1.5 rounded-xl border border-slate-300 shadow-inner">
-            <button
-              onClick={() => setActiveStream("telecom")}
-              className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${
-                activeStream === "telecom"
-                  ? "bg-slate-900 text-white shadow-md"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              📡 Telecom &amp; Paybull ({filteredSales.length})
-            </button>
-            <button
-              onClick={() => setActiveStream("aadhaar")}
-              className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${
-                activeStream === "aadhaar"
-                  ? "bg-amber-500 text-slate-950 shadow-md"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              🆔 Aadhaar Kendra ({filteredAadhaar.length})
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex bg-slate-200 p-1.5 rounded-xl border border-slate-300 shadow-inner">
+              <button
+                onClick={() => setActiveStream("telecom")}
+                className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition flex items-center gap-2 ${
+                  activeStream === "telecom"
+                    ? "bg-slate-900 text-white shadow-md"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>📡 Daily MIS ({filteredSales.length})</span>
+                {pendingTelecomRequestsCount > 0 && (
+                  <span className="bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded text-[9px] font-black">
+                    {pendingTelecomRequestsCount} Req
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveStream("aadhaar")}
+                className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition flex items-center gap-2 ${
+                  activeStream === "aadhaar"
+                    ? "bg-amber-500 text-slate-950 shadow-md"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>🆔 Aadhaar Kendra ({filteredAadhaar.length})</span>
+                {pendingAadhaarRequestsCount > 0 && (
+                  <span className="bg-slate-900 text-amber-400 px-1.5 py-0.5 rounded text-[9px] font-black">
+                    {pendingAadhaarRequestsCount} Req
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -759,7 +810,7 @@ export default function StaffSalesVerification() {
 
             <div>
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
-                3. Location / Center [Code]
+                3. Center / Location [Code]
               </label>
               <select
                 value={fCenter}
@@ -769,7 +820,7 @@ export default function StaffSalesVerification() {
                 }}
                 className="w-full bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
               >
-                <option value="ALL">All Locations</option>
+                <option value="ALL">All Centers</option>
                 {locationOptions.map((loc) => (
                   <option key={loc.id} value={loc.id}>
                     [{loc.center_code || "NO-CODE"}] {loc.center_name}
@@ -802,8 +853,8 @@ export default function StaffSalesVerification() {
             </div>
           </div>
 
-          {/* ROW 2: 7-OPTION DATE PRESET DROPDOWN + CUSTOM DATES (DD/MM/YYYY) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+          {/* ROW 2: 7-OPTION DATE PRESET + CUSTOM DATES + QUEUE FILTER */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
             <div>
               <label className="text-[10px] font-black text-indigo-700 uppercase tracking-widest block mb-1">
                 5. Date Range Preset
@@ -861,17 +912,33 @@ export default function StaffSalesVerification() {
                 className="w-full bg-white border-2 border-slate-200 text-slate-800 font-bold text-xs rounded-lg p-2 outline-none focus:border-amber-500"
               />
             </div>
+
+            <div>
+              <label className="text-[10px] font-black text-amber-700 uppercase tracking-widest block mb-1">
+                6. Audit Queue View
+              </label>
+              <select
+                value={queueFilter}
+                onChange={(e) => setQueueFilter(e.target.value as any)}
+                className="w-full bg-amber-50 border-2 border-amber-200 text-amber-950 font-black text-xs rounded-lg p-2.5 outline-none focus:border-amber-500"
+              >
+                <option value="ALL">📋 All Submitted Reports</option>
+                <option value="PENDING_ONLY">
+                  ⏳ Pending Partner Edit Requests Only
+                </option>
+              </select>
+            </div>
           </div>
         </div>
 
         {/* ===================================================================== */}
-        {/* TAB 1: TELECOM & PAYBULL SALES LEDGER                                 */}
+        {/* TAB 1: DAILY MIS (TELECOM & PAYBULL) LEDGER                           */}
         {/* ===================================================================== */}
         {activeStream === "telecom" && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in">
             <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-white">
               <h3 className="font-black tracking-widest uppercase text-xs">
-                Telecom &amp; Paybull Sales Reports Ledger
+                Daily MIS (Telecom &amp; Paybull) Reports Ledger
               </h3>
               <span className="bg-slate-800 text-amber-400 font-black px-3 py-1 rounded text-[10px] uppercase tracking-widest border border-slate-700">
                 {filteredSales.length} Records Found
@@ -903,8 +970,8 @@ export default function StaffSalesVerification() {
                         colSpan={6}
                         className="p-12 text-center text-slate-400 font-bold"
                       >
-                        No Telecom/Paybull sales records match the current
-                        cascading filters.
+                        No Daily MIS records match the current cascading
+                        filters.
                       </td>
                     </tr>
                   ) : (
@@ -1306,7 +1373,7 @@ export default function StaffSalesVerification() {
       </div>
 
       {/* ===================================================================== */}
-      {/* MODAL 1: TELECOM & PAYBULL FORCE CORRECTION MODAL (GOD MODE)          */}
+      {/* MODAL 1: DAILY MIS (TELECOM & PAYBULL) FORCE CORRECTION MODAL         */}
       {/* ===================================================================== */}
       {isEditModalOpen && editingSale && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -1314,7 +1381,7 @@ export default function StaffSalesVerification() {
             <div className="p-5 bg-slate-900 flex justify-between items-center text-white rounded-t-2xl border-b-4 border-amber-500">
               <div>
                 <h3 className="font-black text-xl flex items-center gap-2">
-                  <span>⚠️</span> Force Correction (Telecom / Paybull):{" "}
+                  <span>⚠️</span> Force Correction (Daily MIS):{" "}
                   {editingSale.active_partners?.partner_name}
                 </h3>
                 <p className="text-slate-400 text-xs font-bold tracking-widest uppercase mt-1">
@@ -1336,7 +1403,7 @@ export default function StaffSalesVerification() {
               <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r shadow-sm">
                 <p className="text-sm font-black text-amber-900">
                   WARNING: You are about to permanently alter a franchise&apos;s
-                  daily ledger.
+                  Daily MIS ledger.
                 </p>
                 <p className="text-xs font-bold text-amber-700 mt-1">
                   This action cannot be undone. An alert will be dispatched to

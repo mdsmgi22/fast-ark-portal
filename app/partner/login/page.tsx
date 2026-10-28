@@ -33,11 +33,11 @@ export default function PartnerLogin() {
       if (authError) throw new Error("Invalid email or password.");
       if (!authData.user) throw new Error("Authentication failed.");
 
-      // 2. Verify they are an Active Partner in the database
+      // 2. Verify Partner Profile in the database
       const { data: partnerData, error: partnerError } = await supabase
         .from("active_partners")
         .select("id, partner_name, status, tc_accepted, role")
-        .ilike("email", normalizedEmail)
+        .or(`auth_id.eq.${authData.user.id},email.ilike.${normalizedEmail}`)
         .maybeSingle();
 
       if (partnerError || !partnerData) {
@@ -61,14 +61,10 @@ export default function PartnerLogin() {
         );
       }
 
-      if (partnerData.status === "Rejected") {
-        await supabase.auth.signOut();
-        throw new Error(
-          "Application Rejected: Please re-apply via the Franchise Application portal using your registered email."
-        );
-      }
-
-      if (partnerData.status !== "Active") {
+      if (
+        partnerData.status !== "Active" &&
+        partnerData.status !== "Rejected"
+      ) {
         await supabase.auth.signOut();
         throw new Error(
           `Access Denied: Your profile status is currently '${partnerData.status}'.`
@@ -106,10 +102,9 @@ export default function PartnerLogin() {
         console.warn("Could not fetch IP address for audit log.");
       }
 
-      // Store locally first for the SessionManager component to verify
       localStorage.setItem("fapl_session_token", sessionToken);
+      localStorage.setItem("fapl_last_active_ts", String(Date.now()));
 
-      // Upsert the token to the database to enforce Single Active Session
       const { error: sessionError } = await supabase
         .from("active_sessions")
         .upsert(
@@ -137,7 +132,7 @@ export default function PartnerLogin() {
             action_type: "SECURITY_AUDIT",
             module: "AUTHENTICATION",
             target_id: partnerData.id,
-            details: `Partner successfully authenticated. IP: ${currentIp}`,
+            details: `Partner authenticated (${partnerData.status}). IP: ${currentIp}`,
           },
         ]),
         logSystemTelemetry({
@@ -147,7 +142,7 @@ export default function PartnerLogin() {
           module: "PARTNER_AUTH",
           actionCode: "PARTNER_LOGIN_SUCCESS",
           referenceId: partnerData.id,
-          metadata: { ip_address: currentIp },
+          metadata: { ip_address: currentIp, status: partnerData.status },
         }),
       ]);
 
@@ -156,6 +151,11 @@ export default function PartnerLogin() {
       // =====================================================================
       if (authData.user.user_metadata?.must_change_password) {
         router.push("/update-password");
+        return;
+      }
+
+      if (partnerData.status === "Rejected") {
+        router.push("/partner/resubmit");
         return;
       }
 

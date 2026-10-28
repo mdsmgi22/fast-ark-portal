@@ -382,7 +382,7 @@ export default function InfrastructureCommandCenter() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-slate-200 pb-6">
         <div>
           <h1 className="text-3xl font-black text-slate-900">
-            Infrastructure &amp; Locations
+            Center / Location
           </h1>
           <p className="text-slate-500 font-medium mt-1">
             Manage physical centers, Center Codes, field supervisors, and
@@ -394,7 +394,7 @@ export default function InfrastructureCommandCenter() {
             href="/dashboard"
             className="text-blue-600 font-bold hover:underline bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm transition"
           >
-            &larr; Admin
+            &larr; DRS Dashboard
           </Link>
           <button
             onClick={openModalForNew}
@@ -407,7 +407,6 @@ export default function InfrastructureCommandCenter() {
 
       {/* TRIPLE-AXIS FILTER CONSOLE */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        {/* AXIS 1: ROLE (INCLUDES AADHAAR CENTERS BUTTON) */}
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           <button
             onClick={() => setFilterRole("ALL")}
@@ -471,7 +470,6 @@ export default function InfrastructureCommandCenter() {
           </button>
         </div>
 
-        {/* AXIS 2 & 3: GEOGRAPHY & TOPOLOGY */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full xl:w-auto pt-4 xl:pt-0 border-t xl:border-t-0 border-slate-100">
           <div className="flex flex-col w-full sm:w-auto">
             <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
@@ -521,7 +519,7 @@ export default function InfrastructureCommandCenter() {
         <div className="bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
           <div className="text-5xl mb-4">🌍</div>
           <h2 className="text-xl font-black text-slate-700">
-            No Locations Found
+            No Centers / Locations Found
           </h2>
           <p className="text-slate-500 font-medium mt-2">
             No physical centers match the selected role and geographic filters.
@@ -559,7 +557,6 @@ export default function InfrastructureCommandCenter() {
                     </span>
                   </div>
 
-                  {/* ARCHITECTURE BADGE */}
                   <div className="mb-4">
                     {loc.is_master_node ? (
                       <span className="inline-block bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded">
@@ -637,7 +634,6 @@ export default function InfrastructureCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ISOLATED SUPERVISOR RENDERER */}
                   <div className="mt-5 pt-4 border-t border-slate-100">
                     <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">
                       Assigned Supervisor(s)
@@ -692,7 +688,7 @@ export default function InfrastructureCommandCenter() {
                     onClick={() => openModalForEdit(loc)}
                     className="text-xs font-black text-blue-600 bg-blue-50 px-4 py-1.5 rounded border border-blue-100 hover:bg-blue-100 hover:border-blue-200 transition shadow-sm"
                   >
-                    Edit Location
+                    Edit Center
                   </button>
                 </div>
               </div>
@@ -720,7 +716,6 @@ export default function InfrastructureCommandCenter() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
-              {/* SECTION 1: TOPOLOGY MAPPING (HUB VS SPOKE) */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">
                   1. Network Topology
@@ -816,7 +811,6 @@ export default function InfrastructureCommandCenter() {
                 )}
               </div>
 
-              {/* SECTION 2: CORE IDENTITY */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">
                   2. Core Identity
@@ -902,7 +896,6 @@ export default function InfrastructureCommandCenter() {
                 </div>
               </div>
 
-              {/* SECTION 3: ROLES MAPPING */}
               <div>
                 <div className="flex justify-between items-end border-b pb-1 mb-4">
                   <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
@@ -1038,7 +1031,6 @@ export default function InfrastructureCommandCenter() {
                 )}
               </div>
 
-              {/* SECTION 4: GEOGRAPHY */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1 mb-4">
                   4. Geographic Mapping
@@ -1175,7 +1167,6 @@ export default function InfrastructureCommandCenter() {
                 </p>
               </div>
 
-              {/* List Current Mappings */}
               <div className="mb-6 space-y-2">
                 <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2 border-b pb-1">
                   Currently Assigned
@@ -1217,7 +1208,6 @@ export default function InfrastructureCommandCenter() {
                 )}
               </div>
 
-              {/* Assign New Form */}
               <form
                 onSubmit={handleAssignSupervisor}
                 className="space-y-4 border-t border-slate-200 pt-4"
@@ -1243,7 +1233,6 @@ export default function InfrastructureCommandCenter() {
                   </select>
                 </div>
 
-                {/* THE FINE-GRAINED ROLE SELECTOR */}
                 {selectedSupId && (
                   <div className="bg-slate-50 p-4 border border-slate-200 rounded-lg animate-in fade-in">
                     <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest block mb-3">

@@ -54,7 +54,11 @@ export default function StaffProductivityDashboard() {
       const safeRole = String(currentUser?.role || "")
         .trim()
         .toLowerCase();
-      if (!currentUser || currentUser.status !== "Active" || safeRole !== "admin") {
+      if (
+        !currentUser ||
+        currentUser.status !== "Active" ||
+        safeRole !== "admin"
+      ) {
         return router.push("/dashboard");
       }
 
@@ -84,30 +88,48 @@ export default function StaffProductivityDashboard() {
         (log) => (log?.staff_email || "").trim().toLowerCase() === email
       );
 
+      const Onboarding = staffLogs.filter(
+        (l) =>
+          l?.module === "ONBOARDING" ||
+          l?.module === "APPLICATIONS" ||
+          l?.module === "INFRASTRUCTURE"
+      ).length;
+
+      const Deposits = staffLogs.filter(
+        (l) =>
+          l?.module === "DEPOSITS" ||
+          l?.module === "TREASURY" ||
+          l?.module === "ACCOUNTS"
+      ).length;
+
+      const Audits = staffLogs.filter(
+        (l) =>
+          l?.module === "SALES" ||
+          l?.module === "MANAGER_MIS" ||
+          l?.module === "AADHAAR_HUB"
+      ).length;
+
+      const Logistics = staffLogs.filter(
+        (l) => l?.module === "LOGISTICS" || l?.module === "TELECOM_OCSC"
+      ).length;
+
+      const Messages = staffLogs.filter(
+        (l) =>
+          l?.module === "MESSAGES" ||
+          l?.module === "SUPPORT_DESK" ||
+          l?.module === "STAFF_ADMIN"
+      ).length;
+
+      const total = Onboarding + Deposits + Audits + Logistics + Messages;
+
       return {
         name: name.split(" ")[0],
-        Onboarding: staffLogs.filter(
-          (l) =>
-            l?.module === "ONBOARDING" ||
-            l?.module === "APPLICATIONS" ||
-            l?.module === "INFRASTRUCTURE"
-        ).length,
-        Deposits: staffLogs.filter(
-          (l) => l?.module === "DEPOSITS" || l?.module === "TREASURY"
-        ).length,
-        Audits: staffLogs.filter(
-          (l) =>
-            l?.module === "SALES" ||
-            l?.module === "MANAGER_MIS" ||
-            l?.module === "AADHAAR_HUB"
-        ).length,
-        Logistics: staffLogs.filter(
-          (l) => l?.module === "LOGISTICS" || l?.module === "TELECOM_OCSC"
-        ).length,
-        Messages: staffLogs.filter(
-          (l) => l?.module === "MESSAGES" || l?.module === "SUPPORT_DESK"
-        ).length,
-        total: staffLogs.length,
+        Onboarding,
+        Deposits,
+        Audits,
+        Logistics,
+        Messages,
+        total,
       };
     })
     .filter((data) => data.total > 0);
@@ -174,7 +196,10 @@ export default function StaffProductivityDashboard() {
               {loading
                 ? "..."
                 : logs.filter(
-                    (l) => l.module === "DEPOSITS" || l.module === "TREASURY"
+                    (l) =>
+                      l.module === "DEPOSITS" ||
+                      l.module === "TREASURY" ||
+                      l.module === "ACCOUNTS"
                   ).length}
             </p>
           </div>
@@ -202,7 +227,9 @@ export default function StaffProductivityDashboard() {
                 ? "..."
                 : logs.filter(
                     (l) =>
-                      l.module === "MESSAGES" || l.module === "SUPPORT_DESK"
+                      l.module === "MESSAGES" ||
+                      l.module === "SUPPORT_DESK" ||
+                      l.module === "STAFF_ADMIN"
                   ).length}
             </p>
           </div>
@@ -221,7 +248,7 @@ export default function StaffProductivityDashboard() {
 
           {!loading && chartData.length === 0 ? (
             <div className="flex h-[300px] items-center justify-center text-slate-400 font-bold">
-              No activity recorded for this date.
+              No operational activity recorded for this date.
             </div>
           ) : (
             <div className="w-full h-[300px]">
@@ -337,15 +364,22 @@ export default function StaffProductivityDashboard() {
                         className={`inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase mb-1.5 border ${
                           log.action_type === "APPROVAL" ||
                           log.action_type === "VERIFICATION" ||
+                          log.action_type === "DEPOSIT_VERIFIED" ||
                           log.action_type === "STOCK_APPROVED" ||
+                          log.action_type === "DISPATCH" ||
                           log.action_type === "MIS_CLOSURE" ||
                           log.action_type === "AADHAAR_APPROVAL" ||
+                          log.action_type === "AADHAAR_ALLOW" ||
+                          log.action_type === "PARTNER_RESTORED" ||
                           log.action_type === "TICKET_RESOLVED"
                             ? "bg-green-50 text-green-700 border-green-200"
                             : log.action_type === "REJECTION" ||
                               log.action_type === "DISCREPANCY" ||
+                              log.action_type === "DEPOSIT_DISCREPANCY" ||
                               log.action_type === "STOCK_REJECTED" ||
-                              log.action_type === "AADHAAR_REVOKE"
+                              log.action_type === "PARTNER_SUSPENDED" ||
+                              log.action_type === "AADHAAR_REVOKE" ||
+                              log.action_type === "PURGE_REJECTED"
                             ? "bg-red-50 text-red-700 border-red-200"
                             : log.action_type === "DISPATCH_ALERT" ||
                               log.action_type === "TICKET_ESCALATED"
