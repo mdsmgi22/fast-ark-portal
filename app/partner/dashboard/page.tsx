@@ -88,9 +88,7 @@ export default function PartnerDashboard() {
     qAadhaarPkts: 0,
   });
 
-  const [docFiles, setDocFiles] = useState<Record<string, File | File[] | null>>(
-    {}
-  );
+  const [docFiles, setDocFiles] = useState<Record<string, File | File[] | null>>({});
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
   const [hasUploadedDocs, setHasUploadedDocs] = useState(false);
   const [docUploadMessage, setDocUploadMessage] = useState("");
@@ -271,7 +269,6 @@ export default function PartnerDashboard() {
         salesList.some((s) => normalizeToYYYYMMDD(s.report_date) === todayStr)
       );
 
-      // 1. Lifetime Telecom/Paybull Pending Balance (Isolated from Aadhaar stream)
       let lifetimeTelecomSales = 0;
       salesList.forEach((s) => {
         lifetimeTelecomSales +=
@@ -293,9 +290,7 @@ export default function PartnerDashboard() {
 
       const isAadhaarDeposit = (d: any) =>
         d.deposit_stream === "AADHAAR" ||
-        String(d.reference_no || "")
-          .toUpperCase()
-          .startsWith("AADHAAR_");
+        String(d.reference_no || "").toUpperCase().startsWith("AADHAAR_");
 
       const lifetimeTelecomDeposits = depList
         .filter((d) => d.status !== "Discrepancy" && !isAadhaarDeposit(d))
@@ -306,7 +301,6 @@ export default function PartnerDashboard() {
         lifetimeTelecomSales - lifetimeTelecomDeposits
       );
 
-      // 2. Unified Aadhaar Deduction Formula: (Total Aadhaar Collection - Total Aadhaar Deposits) + Non-Waived Penalties
       const lifetimeAadhaarCollected = aadhaarList.reduce(
         (sum, a) => sum + Number(a.total_cash_collected || 0),
         0
@@ -672,7 +666,7 @@ export default function PartnerDashboard() {
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
           <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">
-            Opening Module...
+            Opening DRS Module...
           </p>
         </div>
       )}
@@ -685,10 +679,10 @@ export default function PartnerDashboard() {
             </div>
             <div>
               <h1 className="font-black text-lg leading-tight tracking-wide text-white">
-                FAST ARK
+                FAST ARK DRS
               </h1>
               <p className="text-[9px] text-blue-200 font-bold uppercase tracking-widest hidden sm:block">
-                Partner Operations Hub • [
+                Daily Report System • [
                 {partner?.locations?.center_code || "CENTER"}]{" "}
                 {partner?.locations?.center_name}
               </p>
@@ -747,31 +741,31 @@ export default function PartnerDashboard() {
             href="/partner/dashboard"
             className="px-3 py-1.5 rounded bg-blue-600 text-white shrink-0"
           >
-            📊 Dashboard
+            📊 DRS Dashboard
           </Link>
           <Link
             href="/partner/sales"
             className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
           >
-            📈 Daily Sales
+            📈 Daily MIS
           </Link>
           <Link
             href="/partner/deposit"
             className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
           >
-            💳 Deposit of Sales
+            💳 Cash Deposit
           </Link>
           <Link
             href="/partner/stock"
             className="px-3 py-1.5 rounded text-slate-300 hover:bg-slate-800 hover:text-white shrink-0 transition"
           >
-            📦 Stock Request
+            📦 Stock &amp; Inventory
           </Link>
           <Link
             href="/partner/aadhaar"
             className="px-3 py-1.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500 hover:text-slate-950 shrink-0 transition"
           >
-            🆔 Aadhaar Kendra Hub
+            🆔 Aadhaar Dashboard
           </Link>
           <Link
             href="/partner/helpdesk"
@@ -833,8 +827,7 @@ export default function PartnerDashboard() {
           <div className="bg-red-600 text-white p-4 rounded-xl shadow-lg border-2 border-red-800 flex flex-col md:flex-row items-start md:items-center justify-between animate-pulse">
             <div>
               <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2">
-                <span className="text-2xl">🚨</span> Priority Remittance
-                Required
+                <span className="text-2xl">🚨</span> Priority Remittance Required
               </h3>
               <p className="font-bold text-sm mt-1">
                 Your pending cash balance has exceeded the ₹1,000 limit. Settle

@@ -108,7 +108,6 @@ export default function PartnerSalesReport() {
 
         setPartner(partnerData);
 
-        // Fetch Historical Telecom Sales & Deposits for Live Balance Payable Banner
         const [salesHistRes, depHistRes, approvedEditRes] = await Promise.all([
           supabase
             .from("daily_sales_reports")
@@ -152,9 +151,7 @@ export default function PartnerSalesReport() {
           .filter(
             (d: any) =>
               d.deposit_stream !== "AADHAAR" &&
-              !String(d.reference_no || "")
-                .toUpperCase()
-                .startsWith("AADHAAR_")
+              !String(d.reference_no || "").toUpperCase().startsWith("AADHAAR_")
           )
           .forEach((d: any) => {
             histDepTotal += Number(d.deposit_amount || 0);
@@ -166,7 +163,6 @@ export default function PartnerSalesReport() {
           balancePayable: Math.max(0, histSalesTotal - histDepTotal),
         });
 
-        // AUTO-DETECT APPROVED EDITS & APPROVED BACKDATES
         const approvedEdit = approvedEditRes.data;
         if (approvedEdit) {
           setIsEditMode(true);
@@ -218,7 +214,6 @@ export default function PartnerSalesReport() {
     setForm((prev) => ({ ...prev, [field]: isNaN(num) || num < 0 ? 0 : num }));
   };
 
-  // Strict Input Sanitization & Scroll Locks
   const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
     (e.target as HTMLInputElement).blur();
   };
@@ -229,7 +224,6 @@ export default function PartnerSalesReport() {
     }
   };
 
-  // Dynamic IST-Safe Time Engine
   const calculateDiffDays = () => {
     if (!form.report_date) return 0;
     const todayISTStr = getISTDateString(0);
@@ -246,7 +240,6 @@ export default function PartnerSalesReport() {
     !isEditMode && diffDaysDynamic > 7 && diffDaysDynamic <= 30;
   const isTooOld = !isEditMode && diffDaysDynamic > 30;
 
-  // Dual-Platform Mathematical Engine
   const bsnlCbpCash = form.cbp_landline_amt + form.cbp_gsm_amt;
   const bsnlCtopCash = form.ctop_recharge_amt;
   const bsnlSimCash =
@@ -279,7 +272,6 @@ export default function PartnerSalesReport() {
     totalSimQty === 0 &&
     form.cheque_amt === 0;
 
-  // Backdate Request Engine
   const handleBackdateRequest = async () => {
     if (!partner)
       return setStatusBanner({
@@ -310,7 +302,7 @@ export default function PartnerSalesReport() {
         ...form,
         status: "Pending Deposit",
         edit_request_status: "Pending",
-        edit_request_reason: `BACKDATE REQUEST: Permission required to log missing sales for ${formatToDDMMYYYY(
+        edit_request_reason: `BACKDATE REQUEST: Permission required to log missing Daily MIS for ${formatToDDMMYYYY(
           form.report_date
         )}`,
       };
@@ -333,7 +325,7 @@ export default function PartnerSalesReport() {
       });
 
       alert(
-        "✅ Backdate approval request submitted. The Back-Office will review it shortly. Once approved, you will be prompted to enter the actual sales data."
+        "✅ Backdate approval request submitted. The Back-Office will review it shortly. Once approved, you will be prompted to enter the actual Daily MIS data."
       );
       router.push("/partner/dashboard");
     } catch (err: any) {
@@ -359,7 +351,7 @@ export default function PartnerSalesReport() {
     if (isFutureDate)
       return setStatusBanner({
         type: "error",
-        text: "Validation Error: You cannot log a sales report for a future date.",
+        text: "Validation Error: You cannot log a Daily MIS report for a future date.",
       });
     if (isBackdateLocked || isTooOld)
       return setStatusBanner({
@@ -433,7 +425,7 @@ export default function PartnerSalesReport() {
         });
 
         alert(
-          "✅ Sales Report Corrected Successfully! The ledger has been updated."
+          "✅ Daily MIS Report Corrected Successfully! The ledger has been updated."
         );
       } else {
         const { data: inserted, error } = await supabase
@@ -462,7 +454,7 @@ export default function PartnerSalesReport() {
         alert(
           isZeroBusiness
             ? "✅ Zero Business Day Logged. No deposit required."
-            : "✅ Sales Report Saved! Please proceed to 'Deposit of Sales' to clear your ledger."
+            : "✅ Daily MIS Saved! Please proceed to 'Cash Deposit' to clear your ledger."
         );
       }
 
@@ -490,7 +482,7 @@ export default function PartnerSalesReport() {
   if (loading)
     return (
       <div className="p-20 text-center font-bold text-blue-600 animate-pulse">
-        Loading Daily Sales &amp; Cash Collection Portal...
+        Loading Daily MIS Portal...
       </div>
     );
 
@@ -531,12 +523,10 @@ export default function PartnerSalesReport() {
               href="/partner/dashboard"
               className="text-blue-600 font-black text-xs uppercase tracking-widest mb-1 hover:underline inline-block"
             >
-              &larr; Back to Dashboard
+              &larr; Back to DRS Dashboard
             </Link>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-900">
-              {isEditMode
-                ? "Correct Sales Report"
-                : "Daily Sales & Cash Collection Entry"}
+              {isEditMode ? "Correct Daily MIS Report" : "Daily MIS"}
             </h1>
             <p className="text-slate-500 text-xs sm:text-sm font-bold mt-0.5">
               Center: [{partner?.locations?.center_code || "CENTER"}]{" "}
@@ -548,7 +538,7 @@ export default function PartnerSalesReport() {
             href="/partner/deposit"
             className="w-full sm:w-auto text-center bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-widest px-4 py-3 rounded-xl shadow transition shrink-0"
           >
-            💳 Go to Deposit Portal &rarr;
+            💳 Go to Cash Deposit &rarr;
           </Link>
         </div>
 
@@ -664,7 +654,7 @@ export default function PartnerSalesReport() {
             </div>
           </div>
 
-          {/* MOBILE QUICK-TAP SECTION PILLS (VISIBLE ON PHONES / TABLETS < LG) */}
+          {/* MOBILE QUICK-TAP SECTION PILLS */}
           <div className="lg:hidden bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm">
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -1374,7 +1364,7 @@ export default function PartnerSalesReport() {
               <div className="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 overflow-hidden lg:sticky lg:top-8">
                 <div className="bg-slate-950 p-4 border-b border-slate-800 flex justify-between items-center">
                   <h3 className="font-black text-white text-base tracking-wide uppercase">
-                    Live Sales Summary
+                    Daily MIS Summary
                   </h3>
                   <span className="text-[10px] font-black text-emerald-400 bg-emerald-950 px-2.5 py-1 rounded border border-emerald-800">
                     {formatToDDMMYYYY(form.report_date)}
@@ -1520,7 +1510,7 @@ export default function PartnerSalesReport() {
                         Future Date Blocked
                       </p>
                       <p className="text-red-200 text-xs font-bold mt-1">
-                        You cannot log a sales report for a future date.
+                        You cannot log a Daily MIS report for a future date.
                       </p>
                     </div>
                   ) : isTooOld ? (
@@ -1560,8 +1550,8 @@ export default function PartnerSalesReport() {
                           <span className="text-white font-black block mb-0.5">
                             Mandatory Verification *
                           </span>
-                          I confirm the entered sales figures are accurate and
-                          verified against physical collections.
+                          I confirm the entered Daily MIS figures are accurate
+                          and verified against physical collections.
                         </label>
                       </div>
 
@@ -1577,10 +1567,10 @@ export default function PartnerSalesReport() {
                         {submitting
                           ? "Saving Data..."
                           : isEditMode
-                          ? "Update Sales Report"
+                          ? "Update Daily MIS Report"
                           : isZeroBusiness
                           ? "Submit Zero Business Day"
-                          : "Submit Sales Report"}
+                          : "Submit Daily MIS"}
                       </button>
                     </>
                   )}
@@ -1595,19 +1585,19 @@ export default function PartnerSalesReport() {
             href="/partner/stock"
             className="text-slate-600 font-black text-xs uppercase tracking-widest hover:text-blue-600 hover:underline"
           >
-            📦 Stock Requisitions
+            📦 Stock &amp; Inventory
           </Link>
           <span className="text-slate-300">|</span>
           <Link
             href="/partner/deposit"
             className="text-slate-600 font-black text-xs uppercase tracking-widest hover:text-blue-600 hover:underline"
           >
-            💳 Deposit of Sales
+            💳 Cash Deposit
           </Link>
         </div>
       </div>
 
-      {/* STICKY MOBILE BOTTOM SUMMARY BAR (APP-STYLE BAR FOR OCSC SMARTPHONES) */}
+      {/* STICKY MOBILE BOTTOM SUMMARY BAR */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950 text-white border-t-2 border-emerald-500 px-4 py-3 shadow-2xl">
         <div className="max-w-lg mx-auto flex items-center justify-between gap-3">
           <div>

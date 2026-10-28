@@ -168,7 +168,7 @@ export default function OcscDataCommand() {
       
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-slate-200 pb-6">
         <div>
-          <h1 className="text-3xl font-black text-slate-900">Telecom & OCSC Architecture</h1>
+          <h1 className="text-3xl font-black text-slate-900">Master & Agent CTOP</h1>
           <p className="text-slate-500 font-medium mt-1">Manage Master CTOP accounts and strictly map Agent credentials.</p>
         </div>
         <div className="flex items-center gap-3">

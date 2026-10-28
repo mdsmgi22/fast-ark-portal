@@ -488,7 +488,7 @@ export default function PartnerAadhaarUpgradeModule({
     if (isCredentialsLocked) {
       return showBanner(
         "error",
-        "Action Locked: Your Aadhaar credentials have already been approved by Corporate Admin and cannot be modified."
+        "Action Locked: Your Aadhaar Credentials have already been approved by Corporate Admin and cannot be modified."
       );
     }
     if (!upgradeForm.operator_id.trim()) {
@@ -563,7 +563,7 @@ export default function PartnerAadhaarUpgradeModule({
 
         showBanner(
           "success",
-          "✅ Your pending Aadhaar Upgrade Request has been updated! Corporate Admin will review your corrected details."
+          "✅ Your pending Aadhaar Credentials request has been updated! Corporate Admin will review your corrected details."
         );
       } else {
         const { data: inserted, error } = await supabase
@@ -595,7 +595,7 @@ export default function PartnerAadhaarUpgradeModule({
 
         showBanner(
           "success",
-          "✅ Aadhaar Center Upgrade Request & Merged PDF submitted! Your dashboard will unlock automatically once Corporate Admin approves your request."
+          "✅ Aadhaar Credentials & Merged PDF submitted! Your dashboard will unlock automatically once Corporate Admin approves your request."
         );
       }
 
@@ -623,8 +623,8 @@ export default function PartnerAadhaarUpgradeModule({
             </span>
             <h2 className="text-xl font-black mt-0.5">
               {isCredentialsLocked
-                ? "✅ Aadhaar Credentials Approved & Permanently Locked"
-                : "🔒 Aadhaar Portal Locked — Admin Approval Required"}
+                ? "✅ Aadhaar Credentials"
+                : "🔒 Aadhaar Credentials — Admin Approval Required"}
             </h2>
           </div>
           <span
@@ -708,13 +708,11 @@ export default function PartnerAadhaarUpgradeModule({
               <span className="text-3xl">🔒</span>
               <div>
                 <h3 className="font-black text-emerald-950 text-lg uppercase tracking-wide">
-                  Approved Aadhaar Credentials &amp; Compliance Dossier
-                  (Read-Only)
+                  Aadhaar Credentials
                 </h3>
                 <p className="text-xs font-bold text-emerald-800 mt-0.5">
-                  Your Aadhaar credentials and uploaded compliance documents
-                  have been verified and locked by Corporate Admin. Editing or
-                  re-uploading files is permanently disabled.
+                  Your Aadhaar Credentials and uploaded compliance documents
+                  have been verified and locked by Corporate Admin.
                 </p>
               </div>
             </div>
@@ -792,7 +790,7 @@ export default function PartnerAadhaarUpgradeModule({
               <span className="text-3xl">⏳</span>
               <div>
                 <h3 className="font-black text-amber-950 text-lg uppercase tracking-wide">
-                  Upgrade Request Under Corporate Review
+                  Aadhaar Credentials Under Corporate Review
                 </h3>
                 <p className="text-xs font-bold text-amber-800 mt-0.5">
                   Submitted on {formatToDDMMYYYY(latestUpgradeReq.created_at)}.
@@ -891,8 +889,8 @@ export default function PartnerAadhaarUpgradeModule({
             <div>
               <h2 className="text-xl font-black text-slate-900">
                 {isEditingPendingReq
-                  ? "✏️ Edit Pending Aadhaar Upgrade Request (Pre-Approval Only)"
-                  : "Submit Aadhaar Operator Credentials & Documents (Up to 10)"}
+                  ? "✏️ Edit Pending Aadhaar Credentials (Pre-Approval Only)"
+                  : "Aadhaar Credentials & Compliance Documents (Up to 10)"}
               </h2>
               <p className="text-xs font-bold text-slate-500 mt-0.5">
                 Add up to 10 named compliance documents below. All uploaded
