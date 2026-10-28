@@ -66,7 +66,15 @@ export default function PartnerAadhaarPortal() {
   const [weeklyReports, setWeeklyReports] = useState<any[]>([]);
   const [aadhaarDeposits, setAadhaarDeposits] = useState<any[]>([]);
   const [penalties, setPenalties] = useState<any[]>([]);
-  const [centerUpi, setCenterUpi] = useState<string>("fastark@upi");
+
+  // Relational Treasury & Bank Mapping States (Synced with /dashboard/banking)
+  const [mappedUpis, setMappedUpis] = useState<any[]>([]);
+  const [centerUpi, setCenterUpi] = useState<string>("");
+  const [mappedVirtualAccounts, setMappedVirtualAccounts] = useState<any[]>([]);
+  const [mappedQrStickers, setMappedQrStickers] = useState<any[]>([]);
+  const [qrViewMode, setQrViewMode] = useState<"DYNAMIC_QR" | "STATIC_STICKER">(
+    "DYNAMIC_QR"
+  );
 
   // Menu 2: Daily Report Upload States
   const [reportDate, setReportDate] = useState<string>(getISTDateString(0));
@@ -248,7 +256,7 @@ export default function PartnerAadhaarPortal() {
       const { data: pData } = await supabase
         .from("active_partners")
         .select("*, locations(*)")
-        .ilike("email", session.user.email || "")
+        .ilike("email", (session.user.email || "").trim())
         .maybeSingle();
 
       if (!pData) return router.push("/partner/login");
@@ -295,46 +303,83 @@ export default function PartnerAadhaarPortal() {
 
       await syncAadhaarLatePenalties(supabase, pData.id);
 
-      const [tariffRes, dailyRes, weeklyRes, depositsRes, penaltyRes, upiRes] =
-        await Promise.all([
-          supabase
-            .from("aadhaar_tariff_history")
-            .select("*")
-            .lte("effective_from", reportDate)
-            .or(`effective_to.is.null,effective_to.gte.${reportDate}`)
-            .order("effective_from", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase
-            .from("aadhaar_daily_reports")
-            .select("*")
-            .eq("partner_id", pData.id)
-            .order("report_date", { ascending: false }),
-          supabase
-            .from("aadhaar_weekly_reports")
-            .select("*")
-            .eq("partner_id", pData.id)
-            .order("end_date", { ascending: false }),
-          supabase
-            .from("partner_deposits")
-            .select("*")
-            .eq("partner_id", pData.id)
-            .order("deposit_date", { ascending: false }),
-          supabase
-            .from("aadhaar_penalty_logs")
-            .select("*")
-            .eq("partner_id", pData.id)
-            .eq("is_settled", false)
-            .eq("is_waived", false),
-          pData.center_id
-            ? supabase
-                .from("upi_ids")
-                .select("upi_id")
-                .eq("assigned_location_id", pData.center_id)
-                .eq("is_active", true)
-                .maybeSingle()
-            : Promise.resolve({ data: null }),
-        ]);
+      // Build candidate location IDs: Spoke Center ID first, then Parent Master HQ ID fallback
+      const candidateLocIds = Array.from(
+        new Set(
+          [pData.center_id, pData.locations?.parent_master_id].filter(Boolean)
+        )
+      );
+
+      const [
+        tariffRes,
+        dailyRes,
+        weeklyRes,
+        depositsRes,
+        penaltyRes,
+        upiRes,
+        vaRes,
+        qrRes,
+      ] = await Promise.all([
+        supabase
+          .from("aadhaar_tariff_history")
+          .select("*")
+          .lte("effective_from", reportDate)
+          .or(`effective_to.is.null,effective_to.gte.${reportDate}`)
+          .order("effective_from", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("aadhaar_daily_reports")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .order("report_date", { ascending: false }),
+        supabase
+          .from("aadhaar_weekly_reports")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .order("end_date", { ascending: false }),
+        supabase
+          .from("partner_deposits")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .order("deposit_date", { ascending: false }),
+        supabase
+          .from("aadhaar_penalty_logs")
+          .select("*")
+          .eq("partner_id", pData.id)
+          .eq("is_settled", false)
+          .eq("is_waived", false),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("upi_ids")
+              .select(
+                "id, upi_id, assigned_location_id, is_active, master_banks(id, bank_name, actual_account_no, ifsc_code, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("virtual_accounts")
+              .select(
+                "id, virtual_account_no, virtual_ifsc, assigned_location_id, is_active, master_banks(id, bank_name, actual_account_no, ifsc_code, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
+        candidateLocIds.length > 0
+          ? supabase
+              .from("qr_stickers")
+              .select(
+                "id, qr_file_url, assigned_location_id, is_active, master_banks(id, bank_name, is_active)"
+              )
+              .in("assigned_location_id", candidateLocIds)
+              .eq("is_active", true)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [] }),
+      ]);
 
       setActiveTariff(
         tariffRes.data || {
@@ -349,6 +394,42 @@ export default function PartnerAadhaarPortal() {
           gst_percent: 18,
           daily_late_penalty: 100,
         }
+      );
+
+      // 1. Filter UPI IDs: Must be active AND anchored to an active Master Bank.
+      // Prioritize direct Spoke Center mappings over Parent Master HQ fallback.
+      const validUpis = (upiRes.data || []).filter(
+        (u: any) => u.is_active && u.master_banks?.is_active !== false
+      );
+      const centerSpecificUpis = validUpis.filter(
+        (u: any) => u.assigned_location_id === pData.center_id
+      );
+      const finalUpis =
+        centerSpecificUpis.length > 0 ? centerSpecificUpis : validUpis;
+
+      setMappedUpis(finalUpis);
+      setCenterUpi(finalUpis.length > 0 ? finalUpis[0].upi_id : "");
+
+      // 2. Filter Virtual Accounts (CMS): Must be active AND anchored to an active Master Bank.
+      const validVas = (vaRes.data || []).filter(
+        (v: any) => v.is_active && v.master_banks?.is_active !== false
+      );
+      const centerSpecificVas = validVas.filter(
+        (v: any) => v.assigned_location_id === pData.center_id
+      );
+      setMappedVirtualAccounts(
+        centerSpecificVas.length > 0 ? centerSpecificVas : validVas
+      );
+
+      // 3. Filter Counter QR Stickers: Must be active AND anchored to an active Master Bank.
+      const validQrs = (qrRes.data || []).filter(
+        (q: any) => q.is_active && q.master_banks?.is_active !== false
+      );
+      const centerSpecificQrs = validQrs.filter(
+        (q: any) => q.assigned_location_id === pData.center_id
+      );
+      setMappedQrStickers(
+        centerSpecificQrs.length > 0 ? centerSpecificQrs : validQrs
       );
 
       const dList = dailyRes.data || [];
@@ -366,7 +447,6 @@ export default function PartnerAadhaarPortal() {
       setWeeklyReports(weeklyRes.data || []);
       setAadhaarDeposits(aDeps);
       setPenalties(pList);
-      if (upiRes.data?.upi_id) setCenterUpi(upiRes.data.upi_id);
 
       // Total Collection minus Total Deposit = Balance Payable
       const totalCollected = dList.reduce(
@@ -902,7 +982,6 @@ export default function PartnerAadhaarPortal() {
         status: "Pending",
       };
 
-      // Insert with the 3-Identifier columns (fallback gracefully if SQL migration hasn't run yet)
       let depRow: any = null;
       const { data: richRow, error: richErr } = await supabase
         .from("partner_deposits")
@@ -968,7 +1047,7 @@ export default function PartnerAadhaarPortal() {
           .in("id", reportIdsToMarkSubmitted);
       }
 
-      // FIFO Penalty Settlement: Settle active non-waived penalties chronologically as far as remaining deposit allows
+      // FIFO Penalty Settlement
       let remainingAfterReports = totalValidDepositedSoFar - runningAllocated;
       const chronologicalPenalties = [...penalties]
         .filter((p) => !p.is_settled && !p.is_waived)
@@ -1009,6 +1088,7 @@ export default function PartnerAadhaarPortal() {
           transaction_id: cleanTxnId,
           reference_code: finalRefCode,
           method: baseDepositPayload.deposit_method,
+          upi_id: remittanceTrack === "UPI_QR" ? centerUpi : null,
         },
       });
 
@@ -1299,13 +1379,24 @@ export default function PartnerAadhaarPortal() {
     totalCollectionCash + unpaidPenaltyTotal - totalDepositedCash
   );
 
+  const selectedUpiObj =
+    mappedUpis.find((u) => u.upi_id === centerUpi) || mappedUpis[0] || null;
+  const activeQrStickerUrl =
+    mappedQrStickers[0]?.qr_file_url ||
+    partner?.locations?.qr_asset_url ||
+    null;
+
   const parsedQrAmount = parseFloat(qrPayAmount) || 0;
   const safeQrAmount = parsedQrAmount.toFixed(2);
-  const upiDeepLink = `upi://pay?pa=${centerUpi}&pn=${encodeURIComponent(
-    "Fast Ark Aadhaar"
-  )}&am=${safeQrAmount}&cu=INR&tn=${encodeURIComponent(
-    `Aadhaar_${partner?.aadhaar_station_id || partner?.center_id}`
-  )}`;
+  const upiDeepLink = centerUpi
+    ? `upi://pay?pa=${encodeURIComponent(
+        centerUpi
+      )}&pn=${encodeURIComponent(
+        "Fast Ark Aadhaar"
+      )}&am=${safeQrAmount}&cu=INR&tn=${encodeURIComponent(
+        `Aadhaar_${partner?.aadhaar_station_id || partner?.center_id}`
+      )}`
+    : "";
 
   const parsedReceiptAmount = parseFloat(depositForm.amount) || 0;
   const isPdfSlip =
@@ -2203,7 +2294,7 @@ export default function PartnerAadhaarPortal() {
           </div>
         )}
 
-        {/* VIEW 3: SEPARATED REMITTANCE WORKSPACE (WITH UNIQUE UTR, TXN ID & REF CODE) */}
+        {/* VIEW 3: SEPARATED REMITTANCE WORKSPACE (WITH RELATIONAL BANK, UPI, CMS & QR MAPPING) */}
         {isAadhaarAuthorized && effectiveMenu === "deposit" && (
           <div className="space-y-6 animate-in fade-in">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
@@ -2267,74 +2358,174 @@ export default function PartnerAadhaarPortal() {
               <div className="space-y-6">
                 {remittanceTrack === "UPI_QR" ? (
                   <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-5">
-                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 block">
-                          Step 1 of 2 — Isolated UPI QR Generator
+                          Step 1 of 2 — Center-Mapped UPI QR Generator
                         </span>
                         <h3 className="text-lg font-black mt-0.5">
                           Generate QR &amp; Pay via UPI App
                         </h3>
                       </div>
-                      <span className="bg-slate-800 text-slate-300 text-[10px] font-black px-2.5 py-1 rounded border border-slate-700">
-                        UPI ID: {centerUpi}
-                      </span>
-                    </div>
 
-                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-left space-y-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
-                          QR Generation Amount (₹) — Separate from Receipt OCR
-                        </label>
-                        {totalPayableNow > 0 && (
+                      {activeQrStickerUrl && (
+                        <div className="flex bg-slate-800 p-1 rounded-lg text-[9px] font-black uppercase">
                           <button
                             type="button"
-                            onClick={() =>
-                              setQrPayAmount(totalPayableNow.toFixed(2))
-                            }
-                            className="text-[9px] font-black uppercase bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white px-2 py-0.5 rounded border border-blue-500/40 transition"
+                            onClick={() => setQrViewMode("DYNAMIC_QR")}
+                            className={`px-2.5 py-1 rounded transition ${
+                              qrViewMode === "DYNAMIC_QR"
+                                ? "bg-blue-600 text-white"
+                                : "text-slate-400 hover:text-white"
+                            }`}
                           >
-                            Reset to Balance Payable (₹{totalPayableNow})
+                            ⚡ Dynamic QR
                           </button>
-                        )}
-                      </div>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="Enter amount to generate QR..."
-                        value={qrPayAmount}
-                        onWheel={handleNumericWheel}
-                        onKeyDown={handleNumericKeyDown}
-                        onChange={(e) => setQrPayAmount(e.target.value)}
-                        className="w-full bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 text-white font-black text-xl p-3 rounded-lg outline-none transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      />
-                    </div>
-
-                    <div className="flex flex-col items-center text-center pt-2">
-                      <div className="bg-white p-4 rounded-2xl shadow-lg mb-4">
-                        <QRCodeSVG value={upiDeepLink} size={185} level="M" />
-                      </div>
-                      <p className="text-3xl font-black text-emerald-400">
-                        ₹
-                        {parsedQrAmount.toLocaleString("en-IN", {
-                          minimumFractionDigits: 2,
-                        })}
-                      </p>
-                      <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">
-                        Scan with any UPI App or Tap Below on Mobile
-                      </p>
-
-                      {parsedQrAmount > 0 && (
-                        <a
-                          href={upiDeepLink}
-                          className="mt-4 w-full max-w-sm py-3.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex items-center justify-center gap-2"
-                        >
-                          <span>📲</span> Tap to Pay ₹
-                          {parsedQrAmount.toLocaleString("en-IN")} via UPI App
-                        </a>
+                          <button
+                            type="button"
+                            onClick={() => setQrViewMode("STATIC_STICKER")}
+                            className={`px-2.5 py-1 rounded transition ${
+                              qrViewMode === "STATIC_STICKER"
+                                ? "bg-emerald-600 text-white"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            🖨️ Counter Sticker
+                          </button>
+                        </div>
                       )}
                     </div>
+
+                    {/* MAPPED UPI CHANNEL SELECTOR & MASTER BANK ANCHOR BADGE */}
+                    {mappedUpis.length > 0 ? (
+                      <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase text-purple-400 tracking-widest">
+                            Mapped Center UPI Channel ({mappedUpis.length}{" "}
+                            Active)
+                          </span>
+                          <span className="text-[10px] font-black bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded">
+                            🏦{" "}
+                            {selectedUpiObj?.master_banks?.bank_name ||
+                              "Verified Treasury Bank"}
+                          </span>
+                        </div>
+
+                        {mappedUpis.length > 1 ? (
+                          <select
+                            value={centerUpi}
+                            onChange={(e) => setCenterUpi(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 text-white font-black text-xs p-2.5 rounded-lg outline-none focus:border-purple-500"
+                          >
+                            {mappedUpis.map((u: any) => (
+                              <option key={u.id} value={u.upi_id}>
+                                {u.upi_id} —{" "}
+                                {u.master_banks?.bank_name || "Master Bank"}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="font-mono font-black text-sm text-white">
+                            VPA: {centerUpi}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="bg-red-950/70 border-2 border-red-700 p-4 rounded-xl text-xs space-y-1">
+                        <p className="font-black text-red-300 uppercase tracking-wider">
+                          ⚠️ No Active UPI ID Mapped to Your Center
+                        </p>
+                        <p className="text-red-200/90 font-medium">
+                          Corporate Treasury has not yet assigned an active UPI
+                          ID to [{partner?.locations?.center_code || "NO-CODE"}]{" "}
+                          {partner?.locations?.center_name}. Please use Mode 2
+                          (Bank Cash / NEFT / IMPS) or contact Admin.
+                        </p>
+                      </div>
+                    )}
+
+                    {qrViewMode === "STATIC_STICKER" && activeQrStickerUrl ? (
+                      <div className="flex flex-col items-center text-center pt-2">
+                        <div className="bg-white p-3 rounded-2xl shadow-lg mb-3 max-w-xs">
+                          <img
+                            src={activeQrStickerUrl}
+                            alt="Official Counter QR Sticker"
+                            className="w-full h-auto object-contain rounded-lg"
+                          />
+                        </div>
+                        <p className="text-xs font-black text-emerald-400 uppercase tracking-widest">
+                          Official Store Counter QR Sticker
+                        </p>
+                      </div>
+                    ) : (
+                      centerUpi && (
+                        <>
+                          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-left space-y-2">
+                            <div className="flex justify-between items-center">
+                              <label className="text-[10px] font-black uppercase text-amber-400 tracking-widest">
+                                QR Generation Amount (₹) — Separate from Receipt
+                                OCR
+                              </label>
+                              {totalPayableNow > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setQrPayAmount(totalPayableNow.toFixed(2))
+                                  }
+                                  className="text-[9px] font-black uppercase bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white px-2 py-0.5 rounded border border-blue-500/40 transition"
+                                >
+                                  Reset to Balance Payable (₹{totalPayableNow})
+                                </button>
+                              )}
+                            </div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="Enter amount to generate QR..."
+                              value={qrPayAmount}
+                              onWheel={handleNumericWheel}
+                              onKeyDown={handleNumericKeyDown}
+                              onChange={(e) => setQrPayAmount(e.target.value)}
+                              className="w-full bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 text-white font-black text-xl p-3 rounded-lg outline-none transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+
+                          <div className="flex flex-col items-center text-center pt-2">
+                            <div className="bg-white p-4 rounded-2xl shadow-lg mb-4">
+                              <QRCodeSVG
+                                value={upiDeepLink}
+                                size={185}
+                                level="M"
+                              />
+                            </div>
+                            <p className="text-3xl font-black text-emerald-400">
+                              ₹
+                              {parsedQrAmount.toLocaleString("en-IN", {
+                                minimumFractionDigits: 2,
+                              })}
+                            </p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">
+                              Routing to: {centerUpi} (
+                              {selectedUpiObj?.master_banks?.bank_name ||
+                                "Fast Ark Treasury"}
+                              )
+                            </p>
+
+                            {parsedQrAmount > 0 && (
+                              <a
+                                href={upiDeepLink}
+                                className="mt-4 w-full max-w-sm py-3.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex items-center justify-center gap-2"
+                              >
+                                <span>📲</span> Tap to Pay ₹
+                                {parsedQrAmount.toLocaleString("en-IN")} via UPI
+                                App
+                              </a>
+                            )}
+                          </div>
+                        </>
+                      )
+                    )}
                   </div>
                 ) : (
                   <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl space-y-4">
@@ -2345,11 +2536,51 @@ export default function PartnerAadhaarPortal() {
                       Bank Cash Deposit / NEFT / IMPS / Cheque Remittance
                     </h3>
                     <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                      Upload your physical Bank Cash Deposit Challan or
-                      NEFT/IMPS advice on the right — the enhanced OCR engine
-                      will automatically read the collected amount, date, Unique
-                      UTR, and Transaction ID from your slip.
+                      Remit funds to your center&apos;s mapped Virtual Account
+                      (CMS) below, then upload your Bank Challan or NEFT/IMPS
+                      advice on the right for automatic OCR extraction.
                     </p>
+
+                    {/* MAPPED VIRTUAL ACCOUNTS (CMS) & IFSC FROM /dashboard/banking */}
+                    <div className="space-y-2.5 pt-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                        🏦 Mapped Center Virtual Account(s) (CMS)
+                      </p>
+                      {mappedVirtualAccounts.length === 0 ? (
+                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-400 font-bold">
+                          No dedicated CMS Virtual Account mapped to this center
+                          yet. Please contact Corporate Treasury or use Mode 1
+                          (UPI QR).
+                        </div>
+                      ) : (
+                        mappedVirtualAccounts.map((va: any) => (
+                          <div
+                            key={va.id}
+                            className="bg-slate-950 p-4 rounded-xl border border-amber-500/40 space-y-1.5"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] font-black uppercase text-amber-400">
+                                {va.master_banks?.bank_name ||
+                                  "Corporate Treasury Bank"}
+                              </span>
+                              <span className="text-[9px] font-black uppercase bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded">
+                                Active CMS Account
+                              </span>
+                            </div>
+                            <p className="font-mono font-black text-lg text-white tracking-wider">
+                              A/C: {va.virtual_account_no}
+                            </p>
+                            <p className="text-xs font-bold text-slate-300">
+                              IFSC Code:{" "}
+                              <strong className="text-amber-300 font-mono">
+                                {va.virtual_ifsc}
+                              </strong>
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
                     <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
                       <span className="text-xs font-bold text-slate-400 uppercase">
                         Remaining Balance Payable:
