@@ -1,3 +1,4 @@
+// FILE PATH: ./app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -14,11 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fast Ark Portal",
-  description: "Enterprise Operations & Treasury",
+  title: "Fast Ark DRS — Daily Report System",
+  description: "Fast Ark Daily Report System (DRS) — Operations, MIS & Treasury",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
@@ -26,9 +29,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     >
       <body className="min-h-full flex flex-col">
         {/* The Session Manager wraps the children to enforce concurrent limits and timeouts */}
-        <SessionManager>
-          {children}
-        </SessionManager>
+        <SessionManager>{children}</SessionManager>
       </body>
     </html>
   );

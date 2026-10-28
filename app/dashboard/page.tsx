@@ -34,6 +34,14 @@ type AdminDeptGroup =
 
 type RevenueStreamFilter = "ALL" | "TELECOM" | "AADHAAR";
 
+const sanitizeCSV = (val: unknown): string => {
+  let str = String(val ?? "").replace(/"/g, '""');
+  if (/^[=+\-@]/.test(str)) {
+    str = "'" + str;
+  }
+  return `"${str}"`;
+};
+
 export default function AdminCommandCenter() {
   const router = useRouter();
   const [adminUser, setAdminUser] = useState<any>(null);
@@ -86,7 +94,6 @@ export default function AdminCommandCenter() {
   const [fPartner, setFPartner] = useState("ALL");
 
   const [financials, setFinancials] = useState({
-    // Consolidated & Telecom Granular Revenue
     cbpLandline: 0,
     cbpGsm: 0,
     cbp: 0,
@@ -108,11 +115,9 @@ export default function AdminCommandCenter() {
     chequeQty: 0,
     totalSalesCash: 0,
     totalDeposits: 0,
-    // Stream 1: BSNL + Paybull Isolated Totals
     telecomSalesCash: 0,
     telecomDeposits: 0,
     telecomPending: 0,
-    // Stream 2: Aadhaar Kendra Isolated Totals & 5-Category Breakdown
     aadhaarSalesCash: 0,
     aadhaarDeposits: 0,
     aadhaarPending: 0,
@@ -127,7 +132,6 @@ export default function AdminCommandCenter() {
     adhRejected: 0,
     adhBase: 0,
     adhGst: 0,
-    // SIM Sales Quantities
     qNew: 0,
     qUpgrade: 0,
     qReplace: 0,
@@ -191,7 +195,7 @@ export default function AdminCommandCenter() {
         return router.push("/dashboard/supervisor-hub");
       }
 
-      // Role-Based Default Landing Tab: Admin, Manager & Accountant -> Group 1 (pulse), Staff -> Group 3 (operations)
+      // Role-Based Default Landing Tab: Admin, Manager & Accountant -> 1. DRS Dashboard, Staff -> 3. Daily Operations
       if (safeRole === "staff") {
         setActiveGroup("operations");
       } else {
@@ -205,7 +209,7 @@ export default function AdminCommandCenter() {
         supabase
           .from("active_partners")
           .select(
-            "id, partner_name, role, role_aadhaar, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id)"
+            "id, partner_name, mobile, role, role_aadhaar, aadhaar_station_id, locations(id, state, dist, center_name, center_code, parent_master_id)"
           )
           .eq("status", "Active")
           .order("partner_name"),
@@ -587,7 +591,6 @@ export default function AdminCommandCenter() {
       Object.values(chartMap).sort((a, b) => a.date.localeCompare(b.date))
     );
 
-    // Defaulter Watchlists morph according to active Vertical Filter
     const relevantDirectory = filteredDirectory.filter((p) => {
       if (streamFilter === "AADHAAR") {
         return Boolean(
@@ -627,6 +630,60 @@ export default function AdminCommandCenter() {
     setMissingDeposits(
       relevantDirectory.filter((p) => !partnersWithDeposits.has(p.id))
     );
+  };
+
+  // --- 1-CLICK DEFAULTER WATCHLIST CSV EXPORT ---
+  const handleExportDefaulterWatchlistCSV = (
+    listType: "MISSING_REPORTS" | "MISSING_DEPOSITS"
+  ) => {
+    const targetList =
+      listType === "MISSING_REPORTS" ? missingSales : missingDeposits;
+    if (targetList.length === 0) {
+      return alert("No pending defaulters in this watchlist to export.");
+    }
+
+    const headers = [
+      "Date Window",
+      "Vertical Mode",
+      "Watchlist Type",
+      "Partner Name",
+      "Mobile",
+      "Operational Role",
+      "UIDAI Station ID",
+      "Center Code",
+      "Center Name",
+      "District",
+      "State",
+    ];
+
+    const rows = targetList.map((p) => {
+      const locData = p.locations;
+      const l: any = Array.isArray(locData) ? locData[0] : locData;
+      return [
+        sanitizeCSV(
+          `${formatToDDMMYYYY(fromDate)} to ${formatToDDMMYYYY(toDate)}`
+        ),
+        sanitizeCSV(streamFilter),
+        sanitizeCSV(listType),
+        sanitizeCSV(p.partner_name),
+        sanitizeCSV(p.mobile || "N/A"),
+        sanitizeCSV(p.role),
+        sanitizeCSV(p.aadhaar_station_id || "N/A"),
+        sanitizeCSV(l?.center_code || "NO-CODE"),
+        sanitizeCSV(l?.center_name || "Unassigned"),
+        sanitizeCSV(l?.dist || "N/A"),
+        sanitizeCSV(l?.state || "N/A"),
+      ].join(",");
+    });
+
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `FastArk_DRS_${listType}_${streamFilter}_${formatToDDMMYYYY(
+      toDate
+    ).replace(/\//g, "-")}.csv`;
+    link.click();
   };
 
   const uniqueStates = Array.from(
@@ -694,7 +751,7 @@ export default function AdminCommandCenter() {
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-4">
         <div className="w-12 h-12 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin"></div>
         <p className="text-xs font-black uppercase tracking-widest text-slate-400 animate-pulse">
-          Initializing Corporate Command Center...
+          Initializing Fast Ark DRS (Daily Report System)...
         </p>
       </div>
     );
@@ -707,7 +764,7 @@ export default function AdminCommandCenter() {
             onClick={() => setActiveView("dashboard")}
             className="text-blue-600 font-black text-xs uppercase tracking-widest hover:underline flex items-center gap-2 mb-4 bg-white px-4 py-2.5 rounded-xl shadow-sm border border-slate-200 w-fit transition"
           >
-            <span>&larr;</span> Back to Corporate Command Center
+            <span>&larr;</span> Back to DRS Dashboard
           </button>
           <SupportDeskModule
             allLocations={allLocations}
@@ -774,7 +831,7 @@ export default function AdminCommandCenter() {
     return "bg-red-500";
   };
 
-  // Department Navigation Groups (Option 1A Naming Applied)
+  // Department Navigation Groups (Updated to DRS & Team-Friendly Names)
   const departmentGroups: {
     id: AdminDeptGroup;
     icon: string;
@@ -788,8 +845,8 @@ export default function AdminCommandCenter() {
     {
       id: "pulse",
       icon: "📊",
-      shortLabel: "Overview",
-      label: "1. Corporate Overview",
+      shortLabel: "DRS",
+      label: "1. DRS Dashboard",
       sub: "Revenue, SIM Qty & Vertical Split",
       visible: isFinanceTeam || isManagerOrAdmin,
       badge: `${overallSettlementPct.toFixed(0)}%`,
@@ -801,8 +858,8 @@ export default function AdminCommandCenter() {
     {
       id: "treasury",
       icon: "🏦",
-      shortLabel: "Treasury",
-      label: "2. Treasury & Audit",
+      shortLabel: "Accounts",
+      label: "2. Account & Audit",
       sub: "Deposits, Corrections & Banking",
       visible: isFinanceTeam || isManagerOrAdmin,
       badge: "4 Hubs",
@@ -811,9 +868,9 @@ export default function AdminCommandCenter() {
     {
       id: "operations",
       icon: "📡",
-      shortLabel: "Verticals",
-      label: "3. Vertical Operations",
-      sub: "Aadhaar, MIS, OCSC & Logistics",
+      shortLabel: "Daily Ops",
+      label: "3. Daily Operations",
+      sub: "Aadhaar, MIS, CTOP & Stock",
       visible: true,
       badge: `${financials.totalSims} SIMs`,
       badgeColor:
@@ -822,9 +879,9 @@ export default function AdminCommandCenter() {
     {
       id: "network",
       icon: "🌐",
-      shortLabel: "Network",
-      label: "4. Network & Onboarding",
-      sub: "Franchise Queue, Partners & Infra",
+      shortLabel: "Centers",
+      label: "4. Approvals & Center List",
+      sub: "Application / Center Management",
       visible: isOpsTeam,
       badge:
         stats.pending > 0
@@ -838,9 +895,9 @@ export default function AdminCommandCenter() {
     {
       id: "governance",
       icon: "🛡️",
-      shortLabel: "SLA & HR",
-      label: "5. Governance, SLA & HR",
-      sub: "Helpdesk, Defaulters & Team",
+      shortLabel: "Helpdesk",
+      label: "5. Helpdesk, Alerts & Staff",
+      sub: "Support Desk, Defaulters & Team",
       visible: !isAccountant,
       badge:
         missingSales.length > 0 ? `${missingSales.length} Flags` : "Active",
@@ -859,7 +916,7 @@ export default function AdminCommandCenter() {
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
           <p className="text-sm font-bold text-white animate-pulse tracking-widest uppercase">
-            Establishing secure connection to module...
+            Opening DRS Module...
           </p>
         </div>
       )}
@@ -884,14 +941,10 @@ export default function AdminCommandCenter() {
                 </div>
                 <div>
                   <h1 className="font-black text-sm tracking-wide text-white leading-none">
-                    COMMAND HUB
+                    FAST ARK DRS
                   </h1>
                   <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest mt-1">
-                    {isAccountant
-                      ? "Corporate Treasury"
-                      : isStaff
-                      ? "Operations Desk"
-                      : "Enterprise Back-Office"}
+                    Daily Report System
                   </p>
                 </div>
               </div>
@@ -919,7 +972,7 @@ export default function AdminCommandCenter() {
           {/* DEPARTMENTAL GROUP NAVIGATION */}
           <div className="px-4 pt-3 pb-1">
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-              Departmental Workspaces
+              DRS Workspaces
             </p>
           </div>
           <nav className="p-3 space-y-1.5">
@@ -1031,7 +1084,7 @@ export default function AdminCommandCenter() {
       {/* RIGHT MAIN WORKSPACE (RENDERS ONLY THE SELECTED DEPARTMENT GROUP)     */}
       {/* ===================================================================== */}
       <main className="flex-1 p-4 md:p-8 pb-24 lg:pb-8 overflow-y-auto space-y-6 max-w-[1500px]">
-        {/* TOP CONTEXT HEADER BAR (OPTION 1A NAMING) */}
+        {/* TOP CONTEXT HEADER BAR */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -1044,14 +1097,14 @@ export default function AdminCommandCenter() {
             </div>
             <h2 className="text-2xl font-black text-slate-900 mt-1">
               {activeGroup === "pulse"
-                ? "Corporate Revenue & Settlement Overview"
+                ? "DRS Dashboard"
                 : activeGroup === "treasury"
-                ? "Treasury, Financial Verification & Corporate Banking"
+                ? "Account & Audit"
                 : activeGroup === "operations"
-                ? "Vertical Operations — Aadhaar Kendra, Manager MIS, OCSC & Supply"
+                ? "Daily Operations — Aadhaar, MIS, CTOP & Stock"
                 : activeGroup === "network"
-                ? "Network Lifecycle — Franchise Onboarding, Partners & Infrastructure"
-                : "Governance, SLA Support Desk, Defaulter Engine & HR"}
+                ? "Application / Center Management"
+                : "Helpdesk, Alerts & Staff"}
             </h2>
           </div>
 
@@ -1062,7 +1115,7 @@ export default function AdminCommandCenter() {
                 onClick={() => setActiveView("support")}
                 className="bg-slate-900 hover:bg-red-600 text-white font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-widest shadow-sm transition flex items-center gap-2"
               >
-                <span>🎧</span> Open SLA Helpdesk
+                <span>🎧</span> Open Helpdesk
               </button>
             )}
             <button
@@ -1070,17 +1123,16 @@ export default function AdminCommandCenter() {
               onClick={() => routeTo("/dashboard/aadhaar")}
               className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-widest shadow-sm transition flex items-center gap-2"
             >
-              <span>🆔</span> Aadhaar Command
+              <span>🆔</span> Aadhaar Dashboard
             </button>
           </div>
         </div>
 
         {/* =================================================================== */}
-        {/* GROUP 1: CORPORATE OVERVIEW (OPTION X: 3-IN-1 VERTICAL MORPHING)    */}
+        {/* GROUP 1: DRS DASHBOARD (OPTION X: 3-IN-1 VERTICAL MORPHING)         */}
         {/* =================================================================== */}
         {activeGroup === "pulse" && (isFinanceTeam || isManagerOrAdmin) && (
           <div className="space-y-6 animate-in fade-in">
-            {/* OPTION 2A: REVENUE & REMITTANCE RECONCILIATION CONTROL PANEL */}
             <div className="bg-slate-900 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
               <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
                 <div>
@@ -1151,7 +1203,6 @@ export default function AdminCommandCenter() {
 
               {showGeoFilters && (
                 <div className="p-4 bg-slate-900 border-b border-slate-800 space-y-4">
-                  {/* ROW 1: 4-TIER GEOGRAPHIC & OPERATOR CASCADE */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
@@ -1200,7 +1251,7 @@ export default function AdminCommandCenter() {
 
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                        3. Location / Center [Code]
+                        3. Center / Location [Code]
                       </label>
                       <select
                         value={fCenter}
@@ -1210,7 +1261,7 @@ export default function AdminCommandCenter() {
                         }}
                         className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-bold rounded-lg p-2.5 outline-none focus:border-blue-500 transition"
                       >
-                        <option value="ALL">All Locations</option>
+                        <option value="ALL">All Centers</option>
                         {centerLocations.map((c) => (
                           <option key={c.id} value={c.id}>
                             [{c.center_code || "NO-CODE"}] {c.center_name}
@@ -1243,7 +1294,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ROW 2: 7-OPTION DATE PRESET + CUSTOM DATES */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-800">
                     <div>
                       <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1">
@@ -1315,17 +1365,17 @@ export default function AdminCommandCenter() {
                 </div>
               )}
 
-              {/* VISUAL SETTLEMENT PROGRESS BAR (ADAPTS TO ACTIVE VERTICAL) */}
+              {/* VISUAL SETTLEMENT PROGRESS BAR */}
               <div className="p-5 bg-slate-950/90 border-b border-slate-800 space-y-2.5">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div className="flex items-center gap-2">
                     <span className="text-sm">🎯</span>
                     <span className="text-xs font-black uppercase tracking-widest text-white">
                       {streamFilter === "TELECOM"
-                        ? "BSNL + Paybull Vertical Settlement Progress (Deposited ÷ Generated)"
+                        ? "BSNL + Paybull Settlement Progress (Deposited ÷ Generated)"
                         : streamFilter === "AADHAAR"
-                        ? "Aadhaar Seva Kendra Vertical Settlement Progress (Deposited ÷ Generated)"
-                        : "Consolidated Network Settlement Progress (Total Deposited ÷ Total Generated)"}
+                        ? "Aadhaar Settlement Progress (Deposited ÷ Generated)"
+                        : "DRS Settlement Progress (Total Deposited ÷ Total Generated)"}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-xs font-black">
@@ -1386,7 +1436,6 @@ export default function AdminCommandCenter() {
               {/* ============================================================= */}
               {streamFilter === "ALL" && (
                 <>
-                  {/* SIDE-BY-SIDE STREAM COMPARISON CARDS */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-px bg-slate-800 border-b border-slate-800">
                     {/* STREAM 1: BSNL + PAYBULL */}
                     <div className="p-5 bg-slate-900 hover:bg-slate-900/90 transition">
@@ -1413,7 +1462,7 @@ export default function AdminCommandCenter() {
                             onClick={() => routeTo("/dashboard/accounts")}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-3 py-1 rounded text-[9px] uppercase tracking-wider shadow transition"
                           >
-                            Verify in Accountant Portal &rarr;
+                            Deposit Verification &rarr;
                           </button>
                         </div>
                       </div>
@@ -1488,7 +1537,7 @@ export default function AdminCommandCenter() {
                             onClick={() => routeTo("/dashboard/aadhaar")}
                             className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3 py-1 rounded text-[9px] uppercase tracking-wider shadow transition"
                           >
-                            Open Aadhaar Collections &rarr;
+                            Aadhaar Dashboard &rarr;
                           </button>
                         </div>
                       </div>
@@ -1705,7 +1754,6 @@ export default function AdminCommandCenter() {
               {/* ============================================================= */}
               {streamFilter === "TELECOM" && (
                 <div className="animate-in fade-in">
-                  {/* ACTIVE VERTICAL BANNER */}
                   <div className="p-4 bg-indigo-950/80 border-b border-indigo-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div className="flex items-center gap-2.5">
                       <span className="text-2xl">📡</span>
@@ -1714,8 +1762,7 @@ export default function AdminCommandCenter() {
                           Isolated Vertical View Active
                         </span>
                         <h4 className="text-white font-black text-sm">
-                          BSNL Telecom, SIM Inventory &amp; Paybull Fintech
-                          Operations
+                          BSNL Telecom, SIM Inventory &amp; Paybull Operations
                         </h4>
                       </div>
                     </div>
@@ -1725,7 +1772,7 @@ export default function AdminCommandCenter() {
                         onClick={() => routeTo("/dashboard/accounts")}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider shadow transition"
                       >
-                        Verify in Accountant Portal &rarr;
+                        Deposit Verification &rarr;
                       </button>
                       <button
                         type="button"
@@ -1737,7 +1784,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* 8 GRANULAR TELECOM & PAYBULL REVENUE CARDS */}
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-slate-800">
                     <div className="bg-slate-900 p-4 flex flex-col justify-center">
                       <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
@@ -1812,7 +1858,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* PAYBULL 5-HEAD SUB-STRIP + CHEQUES */}
                   <div className="bg-slate-900/90 border-t border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
                     <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">
                       💳 Paybull 5-Head Breakdown:
@@ -1862,7 +1907,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* 7-CATEGORY SIM SALES COUNT STRIP */}
                   <div className="bg-slate-950 border-t border-slate-800 p-4 space-y-3">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <h4 className="text-xs font-black uppercase tracking-widest text-slate-200 flex items-center gap-2">
@@ -1947,7 +1991,6 @@ export default function AdminCommandCenter() {
               {/* ============================================================= */}
               {streamFilter === "AADHAAR" && (
                 <div className="animate-in fade-in">
-                  {/* ACTIVE VERTICAL BANNER */}
                   <div className="p-4 bg-amber-950/70 border-b border-amber-800/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div className="flex items-center gap-2.5">
                       <span className="text-2xl">🆔</span>
@@ -1956,8 +1999,8 @@ export default function AdminCommandCenter() {
                           Isolated Vertical View Active
                         </span>
                         <h4 className="text-white font-black text-sm">
-                          Aadhaar Seva Kendra — 5-Category UIDAI Enrolments
-                          &amp; Collections
+                          Aadhaar Dashboard — 5-Category UIDAI Enrolments &amp;
+                          Collections
                         </h4>
                       </div>
                     </div>
@@ -1967,7 +2010,7 @@ export default function AdminCommandCenter() {
                         onClick={() => routeTo("/dashboard/aadhaar")}
                         className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider shadow transition"
                       >
-                        Open Aadhaar Collections &rarr;
+                        Open Aadhaar Dashboard &rarr;
                       </button>
                       <button
                         type="button"
@@ -1979,7 +2022,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ROW 1: 5 UIDAI ENROLMENT CATEGORY CARDS */}
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-slate-800 border-b border-slate-800">
                     <div className="bg-slate-900 p-4 border-t-2 border-t-emerald-500">
                       <p className="text-[9px] text-emerald-400 font-black uppercase tracking-widest">
@@ -2038,7 +2080,6 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
 
-                  {/* ROW 2: 6 AADHAAR PACKET STATUS & FINANCIAL BREAKDOWN CARDS */}
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-slate-800">
                     <div className="bg-slate-950 p-4 flex flex-col justify-center">
                       <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-1">
@@ -2106,7 +2147,7 @@ export default function AdminCommandCenter() {
                 </div>
               )}
 
-              {/* RECHARTS BAR CHART (RESPECTS ACTIVE VERTICAL) */}
+              {/* RECHARTS BAR CHART */}
               {chartData.length > 0 && (
                 <div className="p-6 bg-slate-900 w-full h-80 border-t border-slate-800">
                   <ResponsiveContainer width="100%" height="100%">
@@ -2185,22 +2226,35 @@ export default function AdminCommandCenter() {
               )}
             </div>
 
-            {/* DEFAULTER WATCHLISTS (MISSING REPORTS & MISSING DEPOSITS) */}
+            {/* DEFAULTER WATCHLISTS WITH 1-CLICK CSV EXPORT */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white rounded-2xl shadow-sm border border-red-200 overflow-hidden">
-                <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">
+                <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center gap-2">
                   <h3 className="font-black text-red-800 text-xs uppercase tracking-widest">
                     ⚠️ Missing{" "}
                     {streamFilter === "TELECOM"
-                      ? "BSNL + Paybull Sales"
+                      ? "Daily MIS"
                       : streamFilter === "AADHAAR"
-                      ? "Aadhaar Kendra"
-                      : "Sales / Aadhaar"}{" "}
+                      ? "Aadhaar"
+                      : "Daily MIS / Aadhaar"}{" "}
                     Reports
                   </h3>
-                  <span className="bg-red-200 text-red-900 font-black px-2.5 py-0.5 rounded text-xs">
-                    {missingSales.length} Partners
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-red-200 text-red-900 font-black px-2.5 py-0.5 rounded text-xs">
+                      {missingSales.length} Partners
+                    </span>
+                    {missingSales.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleExportDefaulterWatchlistCSV("MISSING_REPORTS")
+                        }
+                        className="bg-red-600 hover:bg-red-700 text-white font-black px-2.5 py-1 rounded text-[9px] uppercase tracking-wider shadow-sm transition"
+                      >
+                        📥 CSV
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="max-h-64 overflow-y-auto p-4 space-y-2">
                   {missingSales.length === 0 ? (
@@ -2238,19 +2292,32 @@ export default function AdminCommandCenter() {
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm border border-amber-200 overflow-hidden">
-                <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center">
+                <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center gap-2">
                   <h3 className="font-black text-amber-800 text-xs uppercase tracking-widest">
                     ⏳ Missing{" "}
                     {streamFilter === "TELECOM"
                       ? "BSNL + Paybull"
                       : streamFilter === "AADHAAR"
-                      ? "Aadhaar Kendra"
+                      ? "Aadhaar"
                       : "Cash"}{" "}
                     Deposits
                   </h3>
-                  <span className="bg-amber-200 text-amber-900 font-black px-2.5 py-0.5 rounded text-xs">
-                    {missingDeposits.length} Partners
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-200 text-amber-900 font-black px-2.5 py-0.5 rounded text-xs">
+                      {missingDeposits.length} Partners
+                    </span>
+                    {missingDeposits.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleExportDefaulterWatchlistCSV("MISSING_DEPOSITS")
+                        }
+                        className="bg-amber-600 hover:bg-amber-700 text-white font-black px-2.5 py-1 rounded text-[9px] uppercase tracking-wider shadow-sm transition"
+                      >
+                        📥 CSV
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="max-h-64 overflow-y-auto p-4 space-y-2">
                   {missingDeposits.length === 0 ? (
@@ -2291,7 +2358,7 @@ export default function AdminCommandCenter() {
         )}
 
         {/* =================================================================== */}
-        {/* GROUP 2: TREASURY, FINANCIAL VERIFICATION & BANKING                 */}
+        {/* GROUP 2: ACCOUNT & AUDIT (RENAMED CARDS)                            */}
         {/* =================================================================== */}
         {activeGroup === "treasury" && (isFinanceTeam || isManagerOrAdmin) && (
           <div className="space-y-6 animate-in fade-in">
@@ -2309,7 +2376,7 @@ export default function AdminCommandCenter() {
                       </span>
                     </div>
                     <h3 className="font-black text-xl text-slate-900 group-hover:text-emerald-600">
-                      Accountant Verification Portal
+                      Deposit Verification
                     </h3>
                     <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                       Verify partner bank deposits, inspect OCR slips
@@ -2318,7 +2385,7 @@ export default function AdminCommandCenter() {
                     </p>
                   </div>
                   <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-emerald-600 uppercase tracking-wider">
-                    <span>Open Verification Queue</span>
+                    <span>Open Deposit Verification</span>
                     <span>&rarr;</span>
                   </div>
                 </div>
@@ -2332,19 +2399,19 @@ export default function AdminCommandCenter() {
                   <div className="flex justify-between items-start mb-3">
                     <span className="text-4xl">⚖️</span>
                     <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
-                      Telecom + Aadhaar
+                      Daily MIS + Aadhaar
                     </span>
                   </div>
                   <h3 className="font-black text-xl text-slate-900 group-hover:text-amber-600">
-                    Sales &amp; Aadhaar Correction Audit
+                    Report Correction
                   </h3>
                   <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                     Review partner edit requests and enforce audited financial
-                    overrides across BSNL, Paybull, and Aadhaar daily ledgers.
+                    overrides across BSNL, Paybull, and Aadhaar daily reports.
                   </p>
                 </div>
                 <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-amber-600 uppercase tracking-wider">
-                  <span>Open Audit Hub</span>
+                  <span>Open Report Correction</span>
                   <span>&rarr;</span>
                 </div>
               </div>
@@ -2362,15 +2429,15 @@ export default function AdminCommandCenter() {
                       </span>
                     </div>
                     <h3 className="font-black text-xl text-slate-900 group-hover:text-blue-600">
-                      Corporate Banking &amp; Treasury Hub
+                      Banking Credentials
                     </h3>
                     <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                       Configure physical Master Banks, center-mapped Virtual
-                      Accounts, dynamic UPI IDs, and store QR stickers.
+                      Accounts, dynamic UPI IDs, and Center QR Codes.
                     </p>
                   </div>
                   <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-blue-600 uppercase tracking-wider">
-                    <span>Manage Treasury Channels</span>
+                    <span>Open Banking Credentials</span>
                     <span>&rarr;</span>
                   </div>
                 </div>
@@ -2388,7 +2455,7 @@ export default function AdminCommandCenter() {
                     </span>
                   </div>
                   <h3 className="font-black text-xl text-slate-900 group-hover:text-indigo-600">
-                    Corporate MIS &amp; Multi-Stream Export Hub
+                    DRS MIS
                   </h3>
                   <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                     Generate Station-wise, Operator-wise, and Consolidated
@@ -2396,7 +2463,7 @@ export default function AdminCommandCenter() {
                   </p>
                 </div>
                 <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-indigo-600 uppercase tracking-wider">
-                  <span>Open Export Console</span>
+                  <span>Open DRS MIS</span>
                   <span>&rarr;</span>
                 </div>
               </div>
@@ -2405,7 +2472,7 @@ export default function AdminCommandCenter() {
         )}
 
         {/* =================================================================== */}
-        {/* GROUP 3: VERTICAL OPERATIONS (AADHAAR, MIS, OCSC & LOGISTICS)       */}
+        {/* GROUP 3: DAILY OPERATIONS (AADHAAR, MIS, CTOP & STOCK)              */}
         {/* =================================================================== */}
         {activeGroup === "operations" && (
           <div className="space-y-6 animate-in fade-in">
@@ -2422,7 +2489,7 @@ export default function AdminCommandCenter() {
                     </span>
                   </div>
                   <h3 className="font-black text-xl text-slate-900 group-hover:text-amber-600">
-                    Aadhaar Seva Kendra Command Hub
+                    Aadhaar Dashboard
                   </h3>
                   <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                     Audit 5-category CSV/HTML daily &amp; weekly uploads, live
@@ -2431,7 +2498,7 @@ export default function AdminCommandCenter() {
                   </p>
                 </div>
                 <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-amber-600 uppercase tracking-wider">
-                  <span>Enter Aadhaar Command</span>
+                  <span>Open Aadhaar Dashboard</span>
                   <span>&rarr;</span>
                 </div>
               </div>
@@ -2449,7 +2516,7 @@ export default function AdminCommandCenter() {
                       </span>
                     </div>
                     <h3 className="font-black text-xl text-slate-900 group-hover:text-indigo-600">
-                      Manager MIS &amp; OTF Balances
+                      Manager MIS &amp; Balances
                     </h3>
                     <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                       Log daily Master CTOP Opening/Closing balances, central
@@ -2474,11 +2541,11 @@ export default function AdminCommandCenter() {
                       <div className="flex justify-between items-start mb-3">
                         <span className="text-4xl">📡</span>
                         <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black uppercase px-2.5 py-1 rounded">
-                          Master &amp; Agent CTOP
+                          Partner Credentials
                         </span>
                       </div>
                       <h3 className="font-black text-xl text-slate-900 group-hover:text-blue-600">
-                        Telecom &amp; OCSC CTOP Architecture
+                        Master &amp; Agent CTOP
                       </h3>
                       <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                         Manage Master CTOP accounts anchored to HQs, Sanchar
@@ -2487,7 +2554,7 @@ export default function AdminCommandCenter() {
                       </p>
                     </div>
                     <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-blue-600 uppercase tracking-wider">
-                      <span>Configure OCSC Credentials</span>
+                      <span>Open Master &amp; Agent CTOP</span>
                       <span>&rarr;</span>
                     </div>
                   </div>
@@ -2504,7 +2571,7 @@ export default function AdminCommandCenter() {
                         </span>
                       </div>
                       <h3 className="font-black text-xl text-slate-900 group-hover:text-emerald-600">
-                        Logistics &amp; Supply Command
+                        Stock &amp; Inventory
                       </h3>
                       <p className="text-slate-500 text-xs mt-2 font-medium leading-relaxed">
                         Approve digital CTOP/CBP balance top-ups and mark
@@ -2512,7 +2579,7 @@ export default function AdminCommandCenter() {
                       </p>
                     </div>
                     <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-black text-emerald-600 uppercase tracking-wider">
-                      <span>Open Supply Queue</span>
+                      <span>Open Stock &amp; Inventory</span>
                       <span>&rarr;</span>
                     </div>
                   </div>
@@ -2523,11 +2590,10 @@ export default function AdminCommandCenter() {
         )}
 
         {/* =================================================================== */}
-        {/* GROUP 4: NETWORK & ONBOARDING (APPS, PARTNERS, LOCATIONS & FEEDS)   */}
+        {/* GROUP 4: APPROVALS & CENTER LIST (APPLICATION / CENTER MANAGEMENT)  */}
         {/* =================================================================== */}
         {activeGroup === "network" && isOpsTeam && (
           <div className="space-y-6 animate-in fade-in">
-            {/* 4 ONBOARDING & INFRASTRUCTURE KPI CARDS */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div
                 onClick={() => routeTo("/dashboard/applications")}
@@ -2579,7 +2645,7 @@ export default function AdminCommandCenter() {
                 className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-blue-600 hover:shadow-md transition cursor-pointer"
               >
                 <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest mb-1">
-                  Infrastructure
+                  Center / Location
                 </p>
                 <h2 className="text-3xl font-black text-slate-900">
                   {stats.locations}
@@ -2590,7 +2656,6 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* 3 CORE NETWORK MODULE CARDS */}
             {isManagerOrAdmin && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div
@@ -2613,11 +2678,11 @@ export default function AdminCommandCenter() {
                 >
                   <div className="text-3xl mb-3">🤝</div>
                   <h3 className="font-black text-lg text-slate-900 group-hover:text-emerald-600">
-                    Master Partner Database &amp; 360° Profiles
+                    Partner Database (360°)
                   </h3>
                   <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
-                    Inspect full 360° KYC dossiers, passport photos, CTOP/Bank
-                    mappings, and export the master partner database.
+                    Inspect full 360° KYC dossiers, passport photos, Partner
+                    Credentials, and export A4 partner dossiers.
                   </p>
                 </div>
 
@@ -2627,7 +2692,7 @@ export default function AdminCommandCenter() {
                 >
                   <div className="text-3xl mb-3">📍</div>
                   <h3 className="font-black text-lg text-slate-900 group-hover:text-indigo-600">
-                    Infrastructure &amp; Locations
+                    Center / Location
                   </h3>
                   <p className="text-slate-500 text-xs mt-1.5 font-medium leading-relaxed">
                     Deploy Master HQs and Spoke Centers, toggle Aadhaar/OCSC/CM
@@ -2637,7 +2702,6 @@ export default function AdminCommandCenter() {
               </div>
             )}
 
-            {/* WEBSITE ENQUIRIES & RECENT FRANCHISE APPLICATIONS */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-6 h-fit">
                 <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-5">
@@ -2744,7 +2808,7 @@ export default function AdminCommandCenter() {
         )}
 
         {/* =================================================================== */}
-        {/* GROUP 5: GOVERNANCE, SLA HELPDESK, DEFAULTER ENGINE & HR            */}
+        {/* GROUP 5: HELPDESK, ALERTS & STAFF                                   */}
         {/* =================================================================== */}
         {activeGroup === "governance" && !isAccountant && (
           <div className="space-y-8 animate-in fade-in">
@@ -2841,7 +2905,6 @@ export default function AdminCommandCenter() {
               )}
             </div>
 
-            {/* GOD-MODE STAFF MANAGEMENT ENGINE */}
             {isGodMode && <StaffManagementEngine />}
           </div>
         )}
