@@ -96,9 +96,14 @@ export const getDateRangeFromPreset = (
   return { start: todayStr, end: todayStr };
 };
 
-// Slices YYYYMMDD from 28-char Enrolment ID
+// Extracts YYYY-MM-DD from 28/29-char UIDAI Enrolment ID (supports 'S' prefix & trailing 14-digit timestamp)
 export const extractDateFromEID = (eid: string): string => {
-  const clean = eid.trim();
+  const clean = (eid || "").trim().toUpperCase();
+  if (clean.length < 14) return "";
+  const tailMatch = clean.match(/(\d{4})(\d{2})(\d{2})\d{6}$/);
+  if (tailMatch) {
+    return `${tailMatch[1]}-${tailMatch[2]}-${tailMatch[3]}`;
+  }
   if (clean.length < 22) return "";
   const yyyymmdd = clean.slice(14, 22);
   if (!/^\d{8}$/.test(yyyymmdd)) return "";
@@ -116,7 +121,12 @@ const parseCSVLine = (line: string): string[] => {
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === "," && !inQuotes) {
       result.push(current.trim());
       current = "";
@@ -154,24 +164,25 @@ export const classifyEnrollmentRow = (
   | "CAT4_DEMO"
   | "CAT5_BIO"
   | "INVALID" => {
-  const t = type.trim().toUpperCase();
-  const m = mbu.trim().toUpperCase();
+  const t = (type || "").trim().toUpperCase();
+  const m = (mbu || "").trim().toUpperCase();
   const amt = Number(totalAmt);
 
   const demoMin = Number(tariff?.demo_min_threshold ?? 50);
   const demoMax = Number(tariff?.demo_max_threshold ?? 100);
   const bioMin = Number(tariff?.bio_min_threshold ?? 100);
 
-  if (t === "N" && m === "NO" && amt === 0) return "CAT1_NEW";
+  if ((t === "N" || t === "E") && m === "NO" && amt === 0) return "CAT1_NEW";
   if (t === "U" && m === "YES" && amt === 0) return "CAT2_MBU_FREE";
+  if (t === "U" && m === "NO" && amt === 0) return "CAT2_MBU_FREE";
   if (t === "U" && m === "YES" && amt > 0) return "CAT3_MBU_PAID";
-  if (t === "U" && m === "NO" && amt > demoMin && amt < demoMax)
+  if (t === "U" && m === "NO" && amt >= demoMin && amt < demoMax)
     return "CAT4_DEMO";
   if (t === "U" && m === "NO" && amt >= bioMin) return "CAT5_BIO";
   return "INVALID";
 };
 
-// --- DUAL CSV + HTML PARSER & CROSS-VERIFIER ---
+// --- DUAL CSV + HTML PARSER & CROSS-VERIFIER (ORDER-INDEPENDENT EID PARITY) ---
 export const parseAndValidateDualFiles = async (
   csvFile: File,
   htmlFile: File,
@@ -265,18 +276,30 @@ export const parseAndValidateDualFiles = async (
     }
   }
 
-  const htmlRows: any[] = [];
+  const htmlRows: {
+    sno: string;
+    eid: string;
+    type: string;
+    mbu: string;
+    operator: string;
+    status: string;
+    gstPct: number;
+    newAmt: number;
+    updateAmt: number;
+    totalAmt: number;
+  }[] = [];
+
   doc.querySelectorAll(".details_view table tbody tr").forEach((tr) => {
     const tds = Array.from(tr.querySelectorAll("td")).map((td) =>
       (td.textContent || "").trim()
     );
-    if (tds.length >= 19) {
+    if (tds.length >= 19 && tds[1]) {
       htmlRows.push({
         sno: tds[0],
-        eid: tds[1],
-        type: tds[3],
-        mbu: tds[4],
-        operator: tds[7],
+        eid: tds[1].toUpperCase(),
+        type: tds[3].toUpperCase(),
+        mbu: tds[4].toUpperCase(),
+        operator: tds[7].toUpperCase(),
         status: tds[12],
         gstPct: parseFloat(tds[15]) || 0,
         newAmt: parseFloat(tds[16]) || 0,
@@ -290,30 +313,41 @@ export const parseAndValidateDualFiles = async (
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  if (csvLines.length < 2)
+  if (csvLines.length < 1) {
     throw new Error("CSV file is empty or missing headers.");
+  }
 
-  const csvRows = csvLines.slice(1).map((line) => {
-    const cols = parseCSVLine(line);
-    return {
-      sno: (cols[0] || "").trim(),
-      eid: (cols[1] || "").trim(),
-      type: (cols[3] || "").trim(),
-      mbu: (cols[4] || "").trim(),
-      operator: (cols[7] || "").trim(),
-      status: (cols[11] || "").trim(),
-      gstPct: parseFloat(cols[12]) || 0,
-      newAmt: parseFloat(cols[13]) || 0,
-      updateAmt: parseFloat(cols[14]) || 0,
-      totalAmt: parseFloat(cols[15]) || 0,
-    };
-  });
+  const csvRows = csvLines
+    .slice(1)
+    .map((line) => {
+      const cols = parseCSVLine(line);
+      return {
+        sno: (cols[0] || "").trim(),
+        eid: (cols[1] || "").trim().toUpperCase(),
+        type: (cols[3] || "").trim().toUpperCase(),
+        mbu: (cols[4] || "").trim().toUpperCase(),
+        operator: (cols[7] || "").trim().toUpperCase(),
+        status: (cols[11] || "").trim(),
+        gstPct: parseFloat(cols[12]) || 0,
+        newAmt: parseFloat(cols[13]) || 0,
+        updateAmt: parseFloat(cols[14]) || 0,
+        totalAmt: parseFloat(cols[15]) || 0,
+      };
+    })
+    .filter((r) => r.eid.length > 0);
 
   if (csvRows.length !== htmlRows.length) {
     throw new Error(
       `File Parity Error: CSV contains ${csvRows.length} rows, but HTML contains ${htmlRows.length} rows. Both files must match.`
     );
   }
+
+  // Index HTML packets by EID so UIDAI row-ordering differences between CSV and HTML never fail
+  const htmlRowMap = new Map<string, (typeof htmlRows)[0]>();
+  for (const h of htmlRows) {
+    htmlRowMap.set(h.eid, h);
+  }
+  const matchedEids = new Set<string>();
 
   let cat1_new_qty = 0,
     cat2_mbu_free_qty = 0,
@@ -345,22 +379,51 @@ export const parseAndValidateDualFiles = async (
 
   for (let i = 0; i < csvRows.length; i++) {
     const c = csvRows[i];
-    const h = htmlRows[i];
+    const h = htmlRowMap.get(c.eid);
+
+    if (!h) {
+      throw new Error(
+        `Row #${i + 1} Mismatch (${
+          c.eid
+        }): Enrolment ID exists in CSV but was not found in the HTML report.`
+      );
+    }
+
+    if (matchedEids.has(c.eid)) {
+      throw new Error(
+        `Duplicate Enrolment ID detected in CSV on Row #${i + 1} (${c.eid}).`
+      );
+    }
+    matchedEids.add(c.eid);
 
     if (
-      c.eid !== h.eid ||
       c.type !== h.type ||
       c.mbu !== h.mbu ||
       Math.abs(c.totalAmt - h.totalAmt) > 0.01
     ) {
       throw new Error(
-        `Row #${i + 1} Mismatch (${
-          c.eid
-        }): CSV and HTML values do not match. Ensure both files are from the exact same export.`
+        `Packet Value Mismatch on EID ${c.eid}: CSV (Type=${c.type}, MBU=${c.mbu}, Amt=₹${c.totalAmt}) does not match HTML (Type=${h.type}, MBU=${h.mbu}, Amt=₹${h.totalAmt}).`
+      );
+    }
+
+    if (
+      c.operator &&
+      c.operator !== expectedOperatorId.trim().toUpperCase()
+    ) {
+      throw new Error(
+        `Row Operator Mismatch on EID ${c.eid}: Packet Operator '${c.operator}' does not match your profile '${expectedOperatorId}'.`
       );
     }
 
     const eidDate = extractDateFromEID(c.eid);
+    if (!eidDate) {
+      throw new Error(
+        `Invalid EID Timestamp on Row #${i + 1} (${
+          c.eid
+        }): Could not extract packet date.`
+      );
+    }
+
     if (mode === "DAILY" && eidDate !== expectedDateOrRange.reportDate) {
       throw new Error(
         `Packet Date Mismatch on Row #${i + 1} (${
@@ -368,6 +431,24 @@ export const parseAndValidateDualFiles = async (
         }): Packet date is ${formatToDDMMYYYY(
           eidDate
         )}, expected ${formatToDDMMYYYY(expectedDateOrRange.reportDate!)}.`
+      );
+    }
+
+    if (
+      mode === "WEEKLY" &&
+      expectedDateOrRange.startDate &&
+      expectedDateOrRange.endDate &&
+      (eidDate < expectedDateOrRange.startDate ||
+        eidDate > expectedDateOrRange.endDate)
+    ) {
+      throw new Error(
+        `Packet Date Out of Range on Row #${i + 1} (${
+          c.eid
+        }): Packet date ${formatToDDMMYYYY(
+          eidDate
+        )} falls outside ${formatToDDMMYYYY(
+          expectedDateOrRange.startDate
+        )} to ${formatToDDMMYYYY(expectedDateOrRange.endDate)}.`
       );
     }
 
@@ -568,7 +649,11 @@ export const downloadAadhaarCSVReport = (
     "Exemption / Remarks",
   ];
 
-  const sanitize = (val: any) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+  const sanitize = (val: any) => {
+    let str = String(val ?? "").replace(/"/g, '""');
+    if (/^[=+\-@]/.test(str)) str = "'" + str;
+    return `"${str}"`;
+  };
 
   const rows = reports.map((r) => [
     sanitize(formatToDDMMYYYY(r.report_date)),
